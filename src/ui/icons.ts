@@ -20,6 +20,11 @@ export const ICONS: Record<string, string> = {
   fog: wrap(`<path d="M4 8h12M7 12h13M4 16h11M9 20h8" fill="none"/>`),
   sound: wrap(`<path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z" fill="#fff8ea"/><path d="M15 9.5a3.5 3.5 0 0 1 0 5M17.5 7a7 7 0 0 1 0 10" fill="none"/>`),
   mute: wrap(`<path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z" fill="#fff8ea"/><path d="M15.5 9.5l5 5M20.5 9.5l-5 5" fill="none"/>`),
+  spring: wrap(`<path d="M12 21v-8" fill="none"/><path d="M12 13c-4 0-6-3-6-6 3 0 6 2 6 6zM12 11c0-4 3-7 6-7 0 4-2 7-6 7z" fill="#8FD16A"/>`),
+  summer: wrap(`<circle cx="12" cy="12" r="5" fill="#F7C948"/><path d="M12 2.5v2.5M12 19v2.5M2.5 12H5M19 12h2.5M5.3 5.3l1.8 1.8M16.9 16.9l1.8 1.8M5.3 18.7l1.8-1.8M16.9 7.1l1.8-1.8" fill="none"/>`),
+  autumn: wrap(`<path d="M12 3l2 4 4-1-1 4 4 2-4 2 1 4-4-1-2 4-2-4-4 1 1-4-4-2 4-2-1-4 4 1z" fill="#F2A541"/><path d="M12 12v9" fill="none"/>`),
+  winter: wrap(`<path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9M9.5 4.5L12 7l2.5-2.5M9.5 19.5L12 17l2.5 2.5" fill="none" stroke="#5D8FD0"/>`),
+  moon: wrap(`<path d="M15 3.5a8.5 8.5 0 1 0 5.5 13A7 7 0 0 1 15 3.5z" fill="#FFE59A"/>`),
   clock: wrap(`<circle cx="12" cy="12" r="8.5" fill="#fff8ea"/><path d="M12 7v5l3 2" fill="none"/>`),
 };
 export const icon = (k: string) => ICONS[k] ?? '';

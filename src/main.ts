@@ -5,12 +5,29 @@ import { View } from './render/view';
 import { Hud, Tool } from './ui/hud';
 import { makeThumbs } from './render/thumbs';
 import { Sound } from './audio/sound';
+import { loadModels } from './render/assets';
 import type { RotateMode } from './render/camera';
 
 const SAVE_KEY = 'cozy-harbor-save-v1';
 
-function boot() {
+async function boot() {
   const stage = document.getElementById('stage')!;
+  const loading = document.createElement('div');
+  loading.className = 'loading';
+  loading.textContent = '正在搭建小镇…';
+  document.body.appendChild(loading);
+  try { await loadModels(new URL('models/town.glb', document.baseURI).href); }
+  catch (e) {
+    loading.textContent = '模型加载失败，请刷新页面重试。';
+    console.error(e);
+    return;
+  }
+  loading.remove();
+  if (location.hash.startsWith('#gallery')) {
+    const { gallery } = await import('./dev/gallery');
+    gallery(stage, { snow: location.hash.includes('snow') ? 0.8 : 0, glow: location.hash.includes('night') ? 1 : 0 });
+    return;
+  }
   const hudEl = document.getElementById('hud')!;
   const floats = document.getElementById('floats')!;
   let view: View;
@@ -221,6 +238,7 @@ function boot() {
   // ---------- loop ----------
   let last = performance.now();
   let mixT = 0;
+  let lastHour = -1;
   function frame(now: number) {
     requestAnimationFrame(frame);
     const dt = Math.min(0.1, (now - last) / 1000);
@@ -236,9 +254,11 @@ function boot() {
     for (const s of game.sfx.splice(0)) sound.play(s);
     if (game.events.length) sound.play('produce');
     mixT -= dt;
-    if (mixT <= 0) { mixT = 0.5; const m = view.weatherMix(); sound.setWeather(m.rain, m.storm, m.sunny); }
+    if (mixT <= 0) { mixT = 0.5; sound.setScene(view.weatherMix(), game.season); }
+    const hourNow = Math.floor(game.hour);
+    if (hourNow !== lastHour) { if (hourNow === 6 && lastHour === 5) sound.play('bell'); lastHour = hourNow; }
     if (selected && !game.buildings.has(selected)) select(null);
-    view.render(dt);
+    view.render(dt, dt * game.speed);
     hud.update(dt);
   }
   requestAnimationFrame(frame);

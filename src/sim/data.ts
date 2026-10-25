@@ -82,7 +82,7 @@ export const REFUND = 0.5;
 export const MAP_SIZE = 56;
 
 // ---------- weather ----------
-export type WeatherId = 'sunny' | 'cloudy' | 'rain' | 'storm' | 'fog';
+export type WeatherId = 'sunny' | 'cloudy' | 'rain' | 'storm' | 'fog' | 'snow';
 export interface WeatherDef {
   name: string;
   effect: string;                 // shown to the player
@@ -96,4 +96,19 @@ export const WEATHER: Record<WeatherId, WeatherDef> = {
   rain: { name: '下雨', effect: '麦田产量 +25%', duration: [50, 90], next: { cloudy: 4, storm: 2.5, sunny: 2, rain: 1.5 }, prod: { farm: 1.25 } },
   storm: { name: '雷雨', effect: '麦田产量 +25%，渔船停航', duration: [30, 50], next: { rain: 6, cloudy: 4 }, prod: { farm: 1.25, fishery: 0 } },
   fog: { name: '起雾', effect: '渔场产量 -40%', duration: [40, 70], next: { sunny: 5, cloudy: 5 }, prod: { fishery: 0.6 } },
+  snow: { name: '下雪', effect: '伐木场产量 -30%', duration: [50, 90], next: { cloudy: 4, sunny: 3, snow: 3 }, prod: { lumberjack: 0.7 } },
+};
+
+// ---------- calendar ----------
+export const DAY_LENGTH = 240;          // game seconds per day
+export const SEASON_DAYS = 2;           // days per season
+export const START_HOUR = 8;
+export type SeasonId = 'spring' | 'summer' | 'autumn' | 'winter';
+export const SEASON_IDS: SeasonId[] = ['spring', 'summer', 'autumn', 'winter'];
+export interface SeasonDef { name: string; effect: string; prod: Partial<Record<BuildingId, number>>; weather: Partial<Record<WeatherId, WeatherId>> }
+export const SEASONS: Record<SeasonId, SeasonDef> = {
+  spring: { name: '春', effect: '万物生长', prod: {}, weather: { snow: 'rain' } },
+  summer: { name: '夏', effect: '麦田产量 +20%', prod: { farm: 1.2 }, weather: { snow: 'sunny' } },
+  autumn: { name: '秋', effect: '丰收季，麦田产量 +40%', prod: { farm: 1.4 }, weather: { snow: 'rain' } },
+  winter: { name: '冬', effect: '麦田休耕，渔场产量 -30%', prod: { farm: 0, fishery: 0.7 }, weather: { rain: 'snow', storm: 'snow' } },
 };

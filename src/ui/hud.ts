@@ -1,6 +1,6 @@
 // DOM interface: resource bar, quest card, build menu, info panel, toasts, menu.
 import { Game, Bld, QUESTS } from '../sim/game';
-import { BUILDINGS, BUILD_MENU, BuildingId, GOOD_IDS, GOODS, TIERS, UPGRADE_COST, WEATHER } from '../sim/data';
+import { BUILDINGS, BUILD_MENU, BuildingId, GOOD_IDS, GOODS, TIERS, UPGRADE_COST, WEATHER, SEASONS } from '../sim/data';
 import type { AudioSettings } from '../audio/sound';
 import type { RotateMode } from '../render/camera';
 import { icon } from './icons';
@@ -188,6 +188,7 @@ export class Hud {
       <span class="chip gold" title="金币。税收 ${fmt(g.taxRate)}/分，维护费 ${fmt(g.upkeepRate)}/分">${icon('gold')}<b>${fmt(g.gold)}</b><i class="${net >= 0 ? 'up' : 'down'}">${net >= 0 ? '+' : ''}${Math.round(net)}/分</i></span>
       <span class="chip" title="农民（劳动力 ${g.workforce.peasant.have} / 需要 ${g.workforce.peasant.need}）">${icon('peasant')}<b>${g.pop.peasant}</b></span>
       <span class="chip" title="工人（劳动力 ${g.workforce.worker.have} / 需要 ${g.workforce.worker.need}）">${icon('worker')}<b>${g.pop.worker}</b></span>
+      <span class="chip clock" title="${SEASONS[g.season].effect}">${icon(g.night > 0.5 ? 'moon' : g.season)}<b>第${g.year}年 ${SEASONS[g.season].name}</b><i>${String(Math.floor(g.hour)).padStart(2, '0')}:${String(Math.floor((g.hour % 1) * 60)).padStart(2, '0')}</i></span>
       <span class="chip weather" title="${WEATHER[g.weather.cur].effect}">${icon(g.weather.cur)}<b>${WEATHER[g.weather.cur].name}</b>${WEATHER[g.weather.cur].effect !== '一切正常' ? `<i>${WEATHER[g.weather.cur].effect}</i>` : ''}</span>
       <span class="sep"></span>
       ${GOOD_IDS.map(k => {
@@ -206,6 +207,12 @@ export class Hud {
       ? `<span class="eyebrow">目标 ${qi + 1} / ${QUESTS.length}</span><p>${q.text}</p>${q.reward ? `<span class="reward">奖励 ${icon('gold')}${q.reward}${q.planks ? ` ${icon('planks')}${q.planks}` : ''}</span>` : ''}`
       : `<span class="eyebrow">全部完成</span><p>暖港已经是一座热闹的城市。接着建设吧！</p>`;
     this.updateInfo();
+    // keep the quest card and info panel below the resource bar, which may wrap to two lines
+    const top = (this.root.querySelector('.topbar') as HTMLElement).getBoundingClientRect().bottom + 10;
+    if (innerWidth > 720) {
+      $('#quest', this.root).style.top = `${top}px`;
+      $('#info', this.root).style.top = `${top}px`;
+    } else $('#quest', this.root).style.top = `${top}px`;
   }
 
   private toast(text: string, kind: string) {

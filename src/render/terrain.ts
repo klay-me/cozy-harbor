@@ -1,0 +1,247 @@
+// Smooth terrain and water. The game grid stays square, but the land/water boundary is
+// interpolated between tile centres so coastlines curve, beaches slope into shallow water,
+// and the water shader gets a fine distance-to-shore field for foam and waves.
+import * as THREE from 'three';
+import { World, Tile } from '../sim/world';
+import { ramp } from './toon';
+import { ENV } from './shared';
+
+const SUB = 3;          // terrain vertices per tile
+const MARGIN = 24;      // extra tiles drawn around the map
+const DF = 4;           // distance-field cells per tile
+const DF_MARGIN = 16;
+export const WATER_Y = -0.28;
+
+export class Terrain {
+  W: number;
+  half: number;
+  private landT: Float32Array;   // smoothed land value per tile (incl. margin)
+  private rockT: Float32Array;
+  private TW: number;            // tiles across incl. margin
+  terrainU = {
+    uGrid: { value: 0 }, uW: { value: 0 },
+    uRange: { value: new THREE.Vector3() }, uRangeOn: { value: 0 },
+    uSel: { value: new THREE.Vector4() },
+    uGrass: { value: new THREE.Color('#86CC63') },
+  };
+  waterU: Record<string, THREE.IUniform>;
+  terrain: THREE.Mesh;
+  water: THREE.Mesh;
+
+  constructor(private world: World) {
+    const W = world.W;
+    this.W = W;
+    this.half = W / 2;
+    this.TW = W + MARGIN * 2;
+    this.terrainU.uW.value = W;
+    // tile-level fields with margin, then a light blur to round the corners
+    const TW = this.TW;
+    const raw = new Float32Array(TW * TW), rawR = new Float32Array(TW * TW);
+    for (let tz = 0; tz < TW; tz++) for (let tx = 0; tx < TW; tx++) {
+      const t = this.tileOut(tx - MARGIN, tz - MARGIN);
+      raw[tz * TW + tx] = t === Tile.Water ? 0 : 1;
+      rawR[tz * TW + tx] = t === Tile.Rock ? 1 : 0;
+    }
+    const blur = (src: Float32Array) => {
+      const out = new Float32Array(TW * TW);
+      for (let z = 0; z < TW; z++) for (let x = 0; x < TW; x++) {
+        let s = 0, w = 0;
+        for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+          const nx = Math.min(TW - 1, Math.max(0, x + dx)), nz = Math.min(TW - 1, Math.max(0, z + dz));
+          const k = dx === 0 && dz === 0 ? 4 : (dx === 0 || dz === 0 ? 2 : 1);
+          s += src[nz * TW + nx] * k; w += k;
+        }
+        // keep each tile on its own side of 0.5 so the game grid and the picture agree
+        const v = s / w, own = src[z * TW + x];
+        out[z * TW + x] = own > 0.5 ? Math.max(0.56, v) : Math.min(0.44, v);
+      }
+      return out;
+    };
+    this.landT = blur(raw);
+    this.rockT = blur(rawR);
+    this.terrain = this.buildTerrain();
+    const { mesh, uniforms } = this.buildWater();
+    this.water = mesh;
+    this.waterU = uniforms;
+  }
+
+  private tileOut(x: number, z: number): Tile {
+    const W = this.W;
+    if (x >= 0 && z >= 0 && x < W && z < W) return this.world.tile(x, z);
+    const cx = Math.max(0, Math.min(W - 1, x)), cz = Math.max(0, Math.min(W - 1, z));
+    return this.world.tile(cx, cz) === Tile.Water ? Tile.Water : Tile.Grass;
+  }
+
+  private sample(f: Float32Array, wx: number, wz: number) {
+    // world -> tile-centre coordinates in the margin grid
+    const fx = wx + this.half + MARGIN - 0.5, fz = wz + this.half + MARGIN - 0.5;
+    const TW = this.TW;
+    const x0 = Math.max(0, Math.min(TW - 2, Math.floor(fx))), z0 = Math.max(0, Math.min(TW - 2, Math.floor(fz)));
+    const tx = Math.min(1, Math.max(0, fx - x0)), tz = Math.min(1, Math.max(0, fz - z0));
+    const a = f[z0 * TW + x0], b = f[z0 * TW + x0 + 1], c = f[(z0 + 1) * TW + x0], d = f[(z0 + 1) * TW + x0 + 1];
+    return (a * (1 - tx) + b * tx) * (1 - tz) + (c * (1 - tx) + d * tx) * tz;
+  }
+  private noise(x: number, z: number) {
+    return Math.sin(x * 1.7 + Math.sin(z * 0.9) * 1.3) * Math.cos(z * 1.3 + Math.sin(x * 0.7)) * 0.5;
+  }
+  /** 0..1, land where >= 0.5 */
+  land(wx: number, wz: number) { return this.sample(this.landT, wx, wz) + this.noise(wx, wz) * 0.08; }
+  height(wx: number, wz: number) {
+    const L = this.land(wx, wz);
+    let y: number;
+    if (L >= 0.62) y = 0;
+    else if (L >= 0.5) y = (L - 0.62) * 1.0;
+    else y = Math.max(-1.0, -0.12 + (L - 0.5) * 3.2);
+    const R = this.sample(this.rockT, wx, wz);
+    if (R > 0.05) y += R * R * 0.9 + (Math.sin(wx * 2.3 + wz) * 0.5 + 0.5) * R * 0.18;
+    // gentle hills beyond the playable area (land only)
+    const ox = Math.max(-this.half - wx, wx - this.half, 0), oz = Math.max(-this.half - wz, 0);
+    const out = Math.max(ox, oz);
+    if (out > 0 && L >= 0.5) y += Math.min(4, out * 0.22) * (0.6 + 0.4 * Math.sin(wx * 0.35 + wz * 0.27));
+    return y;
+  }
+
+  private buildTerrain() {
+    const size = this.TW, seg = size * SUB;
+    const geo = new THREE.PlaneGeometry(size, size, seg, seg).rotateX(-Math.PI / 2);
+    const pos = geo.getAttribute('position') as THREE.BufferAttribute;
+    const n = pos.count;
+    const kind = new Float32Array(n * 3); // grass, sand, rock
+    for (let i = 0; i < n; i++) {
+      const x = pos.getX(i), z = pos.getZ(i);
+      const L = this.land(x, z), R = this.sample(this.rockT, x, z);
+      pos.setY(i, this.height(x, z));
+      const sand = 1 - THREE.MathUtils.smoothstep(L, 0.62, 0.74);
+      kind[i * 3] = 1 - sand;
+      kind[i * 3 + 1] = sand;
+      kind[i * 3 + 2] = THREE.MathUtils.smoothstep(R, 0.35, 0.65);
+    }
+    geo.setAttribute('kind', new THREE.BufferAttribute(kind, 3));
+    geo.computeVertexNormals();
+    const mat = new THREE.MeshToonMaterial({ color: 0xffffff, gradientMap: ramp });
+    const U = this.terrainU;
+    mat.onBeforeCompile = sh => {
+      Object.assign(sh.uniforms, U, ENV);
+      sh.vertexShader = 'attribute vec3 kind;\nvarying vec3 vKind;\nvarying vec3 vWP;\n' + sh.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvKind = kind;');
+      sh.fragmentShader = `
+uniform float uGrid, uW, uRangeOn, uSnow, uWet;
+uniform vec3 uRange, uGrass;
+uniform vec4 uSel;
+varying vec3 vKind;
+varying vec3 vWP;
+` + sh.fragmentShader.replace('vec4 diffuseColor = vec4( diffuse, opacity );', `
+  float n1 = sin(vWP.x * 0.31 + vWP.z * 0.21) * 0.5 + 0.5;
+  float n2 = sin(vWP.x * 1.7 - vWP.z * 1.3 + sin(vWP.z * 0.8)) * 0.5 + 0.5;
+  vec3 grass = uGrass * (0.92 + 0.1 * n1) * (0.97 + 0.05 * step(0.7, n2));
+  vec3 sand = vec3(0.96, 0.87, 0.64);
+  vec3 wetSand = vec3(0.86, 0.76, 0.55);
+  vec3 under = vec3(0.70, 0.80, 0.68);
+  vec3 rock = vec3(0.74, 0.71, 0.66) * (0.9 + 0.15 * n2);
+  vec3 c = mix(sand, grass, vKind.x);
+  c = mix(c, wetSand, smoothstep(-0.02, -0.14, vWP.y) * vKind.y);
+  c = mix(c, under, smoothstep(-0.2, -0.45, vWP.y));
+  c = mix(c, rock, vKind.z);
+  float snowAmt = uSnow * smoothstep(-0.24, -0.1, vWP.y) * (1.0 - 0.25 * vKind.z);
+  c = mix(c, vec3(0.94, 0.96, 1.0) * (0.96 + 0.04 * n2), snowAmt);
+  c *= 1.0 - uWet * 0.14;
+  vec4 diffuseColor = vec4(c, opacity);`).replace('#include <dithering_fragment>', `#include <dithering_fragment>
+  vec2 gp = vWP.xz + uW * 0.5;
+  vec2 f = abs(fract(gp) - 0.5);
+  float inMap = step(0.0, gp.x) * step(0.0, gp.y) * step(gp.x, uW) * step(gp.y, uW);
+  float line = smoothstep(0.47, 0.5, max(f.x, f.y));
+  gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(1.0), line * 0.28 * uGrid * inMap * step(-0.05, vWP.y));
+  float d = distance(vWP.xz, uRange.xy);
+  float inside = 1.0 - smoothstep(uRange.z - 0.06, uRange.z, d);
+  float ring = smoothstep(uRange.z - 0.18, uRange.z - 0.06, d) * inside;
+  gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(1.0, 0.97, 0.82), uRangeOn * (inside * 0.18 + ring * 0.6));
+  vec2 sd = abs(vWP.xz - uSel.xy) - uSel.zw * 0.5;
+  float edge = step(max(sd.x, sd.y), 0.08) * step(-0.08, max(sd.x, sd.y));
+  gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(1.0, 0.86, 0.35), edge * step(0.01, uSel.z));`);
+    };
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.receiveShadow = true;
+    return mesh;
+  }
+
+  private buildWater() {
+    // fine distance-to-land field (in tiles) via a two-pass chamfer transform
+    const N = (this.W + DF_MARGIN * 2) * DF;
+    const dist = new Float32Array(N * N);
+    const toWorld = (i: number) => (i + 0.5) / DF - DF_MARGIN - this.half;
+    for (let z = 0; z < N; z++) for (let x = 0; x < N; x++) dist[z * N + x] = this.land(toWorld(x), toWorld(z)) >= 0.5 ? 0 : 1e6;
+    const c1 = 1 / DF, c2 = Math.SQRT2 / DF;
+    for (let z = 0; z < N; z++) for (let x = 0; x < N; x++) {
+      let v = dist[z * N + x];
+      if (x > 0) v = Math.min(v, dist[z * N + x - 1] + c1);
+      if (z > 0) { v = Math.min(v, dist[(z - 1) * N + x] + c1); if (x > 0) v = Math.min(v, dist[(z - 1) * N + x - 1] + c2); if (x < N - 1) v = Math.min(v, dist[(z - 1) * N + x + 1] + c2); }
+      dist[z * N + x] = v;
+    }
+    for (let z = N - 1; z >= 0; z--) for (let x = N - 1; x >= 0; x--) {
+      let v = dist[z * N + x];
+      if (x < N - 1) v = Math.min(v, dist[z * N + x + 1] + c1);
+      if (z < N - 1) { v = Math.min(v, dist[(z + 1) * N + x] + c1); if (x < N - 1) v = Math.min(v, dist[(z + 1) * N + x + 1] + c2); if (x > 0) v = Math.min(v, dist[(z + 1) * N + x - 1] + c2); }
+      dist[z * N + x] = v;
+    }
+    const data = new Uint8Array(N * N);
+    for (let i = 0; i < N * N; i++) data[i] = Math.min(255, Math.round(dist[i] / 6 * 255));
+    const tex = new THREE.DataTexture(data, N, N, THREE.RedFormat);
+    tex.magFilter = tex.minFilter = THREE.LinearFilter;
+    tex.needsUpdate = true;
+    const uniforms = THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
+      uDist: { value: null }, uTime: { value: 0 }, uSpan: { value: N / DF }, uOff: { value: DF_MARGIN + this.half },
+      uDeep: { value: new THREE.Color('#2F8FCB') }, uShallow: { value: new THREE.Color('#6FD3EA') }, uFoam: { value: new THREE.Color('#ffffff') },
+      uRain: { value: 0 }, uSun: { value: 1 }, uNight: { value: 0 }, uIce: { value: 0 },
+    }]);
+    uniforms.uDist.value = tex;
+    const mat = new THREE.ShaderMaterial({
+      uniforms, fog: true, transparent: true, depthWrite: false,
+      vertexShader: `varying vec2 vXZ;
+#include <common>
+#include <fog_pars_vertex>
+void main(){ vec4 wp = modelMatrix * vec4(position, 1.0); vXZ = wp.xz; vec4 mvPosition = viewMatrix * wp; gl_Position = projectionMatrix * mvPosition;
+#include <fog_vertex>
+}`,
+      fragmentShader: `uniform sampler2D uDist; uniform float uTime, uSpan, uOff, uRain, uSun, uNight, uIce; uniform vec3 uDeep, uShallow, uFoam; varying vec2 vXZ;
+#include <common>
+#include <fog_pars_fragment>
+float hash(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+float vnoise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
+  return mix(mix(hash(i), hash(i+vec2(1,0)), f.x), mix(hash(i+vec2(0,1)), hash(i+vec2(1,1)), f.x), f.y); }
+void main(){
+  vec2 uv = (vXZ + uOff) / uSpan;
+  float d = texture2D(uDist, uv).r * 6.0;
+  if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) d = 6.0;
+  float n = vnoise(vXZ * 0.8 + vec2(uTime * 0.05, uTime * 0.03));
+  vec3 c = mix(uShallow, uDeep, smoothstep(0.1, 3.2, d + (n - 0.5) * 0.6));
+  // soft light streaks drifting across the surface
+  float streak = smoothstep(0.62, 0.72, vnoise(vec2(vXZ.x * 0.35 + uTime * 0.08, vXZ.y * 1.4)));
+  c = mix(c, c * 1.12 + 0.03, streak * 0.5 * smoothstep(0.5, 2.0, d));
+  // waves rolling toward the shore
+  float wave = sin(d * 5.5 - uTime * 1.7 + n * 4.0);
+  float waveBand = smoothstep(0.82, 0.95, wave) * (1.0 - smoothstep(0.4, 1.6, d)) * smoothstep(0.08, 0.25, d);
+  // foam right at the shoreline
+  float edge = 1.0 - smoothstep(0.06, 0.16 + 0.05 * sin(uTime * 1.3 + n * 6.0), d);
+  // sun glints
+  float glint = step(0.93, vnoise(vXZ * 3.2 + vec2(uTime * 0.6, -uTime * 0.4))) * step(0.93, vnoise(vXZ * 2.1 - vec2(uTime * 0.3, uTime * 0.5)));
+  // rain rings
+  vec2 cell = floor(vXZ * 2.5);
+  float h = hash(cell);
+  float ring = fract(uTime * 0.9 + h);
+  float rd = length(fract(vXZ * 2.5) - 0.5);
+  float drop = step(abs(rd - ring * 0.45), 0.035) * (1.0 - ring) * step(h, max(uRain - 0.1, 0.0) * 0.8);
+  c *= 1.0 - uRain * 0.15;
+  c = mix(c, uFoam, max(edge * 0.95, max(waveBand * 0.7, max(drop * 0.7, glint * uSun * 0.9))));
+  c = mix(c, vec3(0.86, 0.92, 0.96), uIce * 0.35);
+  c = mix(c, c * vec3(0.22, 0.3, 0.55), uNight * 0.85);
+  float alpha = mix(0.62, 0.96, smoothstep(0.05, 1.2, d));
+  gl_FragColor = vec4(c, max(alpha, edge));
+  #include <colorspace_fragment>
+  #include <fog_fragment>
+}`,
+    });
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(this.TW + 300, this.TW + 300).rotateX(-Math.PI / 2), mat);
+    mesh.position.y = WATER_Y;
+    mesh.renderOrder = 1;
+    return { mesh, uniforms };
+  }
+}

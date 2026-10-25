@@ -2,6 +2,7 @@ import { World, Tile } from './world';
 import {
   BUILDINGS, BuildingId, GOOD_IDS, GoodId, GOODS, TIERS, TierId, ServiceId, SERVICES,
   UPGRADE_COST, START, REFUND, MAP_SIZE, WEATHER, WeatherId,
+  DAY_LENGTH, SEASON_DAYS, START_HOUR, SEASONS, SEASON_IDS, SeasonId,
 } from './data';
 
 export interface Bld {
@@ -78,6 +79,27 @@ export class Game {
     const d = this.world.depot;
     this.addBuilding('depot', d.x, d.z);
     this.refresh();
+  }
+
+  // ---------- calendar ----------
+  /** hours since the very first morning (fractional) */
+  get totalHours() { return START_HOUR + (this.time / DAY_LENGTH) * 24; }
+  get hour() { return this.totalHours % 24; }
+  get day() { return Math.floor(this.totalHours / 24); }
+  /** continuous season position: 0 = start of spring, 1 = start of summer ... */
+  get seasonPos() { return (this.totalHours / 24) / SEASON_DAYS; }
+  get season(): SeasonId { return SEASON_IDS[Math.floor(this.seasonPos) % 4]; }
+  get year() { return Math.floor(this.seasonPos / 4) + 1; }
+  /** 0 at noon-ish daylight, 1 in the middle of the night */
+  get night() {
+    const h = this.hour;
+    if (h >= 6.5 && h <= 18) return 0;
+    if (h > 18 && h < 20.5) return (h - 18) / 2.5;
+    if (h >= 4.5 && h < 6.5) return 1 - (h - 4.5) / 2;
+    return 1;
+  }
+  prodFactor(type: BuildingId) {
+    return (WEATHER[this.weather.cur].prod[type] ?? 1) * (SEASONS[this.season].prod[type] ?? 1);
   }
 
   // ---------- queries ----------
@@ -324,8 +346,11 @@ export class Game {
         if (b.env === 0) { b.status = '附近树木太少'; b.working = false; continue; }
       }
       if (b.staff === 0) { b.status = `缺少${TIERS[wk.tier].name}`; b.working = false; continue; }
-      const wf = WEATHER[this.weather.cur].prod[b.type] ?? 1;
-      if (wf === 0) { b.status = `${WEATHER[this.weather.cur].name}，暂停作业`; b.working = false; continue; }
+      const wf = this.prodFactor(b.type);
+      if (wf === 0) {
+        b.status = (SEASONS[this.season].prod[b.type] === 0) ? `${SEASONS[this.season].name}季休耕` : `${WEATHER[this.weather.cur].name}，暂停作业`;
+        b.working = false; continue;
+      }
       const out = def.output;
       if (b.progress >= 1) {
         if (def.input && this.storage[def.input] < 1) { b.status = `缺少${GOODS[def.input].name}`; b.working = false; continue; }
@@ -337,7 +362,7 @@ export class Game {
       }
       b.progress = Math.min(1, b.progress + (dt / def.cycle!) * b.staff * b.env * wf);
       b.working = true;
-      b.status = wf !== 1 && b.staff >= 1 ? `运转中（${WEATHER[this.weather.cur].name} ${wf > 1 ? '+' : ''}${Math.round((wf - 1) * 100)}%）` : b.staff < 1 ? `工人不足 (${Math.round(b.staff * wk.n)}/${wk.n})` : (def.input && this.storage[def.input] < 1 && b.progress > 0.9 ? `缺少${GOODS[def.input].name}` : '运转中');
+      b.status = Math.abs(wf - 1) > 0.01 && b.staff >= 1 ? `运转中（${wf > 1 ? '+' : ''}${Math.round((wf - 1) * 100)}%）` : b.staff < 1 ? `工人不足 (${Math.round(b.staff * wk.n)}/${wk.n})` : (def.input && this.storage[def.input] < 1 && b.progress > 0.9 ? `缺少${GOODS[def.input].name}` : '运转中');
     }
     // consumption
     const demand: Partial<Record<GoodId, number>> = {};
@@ -389,7 +414,17 @@ export class Game {
     }
   }
 
+  private lastSeason: SeasonId | null = null;
   private stepWeather(dt: number) {
+    const s = this.season;
+    if (this.lastSeason && s !== this.lastSeason) {
+      this.notify(`${s === 'spring' ? `第 ${this.year} 年，` : ''}${SEASONS[s].name}天到了：${SEASONS[s].effect}`, 'good');
+      this.sfx.push('season');
+      // weather that does not exist this season turns into its seasonal counterpart
+      const mapped = SEASONS[s].weather[this.weather.cur];
+      if (mapped) this.setWeather(mapped);
+    }
+    this.lastSeason = s;
     const w = this.weather;
     w.blend = Math.min(1, w.blend + dt / 10);
     w.left -= dt;
@@ -398,6 +433,7 @@ export class Game {
     let r = Math.random() * opts.reduce((a, [, v]) => a + v, 0);
     let next = opts[0][0];
     for (const [k, v] of opts) { r -= v; if (r <= 0) { next = k; break; } }
+    next = SEASONS[this.season].weather[next] ?? next;
     this.setWeather(next);
   }
   setWeather(next: WeatherId) {

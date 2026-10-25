@@ -1,24 +1,10 @@
-// All audio is synthesised with Web Audio: a gentle generative tune, seaside ambience
-// that follows the weather, and short sound effects. No audio files are needed.
+// Audio: sample-based music (music.ts), weather and time-of-day ambience, and sound effects.
+// Instrument samples are FluidR3_GM (CC BY 3.0); ambience and some effects are synthesised.
+import { Music, Sampler, SONGS, Inst } from './music';
 
 export interface AudioSettings { music: number; sfx: number; muted: boolean }
 const KEY = 'cozy-harbor-audio';
-const mtof = (m: number) => 440 * Math.pow(2, (m - 69) / 12);
-
-interface Chord { bass: number; tones: number[] }
-const CH: Record<string, Chord> = {
-  C: { bass: 48, tones: [60, 64, 67] },
-  G: { bass: 43, tones: [59, 62, 67] },
-  Am: { bass: 45, tones: [57, 60, 64] },
-  F: { bass: 41, tones: [57, 60, 65] },
-  Em: { bass: 40, tones: [59, 64, 67] },
-  Dm: { bass: 50, tones: [62, 65, 69] },
-};
-const PROGRESSIONS = [['C', 'G', 'Am', 'F'], ['F', 'G', 'Em', 'Am'], ['C', 'Am', 'F', 'G'], ['Am', 'F', 'C', 'G'], ['F', 'C', 'Dm', 'G']];
-const SCALE = [64, 67, 69, 72, 74, 76, 79, 81, 84]; // C major pentatonic, mid register
-const RHYTHMS = [[0, 3, 6, 8, 12], [0, 4, 6, 10, 12, 14], [2, 6, 8, 11], [0, 2, 4, 8, 10], [0, 6, 8, 14], [0, 3, 8, 10, 12]];
-const BPM = 80;
-const STEP = 60 / BPM / 4;
+const PENTA = [72, 74, 76, 79, 81, 84, 86, 88];
 
 export class Sound {
   ctx: AudioContext | null = null;
@@ -31,15 +17,13 @@ export class Sound {
   private noise!: AudioBuffer;
   private rainGain!: GainNode;
   private windGain!: GainNode;
-  private next = 0;
-  private step = 0;
-  private bar = 0;
-  private prog = PROGRESSIONS[0];
-  private rhythm = RHYTHMS[0];
-  private melodyIdx = 4;
-  private w = { rain: 0, storm: 0, sunny: 1 };
-  private birdT = 4;
+  private waveGain!: GainNode;
+  private sampler!: Sampler;
+  private music!: Music;
+  private w = { rain: 0, storm: 0, sunny: 1, night: 0, snow: 0 };
+  private birdT = 4; private gullT = 9; private cricketT = 1;
   private last: Record<string, number> = {};
+  private wantSong = 'spring';
 
   constructor() {
     try {
@@ -61,19 +45,21 @@ export class Sound {
     this.master.connect(comp).connect(ctx.destination);
     this.musicFilter = ctx.createBiquadFilter();
     this.musicFilter.type = 'lowpass';
-    this.musicFilter.frequency.value = 7000;
+    this.musicFilter.frequency.value = 12000;
     this.musicBus = ctx.createGain();
     this.musicBus.connect(this.musicFilter).connect(this.master);
     this.sfxBus = ctx.createGain(); this.sfxBus.connect(this.master);
     this.ambBus = ctx.createGain(); this.ambBus.connect(this.master);
-    // shared noise buffer
     this.noise = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
     const d = this.noise.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    this.sampler = new Sampler(ctx, new URL('audio/', document.baseURI).href);
+    this.music = new Music(ctx, this.sampler, this.musicBus, (t, vol, hp, dec) => this.hiss(t, 0.003, vol, dec, 'highpass', hp, this.musicBus));
+    for (const i of ['marimba', 'glockenspiel', 'xylophone', 'kalimba', 'tubular_bells', 'woodblock'] as Inst[]) this.sampler.load(i);
     this.startAmbience();
     this.apply();
-    this.next = ctx.currentTime + 0.3;
-    setInterval(() => this.schedule(), 50);
+    this.music.want(this.wantSong);
+    setInterval(() => this.tick(), 50);
   }
 
   set(p: Partial<AudioSettings>) {
@@ -85,19 +71,35 @@ export class Sound {
     if (!this.ctx) return;
     const t = this.ctx.currentTime, s = this.settings;
     this.master.gain.setTargetAtTime(s.muted ? 0 : 1, t, 0.05);
-    this.musicBus.gain.setTargetAtTime(s.music * 0.55, t, 0.1);
-    this.sfxBus.gain.setTargetAtTime(s.sfx, t, 0.05);
+    this.musicBus.gain.setTargetAtTime(s.music * 4.0, t, 0.1);
+    this.sfxBus.gain.setTargetAtTime(s.sfx * 1.6, t, 0.05);
     this.ambBus.gain.setTargetAtTime(s.sfx * 0.8, t, 0.1);
   }
 
-  /** Weather mix from the renderer, each 0..1. */
-  setWeather(rain: number, storm: number, sunny: number) {
-    this.w = { rain, storm, sunny };
+  /** Called a few times a second with the current scene so music and ambience follow it. */
+  setScene(m: { rain: number; storm: number; sunny: number; night: number; snow: number }, season: string) {
+    this.w = m;
+    const song = m.night > 0.6 ? 'night' : m.rain > 0.4 ? 'rain' : season;
+    this.wantSong = SONGS[song] ? song : 'spring';
     if (!this.ctx) return;
+    this.music.want(this.wantSong);
     const t = this.ctx.currentTime;
-    this.rainGain.gain.setTargetAtTime(rain * 0.22, t, 0.5);
-    this.windGain.gain.setTargetAtTime(0.015 + storm * 0.09 + rain * 0.02, t, 0.5);
-    this.musicFilter.frequency.setTargetAtTime(7000 - rain * 3800 - storm * 1800, t, 0.8);
+    this.rainGain.gain.setTargetAtTime(m.rain * 0.22, t, 0.5);
+    this.windGain.gain.setTargetAtTime(0.012 + m.storm * 0.09 + m.rain * 0.02 + m.snow * 0.03, t, 0.5);
+    this.waveGain.gain.setTargetAtTime(0.06 + m.storm * 0.05, t, 0.5);
+    this.musicFilter.frequency.setTargetAtTime(12000 - m.rain * 6000 - m.storm * 3000, t, 0.8);
+  }
+  currentSong() { return this.music?.current() ?? ''; }
+
+  private tick() {
+    if (!this.ctx) return;
+    this.music.schedule();
+    const dt = 0.05;
+    // daytime birds and gulls, night crickets
+    this.birdT -= dt; this.gullT -= dt; this.cricketT -= dt;
+    if (this.birdT <= 0) { this.birdT = 3 + Math.random() * 6; if (this.w.sunny > 0.5 && this.w.night < 0.3 && this.w.snow < 0.3) this.bird(); }
+    if (this.gullT <= 0) { this.gullT = 8 + Math.random() * 14; if (this.w.night < 0.3 && this.w.storm < 0.3) this.gull(); }
+    if (this.cricketT <= 0) { this.cricketT = 0.6 + Math.random() * 0.9; if (this.w.night > 0.6 && this.w.rain < 0.2 && this.w.snow < 0.2) this.cricket(); }
   }
 
   // ---------- building blocks ----------
@@ -105,7 +107,6 @@ export class Sound {
     const s = this.ctx!.createBufferSource();
     s.buffer = this.noise;
     s.loop = loop;
-    s.loopStart = Math.random();
     return s;
   }
   private envGain(t: number, attack: number, peak: number, decay: number) {
@@ -140,164 +141,105 @@ export class Sound {
     s.start(t, Math.random()); s.stop(t + attack + decay + 0.05);
   }
 
-  // ---------- music ----------
-  private pluck(m: number, t: number, vol: number, dur = 0.9) {
-    this.tone('triangle', mtof(m), t, 0.006, vol, dur, this.musicBus, undefined, 2600);
-    this.tone('sine', mtof(m + 12), t, 0.004, vol * 0.25, dur * 0.5, this.musicBus);
-  }
-  private bell(m: number, t: number, vol: number) {
-    this.tone('sine', mtof(m), t, 0.003, vol, 1.6, this.musicBus);
-    this.tone('sine', mtof(m) * 2.76, t, 0.002, vol * 0.3, 0.5, this.musicBus);
-  }
-  private pad(ch: Chord, t: number, dur: number) {
-    const ctx = this.ctx!;
-    const lp = ctx.createBiquadFilter();
-    lp.type = 'lowpass'; lp.frequency.value = 900;
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.linearRampToValueAtTime(0.045, t + 0.8);
-    g.gain.setValueAtTime(0.045, t + dur - 0.6);
-    g.gain.linearRampToValueAtTime(0.0001, t + dur + 0.4);
-    lp.connect(g).connect(this.musicBus);
-    for (const m of ch.tones) for (const det of [-7, 7]) {
-      const o = ctx.createOscillator();
-      o.type = 'sawtooth';
-      o.frequency.value = mtof(m - 12);
-      o.detune.value = det;
-      o.connect(lp);
-      o.start(t); o.stop(t + dur + 0.5);
-    }
-  }
-  private bass(m: number, t: number) {
-    this.tone('sine', mtof(m - 12), t, 0.01, 0.16, 0.7, this.musicBus);
-    this.tone('triangle', mtof(m), t, 0.01, 0.05, 0.4, this.musicBus, undefined, 600);
-  }
-
-  private schedule() {
-    const ctx = this.ctx;
-    if (!ctx || this.settings.muted && this.settings.music === 0) return;
-    if (this.next < ctx.currentTime - 0.3) this.next = ctx.currentTime + 0.05; // tab was in the background
-    while (this.next < ctx.currentTime + 0.25) {
-      this.playStep(this.step, this.next);
-      this.next += STEP;
-      this.step = (this.step + 1) % 16;
-      if (this.step === 0) {
-        this.bar++;
-        if (this.bar % 4 === 0) this.prog = PROGRESSIONS[Math.floor(Math.random() * PROGRESSIONS.length)];
-        this.rhythm = RHYTHMS[Math.floor(Math.random() * RHYTHMS.length)];
-      }
-    }
-    // birds when the weather is nice
-    this.birdT -= 0.05;
-    if (this.birdT <= 0) {
-      this.birdT = 3 + Math.random() * 7;
-      if (this.w.sunny > 0.5) this.bird();
-    }
-  }
-  private playStep(s: number, t: number) {
-    const ch = CH[this.prog[this.bar % 4]];
-    if (s === 0) { this.pad(ch, t, STEP * 16); this.bass(ch.bass, t); }
-    if (s === 8 || (s === 14 && Math.random() < 0.4)) this.bass(ch.bass + (s === 14 ? 7 : 0), t);
-    // gentle shaker on the off-beats in fair weather
-    if (s % 4 === 2 && this.w.rain < 0.3) this.hiss(t, 0.004, 0.018, 0.06, 'highpass', 7000, this.musicBus);
-    if (!this.rhythm.includes(s)) return;
-    if (this.w.rain > 0.4 && Math.random() < 0.35) return; // sparser tune in the rain
-    // melody: a random walk on the pentatonic scale that lands on chord tones on strong beats
-    this.melodyIdx = Math.max(0, Math.min(SCALE.length - 1, this.melodyIdx + [-2, -1, -1, 1, 1, 2, 0][Math.floor(Math.random() * 7)]));
-    let note = SCALE[this.melodyIdx];
-    if (s === 0 || s === 8) {
-      const tones = ch.tones.map(x => x + 12);
-      note = tones.reduce((a, b) => Math.abs(b - note) < Math.abs(a - note) ? b : a);
-    }
-    const phraseEnd = this.bar % 4 === 3 && s >= 12;
-    this.pluck(note, t, 0.13, phraseEnd ? 1.6 : 0.8);
-    if (s === 0 && this.bar % 2 === 1) this.bell(ch.tones[2] + 24, t + STEP * 2, 0.035);
-  }
-
   // ---------- ambience ----------
   private startAmbience() {
     const ctx = this.ctx!;
-    // waves: low noise breathing slowly
     const waves = this.src(true);
     const wl = ctx.createBiquadFilter(); wl.type = 'lowpass'; wl.frequency.value = 420;
-    const wg = ctx.createGain(); wg.gain.value = 0.07;
+    this.waveGain = ctx.createGain(); this.waveGain.gain.value = 0.06;
+    const swell = ctx.createGain(); swell.gain.value = 1;
     const lfo = ctx.createOscillator(); lfo.frequency.value = 0.09;
-    const lfoG = ctx.createGain(); lfoG.gain.value = 0.045;
-    lfo.connect(lfoG).connect(wg.gain);
-    waves.connect(wl).connect(wg).connect(this.ambBus);
+    const lfoG = ctx.createGain(); lfoG.gain.value = 0.5;
+    lfo.connect(lfoG).connect(swell.gain);
+    waves.connect(wl).connect(swell).connect(this.waveGain).connect(this.ambBus);
     waves.start(); lfo.start();
-    // wind
     const wind = this.src(true);
     const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 380; bp.Q.value = 0.6;
-    this.windGain = ctx.createGain(); this.windGain.gain.value = 0.015;
+    this.windGain = ctx.createGain(); this.windGain.gain.value = 0.012;
     wind.connect(bp).connect(this.windGain).connect(this.ambBus);
-    wind.start();
-    // rain
+    wind.start(0, 0.7);
     const rain = this.src(true);
     const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 1100;
     const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 7000;
     this.rainGain = ctx.createGain(); this.rainGain.gain.value = 0;
     rain.connect(hp).connect(lp).connect(this.rainGain).connect(this.ambBus);
-    rain.start();
+    rain.start(0, 1.3);
   }
   private bird() {
     const t = this.ctx!.currentTime + 0.05;
-    const n = 2 + Math.floor(Math.random() * 3);
-    const base = 2400 + Math.random() * 1200;
-    for (let i = 0; i < n; i++) this.tone('sine', base, t + i * 0.11, 0.01, 0.03, 0.07, this.ambBus, base * 1.45);
+    const n = 2 + Math.floor(Math.random() * 4);
+    const base = 2400 + Math.random() * 1400;
+    for (let i = 0; i < n; i++) this.tone('sine', base * (1 + (i % 2) * 0.12), t + i * 0.1, 0.01, 0.025, 0.07, this.ambBus, base * 1.45);
+  }
+  private gull() {
+    const t = this.ctx!.currentTime + 0.05;
+    for (let i = 0; i < 2 + Math.floor(Math.random() * 2); i++) {
+      const s = t + i * 0.28;
+      this.tone('triangle', 1650, s, 0.03, 0.02, 0.24, this.ambBus, 1050, 2600);
+      this.tone('sine', 3300, s, 0.03, 0.006, 0.2, this.ambBus, 2100);
+    }
+  }
+  private cricket() {
+    const t = this.ctx!.currentTime + 0.02;
+    for (let i = 0; i < 3; i++) this.hiss(t + i * 0.045, 0.003, 0.012, 0.025, 'bandpass', 4300, this.ambBus, undefined, 18);
   }
 
   // ---------- effects ----------
+  private note(inst: Inst, m: number, t: number, vol: number, dur = 0) { this.sampler?.play(inst, m, t, vol, this.sfxBus, dur); }
   play(name: string) {
     const ctx = this.ctx;
     if (!ctx) return;
     const now = ctx.currentTime;
-    const gap: Record<string, number> = { road: 0.08, produce: 0.3, error: 0.25, click: 0.05 };
+    const gap: Record<string, number> = { road: 0.08, produce: 0.35, error: 0.25, click: 0.05, coin: 0.4 };
     if (gap[name] && now - (this.last[name] ?? 0) < gap[name]) return;
     this.last[name] = now;
     const t = now + 0.01, out = this.sfxBus;
     switch (name) {
       case 'place':
-        this.tone('sine', 190, t, 0.005, 0.5, 0.18, out, 70);
-        this.hiss(t, 0.003, 0.25, 0.08, 'bandpass', 1400, out, undefined, 1.5);
-        [76, 79, 84].forEach((m, i) => this.tone('triangle', mtof(m), t + 0.06 + i * 0.05, 0.004, 0.09, 0.3, out));
+        this.tone('sine', 190, t, 0.005, 0.45, 0.18, out, 70);
+        this.note('woodblock', 76, t, 0.5);
+        [76, 79, 84].forEach((m, i) => this.note('glockenspiel', m, t + 0.07 + i * 0.06, 0.35));
         break;
       case 'road':
-        this.hiss(t, 0.003, 0.18, 0.07, 'bandpass', 900, out, undefined, 2);
-        this.tone('sine', 300, t, 0.003, 0.12, 0.06, out, 200);
+        this.hiss(t, 0.003, 0.16, 0.07, 'bandpass', 900, out, undefined, 2);
+        this.note('woodblock', 84, t, 0.25);
         break;
       case 'demolish':
         this.hiss(t, 0.01, 0.45, 0.45, 'lowpass', 1600, out, 180);
         this.tone('sine', 110, t, 0.005, 0.4, 0.3, out, 45);
         break;
       case 'click':
-        this.tone('sine', 880, t, 0.003, 0.08, 0.05, out, 1100);
+        this.note('marimba', 84, t, 0.28);
         break;
       case 'error':
-        this.tone('square', 233, t, 0.005, 0.06, 0.1, out, undefined, 900);
-        this.tone('square', 196, t + 0.12, 0.005, 0.06, 0.14, out, undefined, 900);
+        this.note('marimba', 62, t, 0.4);
+        this.note('marimba', 61, t + 0.12, 0.4);
         break;
       case 'upgrade':
-        [67, 72, 76, 79].forEach((m, i) => this.tone('triangle', mtof(m), t + i * 0.07, 0.004, 0.12, 0.45, out));
-        this.tone('sine', mtof(91), t + 0.3, 0.003, 0.05, 0.8, out);
+        [67, 71, 74, 79, 83].forEach((m, i) => this.note('xylophone', m + 12, t + i * 0.07, 0.4));
         break;
       case 'quest':
-        [72, 76, 79, 84, 88].forEach((m, i) => {
-          this.tone('sine', mtof(m), t + i * 0.09, 0.003, 0.12, 1.2, out);
-          this.tone('sine', mtof(m) * 2.76, t + i * 0.09, 0.002, 0.03, 0.4, out);
-        });
+        [72, 76, 79, 84].forEach((m, i) => this.note('glockenspiel', m + 12, t + i * 0.11, 0.4));
+        this.note('xylophone', 96, t + 0.5, 0.3);
         break;
-      case 'produce': {
-        const m = SCALE[Math.floor(Math.random() * SCALE.length)] + 12;
-        this.tone('sine', mtof(m), t, 0.003, 0.035, 0.25, out);
+      case 'produce':
+        this.note('kalimba', PENTA[Math.floor(Math.random() * PENTA.length)], t, 0.16);
         break;
-      }
-      case 'thunder': {
+      case 'coin':
+        this.note('glockenspiel', 95, t, 0.25);
+        this.note('glockenspiel', 100, t + 0.08, 0.25);
+        break;
+      case 'bell':
+        [67, 64, 60].forEach((m, i) => this.note('tubular_bells', m, t + i * 0.7, 0.35));
+        break;
+      case 'season':
+        [60, 64, 67, 72, 76].forEach((m, i) => this.note('celesta', m + 12, t + i * 0.12, 0.35));
+        break;
+      case 'thunder':
         this.hiss(t, 0.005, 0.35, 0.25, 'highpass', 1500, this.ambBus);
         this.hiss(t + 0.05, 0.08, 0.6, 3.2, 'lowpass', 320, this.ambBus, 60);
         this.hiss(t + 0.4, 0.2, 0.3, 2.4, 'lowpass', 180, this.ambBus, 50);
         break;
-      }
     }
   }
 }
