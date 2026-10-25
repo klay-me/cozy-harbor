@@ -52,6 +52,8 @@ export const ICONS: Record<string, string> = {
   lock: wrap(`<rect x="5" y="10.5" width="14" height="10" rx="2" fill="#e8e2d6"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5" fill="none"/>`),
   check: wrap(`<circle cx="12" cy="12" r="8.5" fill="#8fd16a"/><path d="M8 12.5l2.8 2.8L16.5 9" fill="none"/>`),
   era: wrap(`<path d="M3 20h18" fill="none"/><path d="M5 20v-6l4-3 4 3v6" fill="#f7e2b0"/><path d="M13 20V9l3-3 3 3v11" fill="#c9d9ef"/>`),
+  thermo: wrap(`<path d="M10 4a2 2 0 0 1 4 0v9.5a4 4 0 1 1-4 0z" fill="#fff8ea"/><circle cx="12" cy="17" r="2.2" fill="#f2766b" stroke="none"/><path d="M12 9v7" stroke="#f2766b" stroke-width="2"/>`),
+  ledger: wrap(`<path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z" fill="#f7e2b0"/><path d="M5 17a3 3 0 0 1 3-3h11" fill="none"/><path d="M9 7.5h6M9 10.5h4" fill="none"/>`),
   clock: wrap(`<circle cx="12" cy="12" r="8.5" fill="#fff8ea"/><path d="M12 7v5l3 2" fill="none"/>`),
 };
 export const icon = (k: string) => ICONS[k] ?? '';

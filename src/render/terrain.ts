@@ -24,8 +24,12 @@ export class Terrain {
     uSel: { value: new THREE.Vector4() },
     uGrass: { value: new THREE.Color('#86CC63') },
     uPoll: { value: null as THREE.DataTexture | null }, uPollOn: { value: 0 },
+    uRoad: { value: null as THREE.DataTexture | null }, uRoadStyle: { value: 0 },
   };
   private pollData!: Uint8Array;
+  private roadData!: Uint8Array;
+  /** occupied land tiles (buildings and roads), in the margin grid: the ground is levelled under them */
+  private occT!: Float32Array;
   waterU: Record<string, THREE.IUniform>;
   terrain: THREE.Mesh;
   water: THREE.Mesh;
@@ -48,6 +52,11 @@ export class Terrain {
     pt.magFilter = THREE.LinearFilter; pt.minFilter = THREE.LinearFilter;
     pt.needsUpdate = true;
     this.terrainU.uPoll.value = pt;
+    this.roadData = new Uint8Array(W * W * 4);
+    const rt = new THREE.DataTexture(this.roadData, W, W, THREE.RGBAFormat);
+    rt.magFilter = THREE.LinearFilter; rt.minFilter = THREE.LinearFilter;
+    rt.needsUpdate = true;
+    this.terrainU.uRoad.value = rt;
     // tile-level fields with margin, then a light blur to round the corners
     const TW = this.TW;
     const raw = new Float32Array(TW * TW), rawR = new Float32Array(TW * TW);
@@ -71,6 +80,7 @@ export class Terrain {
       }
       return out;
     };
+    this.occT = new Float32Array(TW * TW);
     this.landT = blur(raw);
     this.rockT = blur(rawR);
     this.terrain = this.buildTerrain();
@@ -100,7 +110,45 @@ export class Terrain {
   }
   /** 0..1, land where >= 0.5 */
   land(wx: number, wz: number) { return this.sample(this.landT, wx, wz) + this.noise(wx, wz) * 0.08; }
+  /** ground height, levelled to the street where buildings and roads stand (a little quay on the shore) */
   height(wx: number, wz: number) {
+    const y = this.rawHeight(wx, wz);
+    return y < 0 ? y * (1 - this.raise(wx, wz)) : y;
+  }
+  /** 0..1 how much the ground at a point is levelled up to street height */
+  raise(wx: number, wz: number) {
+    const o = this.sample(this.occT, wx, wz);
+    if (o < 0.3) return 0;
+    const L = this.land(wx, wz);
+    return THREE.MathUtils.smoothstep(o, 0.3, 0.62) * THREE.MathUtils.smoothstep(L, 0.46, 0.53);
+  }
+  /** roads and buildings changed: level the ground under them and repaint the streets */
+  setGround(occ: Int32Array, isLandRoad: (i: number) => boolean, roadStyle: number) {
+    const W = this.W, TW = this.TW;
+    this.occT.fill(0);
+    for (let i = 0; i < W * W; i++) {
+      const x = i % W, z = (i / W) | 0;
+      const road = isLandRoad(i);
+      const v = occ[i] > 0 || road ? 1 : 0;
+      this.occT[(z + MARGIN) * TW + x + MARGIN] = v;
+      this.roadData[i * 4] = road ? 255 : 0; this.roadData[i * 4 + 3] = 255;
+    }
+    this.terrainU.uRoad.value!.needsUpdate = true;
+    this.terrainU.uRoadStyle.value = roadStyle;
+    const geo = this.terrain.geometry as THREE.BufferGeometry;
+    const pos = geo.getAttribute('position') as THREE.BufferAttribute;
+    const ra = geo.getAttribute('raise') as THREE.BufferAttribute;
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i), z = pos.getZ(i);
+      const raw = this.rawHeight(x, z);
+      const r = raw < 0 ? this.raise(x, z) : 0;
+      pos.setY(i, raw < 0 ? raw * (1 - r) : raw);
+      ra.setX(i, r * Math.min(1, -raw * 6));
+    }
+    pos.needsUpdate = true; ra.needsUpdate = true;
+    geo.computeVertexNormals();
+  }
+  rawHeight(wx: number, wz: number) {
     const L = this.land(wx, wz);
     let y: number;
     if (L >= 0.62) y = 0;
@@ -131,15 +179,17 @@ export class Terrain {
       kind[i * 3 + 2] = THREE.MathUtils.smoothstep(R, 0.35, 0.65);
     }
     geo.setAttribute('kind', new THREE.BufferAttribute(kind, 3));
+    geo.setAttribute('raise', new THREE.BufferAttribute(new Float32Array(n), 1));
     geo.computeVertexNormals();
     const mat = new THREE.MeshToonMaterial({ color: 0xffffff, gradientMap: ramp });
     const U = this.terrainU;
     mat.onBeforeCompile = sh => {
       Object.assign(sh.uniforms, U, ENV);
-      sh.vertexShader = 'attribute vec3 kind;\nvarying vec3 vKind;\nvarying vec3 vWP;\n' + sh.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvKind = kind;');
+      sh.vertexShader = 'attribute vec3 kind;\nattribute float raise;\nvarying vec3 vKind;\nvarying vec3 vWP;\nvarying float vRaise;\n' + sh.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvKind = kind;\nvRaise = raise;');
       sh.fragmentShader = `
-uniform float uGrid, uW, uRangeOn, uSnow, uWet, uPollOn;
-uniform sampler2D uPoll;
+uniform float uGrid, uW, uRangeOn, uSnow, uWet, uPollOn, uRoadStyle;
+uniform sampler2D uPoll, uRoad;
+varying float vRaise;
 uniform vec3 uRange, uGrass;
 uniform vec4 uSel;
 varying vec3 vKind;
@@ -172,7 +222,28 @@ float tfbm(vec2 p){ return tn(p) * 0.6 + tn(p * 2.3 + 7.1) * 0.3 + tn(p * 5.1 + 
   // pollution turns the grass dusty and olive
   float poll = texture2D(uPoll, (vWP.xz + uW * 0.5) / uW).r;
   c = mix(c, vec3(0.64, 0.6, 0.46) * (0.95 + 0.05 * n1), smoothstep(0.15, 0.8, poll) * 0.7 * vKind.x * step(-0.1, vWP.y));
-  float snowAmt = uSnow * smoothstep(-0.24, -0.1, vWP.y) * (1.0 - 0.25 * vKind.z);
+  // levelled ground on the shore becomes a little stone quay
+  vec2 qc = floor(vec2(vWP.x * 4.0 + floor(vWP.y * 6.0) * 0.5, vWP.y * 6.0 + vWP.z * 4.0));
+  vec3 quay = vec3(0.80, 0.76, 0.69) * (0.9 + 0.12 * th(qc));
+  float mortar = step(0.86, fract(vWP.y * 6.0)) + step(0.9, fract(vWP.x * 4.0 + vWP.z * 4.0 + floor(vWP.y * 6.0) * 0.5));
+  quay *= 1.0 - 0.18 * clamp(mortar, 0.0, 1.0);
+  c = mix(c, quay, smoothstep(0.05, 0.35, vRaise));
+  // streets painted into the ground: dirt track, then cobbles, then paving
+  vec2 ruv = (vWP.xz + uW * 0.5) / uW;
+  float rm = texture2D(uRoad, ruv).r;
+  float road = smoothstep(0.56, 0.6, rm);
+  float kerb = road * (1.0 - smoothstep(0.6, 0.68, rm));
+  vec3 dirt = vec3(0.86, 0.75, 0.56) * (0.94 + 0.1 * tn(vWP.xz * 3.0)) * (1.0 - 0.06 * step(0.7, tn(vWP.xz * 9.0)));
+  vec2 cs = vWP.xz * 4.5; vec2 ci = floor(cs + vec2(0.5 * mod(floor(cs.y), 2.0), 0.0));
+  vec2 cf = fract(cs + vec2(0.5 * mod(floor(cs.y), 2.0), 0.0)) - 0.5;
+  float stoneEdge = smoothstep(0.36, 0.48, max(abs(cf.x), abs(cf.y)));
+  vec3 cobble = mix(vec3(0.82, 0.78, 0.71) * (0.9 + 0.14 * th(ci)), vec3(0.6, 0.56, 0.52), stoneEdge);
+  vec3 paved = vec3(0.70, 0.70, 0.71) * (0.97 + 0.04 * tn(vWP.xz * 6.0));
+  vec3 rc = uRoadStyle < 0.5 ? dirt : uRoadStyle < 1.5 ? cobble : paved;
+  vec3 kerbC = uRoadStyle < 0.5 ? vec3(0.74, 0.62, 0.45) : uRoadStyle < 1.5 ? vec3(0.66, 0.62, 0.57) : vec3(0.88, 0.87, 0.84);
+  rc = mix(rc, kerbC, kerb);
+  c = mix(c, rc, road);
+  float snowAmt = uSnow * smoothstep(-0.24, -0.1, vWP.y) * (1.0 - 0.25 * vKind.z) * (1.0 - road * 0.4);
   c = mix(c, vec3(0.94, 0.96, 1.0) * (0.96 + 0.04 * n2), snowAmt);
   c *= 1.0 - uWet * 0.14;
   vec4 diffuseColor = vec4(c, opacity);`).replace('#include <dithering_fragment>', `#include <dithering_fragment>

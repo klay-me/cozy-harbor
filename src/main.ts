@@ -240,6 +240,7 @@ async function boot() {
     if (k === 'escape') { if (hud.panelOpen) { hud.closePanels(); return; } setTool('select'); select(null); }
     if (k === 't') hud.togglePanel('research');
     if (k === 'g') hud.togglePanel('goods');
+    if (k === 'l') hud.togglePanel('ledger');
     if (k === 'p') hud.setOverlay(!hud.overlay);
     if (k === ' ') { e.preventDefault(); game.speed = game.speed === 0 ? 1 : 0; }
     if (k === 'x') setTool(tool === 'demolish' ? 'select' : 'demolish');

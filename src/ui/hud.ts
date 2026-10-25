@@ -7,6 +7,7 @@ import {
 import type { AudioSettings } from '../audio/sound';
 import type { RotateMode } from '../render/camera';
 import { icon } from './icons';
+import { SEASON_IDS, SEASON_DAYS, DAY_LENGTH, HEAT_BELOW } from '../sim/data';
 
 export type Tool = 'select' | 'demolish' | BuildingId;
 
@@ -70,6 +71,7 @@ export class Hud {
         <div class="items" id="items"></div>
         <div class="tools">
           <button id="tResearch" title="研究 (T)">${icon('research')}研究</button>
+          <button id="tLedger" title="收支账本 (L)">${icon('ledger')}账本</button>
           <button id="tGoods" title="仓库与商船 (G)">${icon('box')}仓库</button>
           <button id="tOverlay" title="污染视图 (P)">${icon('pollution')}污染</button>
           <button id="tSelect" title="选择 (Esc)">选择</button>
@@ -78,6 +80,7 @@ export class Hud {
       </div>
       <div class="panel card" id="research" hidden role="dialog" aria-label="研究"></div>
       <div class="panel card" id="goods" hidden role="dialog" aria-label="仓库与商船"></div>
+      <div class="panel card" id="ledger" hidden role="dialog" aria-label="收支账本"></div>
       <div class="toasts" id="toasts" aria-live="polite"></div>
       <div class="menu card" id="menu" hidden>
         <h3>暖港</h3>
@@ -97,7 +100,7 @@ export class Hud {
           <p><b>修路</b>：选"道路"后按住拖动</p>
           <p><b>研究 / 仓库 / 污染</b>：T / G / P</p>
           <p><b>取消</b>：右键单击或 Esc</p>
-          <p>冬天住宅要烧柴火（工业时代后烧煤），秋天记得囤好燃料。</p>
+          <p>气温低于 8°C 住宅就要烧柴火（工业时代后烧煤），越冷烧得越多，秋天记得囤好燃料。</p><p><b>账本</b>：L，或点金币、货物数字，看每分钟的收入支出和货物进出。</p>
           <p>游戏每 30 秒自动保存在这台设备的浏览器里。</p>
         </div>
       </div>`;
@@ -112,10 +115,15 @@ export class Hud {
       if (b) hooks.speed(Number(b.dataset.speed));
     });
     // top bar shortcuts
-    $('#res', root).addEventListener('click', e => {
-      const a = (e.target as HTMLElement).closest<HTMLElement>('[data-open]')?.dataset.open;
+    // pointerdown, because the bar is redrawn a few times a second and a click could land on a stale node
+    $('#res', root).addEventListener('pointerdown', e => {
+      const el = (e.target as HTMLElement).closest<HTMLElement>('[data-open]');
+      if (!el) return;
+      hooks.click();
+      const a = el.dataset.open;
       if (a === 'research') this.togglePanel('research');
       if (a === 'goods') this.togglePanel('goods');
+      if (a === 'ledger') { this.ledgerTab = el.dataset.good ? 'goods' : 'gold'; this.ledgerOpen = (el.dataset.good as GoodId) || this.ledgerOpen; this.togglePanel('ledger', true); }
     });
     // menu
     const menu = $('#menu', root);
@@ -152,6 +160,7 @@ export class Hud {
     $('#tDemolish', root).addEventListener('click', () => hooks.tool(this.tool === 'demolish' ? 'select' : 'demolish'));
     $('#tResearch', root).addEventListener('click', () => this.togglePanel('research'));
     $('#tGoods', root).addEventListener('click', () => this.togglePanel('goods'));
+    $('#tLedger', root).addEventListener('click', () => this.togglePanel('ledger'));
     $('#tOverlay', root).addEventListener('click', () => this.setOverlay(!this.overlayOn));
     // panels
     $('#research', root).addEventListener('click', e => {
@@ -159,6 +168,15 @@ export class Hud {
       if (el.closest('[data-a="close"]')) { this.togglePanel('research', false); return; }
       const t = el.closest<HTMLElement>('[data-tech]')?.dataset.tech as TechId | undefined;
       if (t) { hooks.research(t); this.renderResearch(); }
+    });
+    $('#ledger', root).addEventListener('click', e => {
+      const el = e.target as HTMLElement;
+      if (el.closest('[data-a="close"]')) { this.togglePanel('ledger', false); return; }
+      if (el.closest('[data-a="trade"]')) { this.togglePanel('goods', true); return; }
+      const tab = el.closest<HTMLElement>('[data-ltab]')?.dataset.ltab;
+      if (tab) { this.ledgerTab = tab as 'gold' | 'goods'; this.renderLedger(); return; }
+      const row = el.closest<HTMLElement>('[data-lgood]')?.dataset.lgood as GoodId | undefined;
+      if (row) { this.ledgerOpen = this.ledgerOpen === row ? null : row; this.renderLedger(); }
     });
     $('#goods', root).addEventListener('click', e => {
       const el = e.target as HTMLElement;
@@ -216,17 +234,18 @@ export class Hud {
   }
   get overlay() { return this.overlayOn; }
   /** open/close a centred panel; only one at a time */
-  togglePanel(id: 'research' | 'goods', force?: boolean) {
+  togglePanel(id: 'research' | 'goods' | 'ledger', force?: boolean) {
     const el = $('#' + id, this.root);
     const open = force ?? el.hidden;
-    for (const p of ['research', 'goods']) $('#' + p, this.root).hidden = true;
+    for (const p of ['research', 'goods', 'ledger']) $('#' + p, this.root).hidden = true;
     el.hidden = !open;
     $('#tResearch', this.root).classList.toggle('on', id === 'research' && open);
     $('#tGoods', this.root).classList.toggle('on', id === 'goods' && open);
-    if (open) id === 'research' ? this.renderResearch() : this.renderGoods();
+    $('#tLedger', this.root).classList.toggle('on', id === 'ledger' && open);
+    if (open) id === 'research' ? this.renderResearch() : id === 'goods' ? this.renderGoods() : this.renderLedger();
   }
   closePanels() { this.togglePanel('research', false); }
-  get panelOpen() { return !$('#research', this.root).hidden || !$('#goods', this.root).hidden; }
+  get panelOpen() { return ['research', 'goods', 'ledger'].some(p => !$('#' + p, this.root).hidden); }
 
   private renderItems() {
     const g = this.game;
@@ -266,6 +285,12 @@ export class Hud {
     this.updateInfo();
     if (!$('#research', this.root).hidden) this.updateResearch();
     if (!$('#goods', this.root).hidden) this.updateGoods();
+    this.ledgerT += 0.25;
+    if (!$('#ledger', this.root).hidden && this.ledgerT >= 1) {
+      this.ledgerT = 0;
+      const box = $('#ledger', this.root), st = box.scrollTop;
+      this.renderLedger(); box.scrollTop = st;
+    }
     const top = (this.root.querySelector('.topbar') as HTMLElement).getBoundingClientRect().bottom + 10;
     if (innerWidth > 720) {
       $('#quest', this.root).style.top = `${top}px`;
@@ -304,20 +329,27 @@ export class Hud {
     const fuel = g.era >= 3 ? g.storage.firewood + g.storage.coal : g.storage.firewood;
     const need = g.winterFuelEstimate();
     const happyCls = g.happyAvg >= 70 ? 'ok' : g.happyAvg >= 45 ? 'mid' : 'bad';
+    const nextSeason = SEASON_IDS[(SEASON_IDS.indexOf(g.season) + 1) % 4];
+    const leftMin = g.seasonLeft / 60;
+    const leftTxt = leftMin >= 1 ? `${Math.ceil(leftMin)} 分钟` : `${Math.ceil(g.seasonLeft)} 秒`;
+    const tempCls = g.era >= 2 && g.temp < HEAT_BELOW ? (g.temp < -3 ? 'bad' : 'mid') : g.temp > 24 ? 'hot' : '';
+    const rates = g.ledger.rates();
     $('#res', this.root).innerHTML = `
-      <span class="chip gold" title="金币。税收 ${fmt(g.taxRate)}/分，维护费 ${fmt(g.upkeepRate)}/分">${icon('gold')}<b>${fmt(g.gold)}</b><i class="${net >= 0 ? 'up' : 'down'}">${net >= 0 ? '+' : ''}${Math.round(net)}/分</i></span>
+      <span class="chip gold" data-open="ledger" title="金币。税收 ${fmt(g.taxRate)}/分，维护费 ${fmt(g.upkeepRate)}/分（点击看收支明细）">${icon('gold')}<b>${fmt(g.gold)}</b><i class="${net >= 0 ? 'up' : 'down'}">${net >= 0 ? '+' : ''}${Math.round(net)}/分</i></span>
       <span class="chip pop" title="人口 ${total}">${tiers.map(t => `<span title="${TIERS[t].name}：${g.pop[t]} 人（空闲劳动力 ${Math.max(0, g.workforce[t].have - g.workforce[t].need)}，岗位 ${g.workforce[t].need}）" class="${g.workforce[t].need > g.workforce[t].have ? 'short' : ''}">${icon(t)}<b>${g.pop[t]}</b></span>`).join('')}</span>
       <span class="chip ${happyCls}" title="平均幸福度">${icon('happy')}<b>${Math.round(g.happyAvg)}</b></span>
       ${g.era >= 3 ? `<span class="chip ${g.power.use > g.power.gen + 0.05 ? 'low' : ''}" title="电网：发电 ${g.power.gen.toFixed(1)} / 用电 ${g.power.use.toFixed(1)}">${icon('power')}<b>${g.power.gen.toFixed(0)}</b><i>/${g.power.use.toFixed(0)}</i></span>
       <span class="chip ${g.pollutionAvg > 25 ? 'low' : ''}" title="住宅区平均污染（点"污染"查看分布）">${icon('pollution')}<b>${g.pollutionAvg.toFixed(0)}</b></span>` : ''}
       <button class="chip research" data-open="research" title="研究（T）">${icon('research')}<b>${cur ? TECHS[cur].name : '选择研究'}</b>${cur ? `<span class="mini"><i style="width:${rPct}%"></i></span>` : ''}</button>
-      <span class="chip clock" title="${SEASONS[g.season].effect}">${icon(g.night > 0.5 ? 'moon' : g.season)}<b>第${g.year}年 ${SEASONS[g.season].name}</b><i>${String(Math.floor(g.hour)).padStart(2, '0')}:${String(Math.floor((g.hour % 1) * 60)).padStart(2, '0')}</i></span>
+      <span class="chip clock" title="${SEASONS[g.season].name}季 第 ${g.seasonDay}/${SEASON_DAYS} 天：${SEASONS[g.season].effect}&#10;距离${SEASONS[nextSeason].name}天还有 ${leftTxt}（游戏内约 ${(g.seasonLeft / DAY_LENGTH).toFixed(1)} 天）&#10;开局以来第 ${g.day + 1} 天">${icon(g.night > 0.5 ? 'moon' : g.season)}<b>第${g.year}年 ${SEASONS[g.season].name}</b><i>${g.seasonDay}/${SEASON_DAYS}天 ${String(Math.floor(g.hour)).padStart(2, '0')}:${String(Math.floor((g.hour % 1) * 60)).padStart(2, '0')}</i><span class="mini season"><i style="width:${Math.round(g.seasonFrac * 100)}%"></i></span></span>
+      <span class="chip temp ${tempCls}" title="气温 ${g.temp.toFixed(1)}°C。低于 ${HEAT_BELOW}°C 住宅要烧燃料取暖，越冷烧得越多${g.era < 2 ? '（田园时代还不用取暖）' : ''}">${icon('thermo')}<b>${Math.round(g.temp)}°C</b></span>
       <span class="chip weather" title="${wx.effect}">${icon(g.weather.cur)}<b>${wx.name}</b>${wx.effect !== '一切正常' ? `<i>${wx.effect}</i>` : ''}</span>
       ${winterSoon ? `<span class="chip ${fuel < need ? 'low' : 'ok'}" title="冬季燃料：库存 ${fmt(fuel)}，整个冬天大约要烧 ${Math.ceil(need)}">${icon(g.season === 'winter' ? 'cold' : 'warm')}<b>${fmt(fuel)}</b><i>/${Math.ceil(need)}</i></span>` : ''}
       <span class="sep"></span>
       ${this.keyGoods().map(k => {
         const v = g.storage[k], low = v < 1 && essentials.has(k);
-        return `<span class="chip good${low ? ' low' : ''}" title="${GOODS[k].name}：${fmt(v)} / ${g.cap}">${icon(k)}<b>${fmt(v)}</b></span>`;
+        const fl = rates[k], netK = fl ? Object.values(fl.in).reduce((a, b) => a + b, 0) - Object.values(fl.out).reduce((a, b) => a + b, 0) : 0;
+        return `<span class="chip good${low ? ' low' : ''}" data-open="ledger" data-good="${k}" title="${GOODS[k].name}：${fmt(v)} / ${g.cap}，每分钟 ${netK >= 0 ? '+' : ''}${netK.toFixed(1)}（点击看明细）">${icon(k)}<b>${fmt(v)}</b>${Math.abs(netK) >= 0.3 ? `<em class="${netK > 0 ? 'up' : 'down'}">${netK > 0 ? '▲' : '▼'}</em>` : ''}</span>`;
       }).join('')}
       <button class="chip more" data-open="goods" title="全部货物与商船（G）">${icon('box')}<b>全部</b></button>`;
   }
@@ -380,6 +412,48 @@ export class Hud {
       : '还没有研究建筑：先建一座村塾（之后有工匠行会、大学、研究所）';
     const bar = box.querySelector<HTMLElement>('[data-rp]');
     if (bar && cur) bar.style.width = `${Math.min(100, g.research.points / g.techCost(cur) * 100)}%`;
+  }
+
+  // ---------- ledger: where gold and goods come from and go ----------
+  private ledgerTab: 'gold' | 'goods' = 'gold';
+  private ledgerOpen: GoodId | null = null;
+  private ledgerT = 0;
+  private renderLedger() {
+    const g = this.game, box = $('#ledger', this.root);
+    const r = g.ledger.rates();
+    const sum = (o: Record<string, number> = {}) => Object.values(o).reduce((a, b) => a + b, 0);
+    const lines = (o: Record<string, number> = {}, sign: string) => Object.entries(o).filter(([, v]) => v >= 0.05).sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => `<div class="lrow"><span>${k}</span><b class="${sign === '+' ? 'up' : 'down'}">${sign}${v >= 10 ? Math.round(v) : v.toFixed(1)}</b></div>`).join('') || '<div class="lrow none"><span>暂无</span></div>';
+    let body = '';
+    if (this.ledgerTab === 'gold') {
+      const gi = r.gold?.in, go = r.gold?.out;
+      // upkeep: group "维护·X" lines and show building counts
+      const counts: Record<string, number> = {};
+      g.buildings.forEach(b => { const n = BUILDINGS[b.type].name; counts[n] = (counts[n] ?? 0) + 1; });
+      const outs: Record<string, number> = {};
+      for (const [k, v] of Object.entries(go ?? {})) {
+        const n = k.startsWith('维护·') ? k.slice(3) : null;
+        outs[n ? `${n} ×${counts[n] ?? 0}（维护）` : k] = v;
+      }
+      const net = sum(gi) - sum(go);
+      body = `<div class="lsum"><span>最近一分钟</span><b class="${net >= 0 ? 'up' : 'down'}">${net >= 0 ? '+' : ''}${Math.round(net)} 金币/分</b><span class="soft">收入 ${Math.round(sum(gi))} · 支出 ${Math.round(sum(go))}</span></div>
+        <div class="lcols"><section><h4>收入</h4>${lines(gi, '+')}</section><section><h4>支出</h4>${lines(outs, '-')}</section></div>
+        <p class="desc">税收按住户的幸福度收取，幸福度 80 以上多收 20%；生病的人不交税。建造、升级和买卖也记在这里。</p>`;
+    } else {
+      const goods = GOOD_IDS.filter(k => GOODS[k].era <= g.era || g.storage[k] > 0);
+      body = `<div class="lgoods">
+        <div class="lhead"><span></span><span>货物</span><span>库存</span><span>产出/分</span><span>消耗/分</span><span>净值</span></div>
+        ${goods.map(k => {
+          const f = r[k], pin = sum(f?.in), pout = sum(f?.out), net = pin - pout;
+          const eta = net < -0.05 && g.storage[k] > 0 ? `约 ${Math.max(1, Math.round(g.storage[k] / -net))} 分钟用完` : net > 0.05 && g.storage[k] < g.cap ? `约 ${Math.max(1, Math.round((g.cap - g.storage[k]) / net))} 分钟存满` : '';
+          const open = this.ledgerOpen === k;
+          return `<button class="lgood${open ? ' open' : ''}" data-lgood="${k}">${icon(k)}<span class="gn">${GOODS[k].name}</span><span>${fmt(g.storage[k])}<small>/${g.cap}</small></span><span class="up">+${pin.toFixed(1)}</span><span class="down">-${pout.toFixed(1)}</span><b class="${net >= 0.05 ? 'up' : net <= -0.05 ? 'down' : ''}">${net >= 0 ? '+' : ''}${net.toFixed(1)}</b></button>
+            ${open ? `<div class="ldetail"><div class="lcols"><section><h4>来源</h4>${lines(f?.in, '+')}</section><section><h4>去向</h4>${lines(f?.out, '-')}</section></div>${eta ? `<p class="desc">${eta}</p>` : ''}</div>` : ''}`;
+        }).join('')}</div>
+        <p class="desc">按最近一分钟的实际进出计算。点一行看来源和去向。<button class="link" data-a="trade">去商船买卖 →</button></p>`;
+    }
+    box.innerHTML = `<header><h3>账本</h3><div class="ltabs"><button data-ltab="gold" class="${this.ledgerTab === 'gold' ? 'on' : ''}">${icon('gold')}金币</button><button data-ltab="goods" class="${this.ledgerTab === 'goods' ? 'on' : ''}">${icon('box')}货物</button></div><button class="x" data-a="close" aria-label="关闭">×</button></header>${body}`;
+    if (this.ledgerOpen && this.ledgerTab === 'goods') box.querySelector('.lgood.open')?.scrollIntoView({ block: 'nearest' });
   }
 
   // ---------- goods & trade panel ----------

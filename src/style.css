@@ -274,3 +274,39 @@ button.chip:hover { border-color: var(--ink); }
   .tabs button, .tools button { flex: none; white-space: nowrap; }
   .quest .goal .need { grid-template-columns: 56px 1fr auto; }
 }
+
+/* ---------- calendar, temperature, ledger ---------- */
+.chip[data-open] { cursor: pointer; }
+.chip[data-open]:hover { border-color: var(--ink); }
+.chip em { font-style: normal; font-size: 9px; margin-left: -1px; }
+.chip em.up, .lrow b.up, .lgood .up, .lsum b.up, .lgood b.up { color: #3e9a4a; }
+.chip em.down, .lrow b.down, .lgood .down, .lsum b.down, .lgood b.down { color: var(--danger); }
+.chip .mini.season { width: 26px; }
+.chip .mini.season i { background: var(--leaf); }
+.chip.temp.hot { background: #fff0e0; border-color: #f2b07a; }
+.ltabs { display: flex; gap: 4px; }
+.ltabs button { display: inline-flex; align-items: center; gap: 4px; border: 2px solid #e6d8bd; background: #fff; border-radius: 10px; padding: 4px 10px; font-weight: 700; font-size: 13px; }
+.ltabs button svg { width: 16px; height: 16px; }
+.ltabs button.on { background: var(--ink); color: var(--card); border-color: var(--ink); }
+#ledger { width: min(720px, calc(100vw - 24px)); }
+.lsum { display: flex; align-items: baseline; gap: 12px; padding: 8px 12px; background: #fff; border: 2px solid #e6d8bd; border-radius: 12px; margin-bottom: 10px; font-size: 13px; }
+.lsum b { font-size: 20px; font-variant-numeric: tabular-nums; }
+.lsum .soft { color: var(--ink-soft); margin-left: auto; }
+.lcols { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.lcols h4 { margin: 0 0 4px; font-size: 12px; letter-spacing: .06em; color: var(--ink-soft); }
+.lrow { display: flex; justify-content: space-between; gap: 8px; padding: 4px 8px; font-size: 13px; border-bottom: 1px dashed #eadfca; font-variant-numeric: tabular-nums; }
+.lrow.none { color: var(--ink-soft); }
+.lgoods { display: flex; flex-direction: column; gap: 3px; }
+.lhead, .lgood { display: grid; grid-template-columns: 22px 1.4fr 1fr 1fr 1fr 0.9fr; align-items: center; gap: 6px; padding: 5px 8px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.lhead { color: var(--ink-soft); font-size: 12px; border: 2px solid transparent; }
+.lgood { text-align: left; background: #fff; border: 2px solid #e6d8bd; border-radius: 10px; }
+.lgood:hover, .lgood.open { border-color: var(--ink); }
+.lgood small { color: var(--ink-soft); }
+.lgood .gn { font-weight: 700; }
+.ldetail { padding: 6px 4px 10px 30px; }
+.panel .link { border: 0; background: none; color: var(--sky); font-weight: 700; padding: 0 4px; text-decoration: underline; }
+@media (max-width: 720px) {
+  .lcols { grid-template-columns: 1fr; }
+  .lhead, .lgood { grid-template-columns: 20px 1.2fr 1fr .9fr .9fr .9fr; font-size: 12px; gap: 3px; }
+  .chip .mini.season { display: none; }
+}

@@ -2,7 +2,7 @@ import { World, Tile } from './world';
 import {
   BUILDINGS, BuildingId, BuildingDef, GOOD_IDS, GoodId, GOODS, TIERS, TIER_IDS, TierId, ServiceId, SERVICES, Cost,
   START, REFUND, BUY_MARKUP, BRIDGE_COST, MAP_SIZE, WEATHER, WeatherId, Era, ERAS, TECHS, TECH_IDS, TechId, TechEffect,
-  HEAT_PER_RESIDENT, POWER_HEAT_PER_RESIDENT, coldFactor, POLLUTION_RADIUS,
+  HEAT_PER_RESIDENT, POWER_HEAT_PER_RESIDENT, coldness, SEASON_TEMP, COLDER_PER_YEAR, COLDER_MAX, WEATHER_TEMP, POLLUTION_RADIUS,
   DAY_LENGTH, SEASON_DAYS, START_HOUR, SEASONS, SEASON_IDS, SeasonId,
 } from './data';
 
@@ -60,6 +60,39 @@ export const QUESTS: Quest[] = [
 ];
 
 const STEP = 0.25;
+
+/**
+ * Rolling book of what flowed in and out over the last minute of game time.
+ * Keys: resource ('gold' or a good) | 'in' | 'out' | label.
+ */
+export class Ledger {
+  private buckets: Map<string, number>[] = [new Map()];
+  private age = 0;
+  private span = 0;
+  add(res: string, dir: 'in' | 'out', label: string, amt: number) {
+    if (!(amt > 0)) return;
+    const k = `${res}|${dir}|${label}`, b = this.buckets[this.buckets.length - 1];
+    b.set(k, (b.get(k) ?? 0) + amt);
+  }
+  tick(dt: number) {
+    this.age += dt;
+    this.span = Math.min(60, this.span + dt);
+    if (this.age >= 10) { this.age = 0; this.buckets.push(new Map()); if (this.buckets.length > 7) this.buckets.shift(); }
+  }
+  /** per-minute rates: res -> { in: {label: rate}, out: {label: rate} } */
+  rates() {
+    const out: Record<string, { in: Record<string, number>; out: Record<string, number> }> = {};
+    // the oldest bucket is only partly inside the window
+    const secs = Math.max(10, Math.min(60, (this.buckets.length - 1) * 10 + this.age));
+    for (const b of this.buckets) for (const [k, v] of b) {
+      const [res, dir, label] = k.split('|');
+      const r = (out[res] ??= { in: {}, out: {} });
+      r[dir as 'in' | 'out'][label] = (r[dir as 'in' | 'out'][label] ?? 0) + v * 60 / secs;
+    }
+    return out;
+  }
+  reset() { this.buckets = [new Map()]; this.age = 0; this.span = 0; }
+}
 const PROD_CATS = new Set(['raw', 'craft']);
 
 type Mods = Required<Omit<TechEffect, 'prod' | 'workersLess'>> & { prod: Partial<Record<BuildingId, number>>; workersLess: Partial<Record<BuildingId, number>> };
@@ -91,6 +124,10 @@ export class Game {
   happyAvg = 0;
   /** fuel the town burns per minute in winter, by fuel */
   heatNeed: Partial<Record<GoodId | 'power', number>> = {};
+  /** what heating would burn per minute at coldness 1 (for the winter estimate) */
+  heatBase: Partial<Record<GoodId | 'power', number>> = {};
+  temp = 13;
+  ledger = new Ledger();
   netRoads = new Uint8Array(0);
   // change counters for the renderer
   bVersion = 0; rVersion = 0; tVersion = 0; pVersion = 0;
@@ -129,9 +166,30 @@ export class Game {
     if (h >= 4.5 && h < 6.5) return 1 - (h - 4.5) / 2;
     return 1;
   }
-  /** winter heating only matters once firewood exists */
-  get heatingOn() { return this.season === 'winter' && this.era >= 2; }
-  get cold() { return coldFactor(this.year); }
+  /** heating only matters once firewood exists */
+  get heatingOn() { return this.era >= 2 && coldness(this.temp) > 0; }
+  /** 0..1 how far through the current season */
+  get seasonFrac() { return this.seasonPos % 1; }
+  /** game seconds until the next season */
+  get seasonLeft() { return (1 - this.seasonFrac) * SEASON_DAYS * DAY_LENGTH; }
+  /** day of the current season, 1-based */
+  get seasonDay() { return Math.floor(this.seasonFrac * SEASON_DAYS) + 1; }
+  /** temperature in °C: season curve, day and night, weather, and colder winters each year */
+  tempAt(seasonPos: number, hour: number) {
+    const s = seasonPos - 0.5, i = Math.floor(s), f = s - i;
+    const k = f * f * (3 - 2 * f);
+    const a = SEASON_TEMP[((i % 4) + 4) % 4], b = SEASON_TEMP[(((i + 1) % 4) + 4) % 4];
+    let t = a + (b - a) * k;
+    const year = Math.floor(seasonPos / 4);
+    t -= Math.min(COLDER_MAX, year * COLDER_PER_YEAR) * Math.max(0, Math.min(1, (12 - t) / 18));
+    t += 4 * Math.cos(((hour - 15) / 24) * Math.PI * 2);
+    return t;
+  }
+  private calcTemp() {
+    const w = this.weather;
+    const wt = WEATHER_TEMP[w.prev] + (WEATHER_TEMP[w.cur] - WEATHER_TEMP[w.prev]) * w.blend;
+    return this.tempAt(this.seasonPos, this.hour) + wt;
+  }
   prodFactor(type: BuildingId) {
     return (WEATHER[this.weather.cur].prod[type] ?? 1) * (SEASONS[this.season].prod[type] ?? 1);
   }
@@ -172,13 +230,15 @@ export class Game {
     return null;
   }
   canAfford(c: Cost) { return this.missing(c) === null; }
-  private pay(c: Cost) {
+  private pay(c: Cost, label = '建造') {
     this.gold -= c.gold;
-    for (const k of GOOD_IDS) if (c[k]) this.storage[k] -= c[k]!;
+    this.ledger.add('gold', 'out', label, c.gold);
+    for (const k of GOOD_IDS) if (c[k]) { this.storage[k] -= c[k]!; this.ledger.add(k, 'out', label, c[k]!); }
   }
-  private gain(c: Cost, f = 1) {
+  private gain(c: Cost, f = 1, label = '拆除返还') {
     this.gold += Math.floor(c.gold * f);
-    for (const k of GOOD_IDS) if (c[k]) this.storage[k] = Math.min(this.cap, this.storage[k] + Math.floor(c[k]! * f));
+    this.ledger.add('gold', 'in', label, Math.floor(c.gold * f));
+    for (const k of GOOD_IDS) if (c[k]) { const n = Math.floor(c[k]! * f); this.storage[k] = Math.min(this.cap, this.storage[k] + n); this.ledger.add(k, 'in', label, n); }
   }
 
   canPlace(type: BuildingId, x: number, z: number): { ok: boolean; reason?: string } {
@@ -281,7 +341,10 @@ export class Game {
     if (!this.world.inside(x, z)) return false;
     const t = this.world.tile(x, z);
     if (t === Tile.Rock || this.occ[z * this.W + x] !== 0) return false;
-    return t !== Tile.Water || !this.world.isOcean(x, z);
+    if (t !== Tile.Water) return true;
+    // bridges span rivers and lakes; never the sea or the shallows right beside it
+    for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) if (this.world.tile(x + dx, z + dz) === Tile.Water && this.world.isOcean(x + dx, z + dz)) return false;
+    return true;
   }
   placeRoads(tiles: [number, number][]) {
     let n = 0;
@@ -291,7 +354,7 @@ export class Game {
       const cost = bridge ? BRIDGE_COST : { gold: BUILDINGS.road.cost.gold };
       const m = this.missing(cost);
       if (m) { this.notify(`${m}，${bridge ? '桥' : '路'}没修完`, 'warn'); break; }
-      this.pay(cost);
+      this.pay(cost, bridge ? '修桥' : '修路');
       const k = z * this.W + x;
       this.occ[k] = -1;
       if (this.world.trees[k]) { this.world.trees[k] = 0; this.tVersion++; }
@@ -336,7 +399,7 @@ export class Game {
     const block = this.upgradeBlock(b);
     if (block) { if (!quiet) this.notify(block, 'warn'); return false; }
     const up = TIERS[b.tier].upgrade!;
-    this.pay(up.cost);
+    this.pay(up.cost, '住宅升级');
     b.tier = up.to;
     this.bVersion++;
     this.sfx.push('upgrade');
@@ -357,6 +420,7 @@ export class Game {
     if (n <= 0) { this.notify(`仓库里没有${GOODS[g].name}`, 'warn'); return 0; }
     this.storage[g] -= n;
     this.gold += n * GOODS[g].price;
+    this.ledger.add(g, 'out', '卖给商船', n); this.ledger.add('gold', 'in', '卖给商船', n * GOODS[g].price);
     this.sfx.push('coin');
     return n;
   }
@@ -366,6 +430,7 @@ export class Game {
     if (n <= 0) { this.notify(this.storage[g] >= this.cap - 1 ? '仓库已满' : '金币不够', 'warn'); return 0; }
     this.storage[g] += n;
     this.gold -= n * this.buyPrice(g);
+    this.ledger.add(g, 'in', '向商船购买', n); this.ledger.add('gold', 'out', '向商船购买', n * this.buyPrice(g));
     this.sfx.push('coin');
     return n;
   }
@@ -495,6 +560,8 @@ export class Game {
   private step(dt: number) {
     this.time += dt;
     this.stepWeather(dt);
+    this.temp = this.calcTemp();
+    this.ledger.tick(dt);
     this.slowT += dt;
     if (this.slowT >= 1) { this.slowT = 0; this.replant(); this.computePollution(); this.checkEra(); this.checkQuest(); }
 
@@ -515,6 +582,7 @@ export class Game {
     for (const b of this.buildings.values()) {
       const def = BUILDINGS[b.type];
       upkeep += def.upkeep;
+      this.ledger.add('gold', 'out', `维护·${def.name}`, def.upkeep / 60 * dt);
       b.gen = 0;
       if (b.type === 'house' || b.type === 'road') continue;
       // staffing
@@ -578,7 +646,7 @@ export class Game {
       if (!b.loaded) {
         const lack = Object.entries(def.input ?? {}).find(([g, n]) => this.storage[g as GoodId] < (n as number));
         if (lack) { b.status = `缺少${GOODS[lack[0] as GoodId].name}`; b.working = false; continue; }
-        for (const [g, n] of Object.entries(def.input ?? {})) this.storage[g as GoodId] -= n as number;
+        for (const [g, n] of Object.entries(def.input ?? {})) { this.storage[g as GoodId] -= n as number; this.ledger.add(g, 'out', def.name, n as number); }
         b.loaded = true;
       }
       let pf = 1;
@@ -591,6 +659,7 @@ export class Game {
         b.loaded = false;
         if (out) {
           const n = def.outQty ?? 1;
+          this.ledger.add(out, 'in', def.name, Math.min(n, this.cap - this.storage[out]));
           this.storage[out] = Math.min(this.cap, this.storage[out] + n);
           this.events.push({ id: b.id, good: out, n });
         }
@@ -602,20 +671,28 @@ export class Game {
 
     // ---- consumption of goods
     const demand: Partial<Record<GoodId, number>> = {};
+    const byTier: Partial<Record<GoodId, [TierId, number][]>> = {};
     TIER_IDS.forEach(t => {
       const T = TIERS[t];
-      for (const [g, r] of [...Object.entries(T.essentials), ...Object.entries(T.comforts)]) demand[g as GoodId] = (demand[g as GoodId] ?? 0) + this.pop[t] * (r as number) / 60 * dt;
+      for (const [g, r] of [...Object.entries(T.essentials), ...Object.entries(T.comforts)]) {
+        const d = this.pop[t] * (r as number) / 60 * dt;
+        demand[g as GoodId] = (demand[g as GoodId] ?? 0) + d;
+        (byTier[g as GoodId] ??= []).push([t, d]);
+      }
     });
     GOOD_IDS.forEach(g => {
       const d = demand[g];
       if (!d) { this.supply[g] += (1 - this.supply[g]) * Math.min(1, dt / 4); return; }
       const ratio = Math.min(1, this.storage[g] / d);
       this.storage[g] = Math.max(0, this.storage[g] - d * ratio);
+      for (const [t, dd] of byTier[g]!) this.ledger.add(g, 'out', `${TIERS[t].name}生活`, dd * ratio);
       this.supply[g] += (ratio - this.supply[g]) * Math.min(1, dt / 4);
     });
 
     // ---- winter heating: work out what every house burns, then draw it from storage
-    const heat = this.heatingOn, heatMul = Math.max(0.2, 1 + this.mods.heating) * this.cold;
+    const cold = this.era >= 2 ? coldness(this.temp) : 0;
+    const heat = cold > 0, heatMul = Math.max(0.2, 1 + this.mods.heating) * cold;
+    const heatBase: Partial<Record<GoodId | 'power', number>> = {};
     const fuelNeed: Partial<Record<GoodId | 'power', number>> = {};
     const houseFuel = new Map<Bld, [GoodId | 'power', number]>();
     for (const b of this.buildings.values()) {
@@ -625,8 +702,10 @@ export class Game {
       if (fuel !== 'power' && this.heatedBy(b)) { fuel = 'coal'; rate *= 0.7; }
       houseFuel.set(b, [fuel, rate]);
       fuelNeed[fuel] = (fuelNeed[fuel] ?? 0) + rate;
+      heatBase[fuel] = (heatBase[fuel] ?? 0) + (cold > 0 ? rate / cold : b.residents * (fuel === 'power' ? POWER_HEAT_PER_RESIDENT : HEAT_PER_RESIDENT) * Math.max(0.2, 1 + this.mods.heating) * (fuel === 'coal' && TIERS[b.tier].fuel !== 'coal' ? 0.7 : 1));
     }
     this.heatNeed = fuelNeed;
+    this.heatBase = heatBase;
     const fuelOk: Partial<Record<GoodId | 'power', number>> = {};
     for (const [f, rate] of Object.entries(fuelNeed) as [GoodId | 'power', number][]) {
       if (!heat) { fuelOk[f] = 1; continue; }
@@ -634,6 +713,7 @@ export class Game {
       const d = rate / 60 * dt;
       const r = Math.min(1, this.storage[f] / d);
       this.storage[f] = Math.max(0, this.storage[f] - d * r);
+      this.ledger.add(f, 'out', '取暖', d * r);
       fuelOk[f] = r;
     }
 
@@ -657,7 +737,9 @@ export class Game {
       const envV = Math.max(0, 1 - pol / 60);
       // warmth eases towards the share of fuel that arrived
       const hf = houseFuel.get(b);
-      const warmGoal = heat && hf ? (fuelOk[hf[0]] ?? 1) : 1;
+      const ok = hf ? (fuelOk[hf[0]] ?? 1) : 1;
+      // a chilly evening without fuel is bearable; a freezing one is not
+      const warmGoal = heat && hf ? ok + (1 - ok) * Math.max(0, 1 - cold * 2) : 1;
       b.warm += (warmGoal - b.warm) * Math.min(1, dt / 3);
       b.parts = [
         { label: '必需品', value: essV * 30, max: 30 },
@@ -691,7 +773,9 @@ export class Game {
       else if (b.residents > target && b.growT >= 6) { b.residents--; b.growT = 0; }
       if (b.residents === target) b.growT = Math.min(b.growT, 4);
       b.status = !b.connected ? '没有连上道路' : b.coldT > 30 ? '天太冷，有人生病了' : b.warm < 0.5 && heat ? '家里没有燃料取暖' : hp >= 80 ? '生活美满' : hp >= 50 ? '还算满意' : '日子不好过';
-      tax += (b.residents - b.sick) * T.tax * (hp / 100) * (hp > 80 ? 1.2 : 1);
+      const t1 = (b.residents - b.sick) * T.tax * (hp / 100) * (hp > 80 ? 1.2 : 1);
+      tax += t1;
+      this.ledger.add('gold', 'in', `${T.name}税收`, t1 / 60 * dt);
       happySum += hp; houses++;
     }
     this.happyAvg = houses ? happySum / houses : 0;
@@ -790,7 +874,7 @@ export class Game {
   private checkQuest() {
     const q = QUESTS[this.questIndex];
     if (!q || !q.done(this)) return;
-    this.gain(q.reward);
+    this.gain(q.reward, 1, '目标奖励');
     this.questIndex++;
     this.sfx.push('quest');
     const reward = [q.reward.gold ? `${q.reward.gold} 金币` : '', ...GOOD_IDS.filter(k => q.reward[k]).map(k => `${q.reward[k]} ${GOODS[k].name}`)].filter(Boolean).join('、');
@@ -821,10 +905,15 @@ export class Game {
   }
   /** stored fuel units the whole winter will burn at the current population */
   winterFuelEstimate() {
-    const minutes = DAY_LENGTH * SEASON_DAYS / 60;
-    let n = 0;
-    for (const [f, r] of Object.entries(this.heatNeed)) if (f !== 'power') n += r! * minutes;
-    return n;
+    // average coldness over the coming winter, sampled through the days and nights
+    const start = Math.floor(this.seasonPos / 4) * 4 + (this.season === 'winter' && this.seasonFrac > 0 ? 3 + this.seasonFrac : 3);
+    const end = Math.floor(this.seasonPos / 4) * 4 + 4;
+    let c = 0, n = 0;
+    for (let p = start; p < end; p += 0.02) { c += coldness(this.tempAt(p, (p * SEASON_DAYS * 24) % 24)); n++; }
+    const minutes = (end - start) * SEASON_DAYS * DAY_LENGTH / 60;
+    let tot = 0;
+    for (const [f, r] of Object.entries(this.heatBase)) if (f !== 'power') tot += r! * (n ? c / n : 0) * minutes;
+    return tot;
   }
   setWeather(next: WeatherId) {
     const w = this.weather;

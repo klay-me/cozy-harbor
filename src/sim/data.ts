@@ -54,8 +54,8 @@ export const TIERS: Record<TierId, TierDef> = {
   citizen: { name: '市民', era: 4, cap: 16, tax: 8, essentials: { bread: 0.04, cans: 0.04 }, comforts: { clothes: 0.03, appliances: 0.02 }, services: ['school', 'hospital', 'park', 'theatre'], fuel: 'power' },
 };
 /** winter fuel per resident per minute at cold factor 1; power is in units of the grid */
-export const HEAT_PER_RESIDENT = 0.05;
-export const POWER_HEAT_PER_RESIDENT = 0.25;
+export const HEAT_PER_RESIDENT = 0.04;
+export const POWER_HEAT_PER_RESIDENT = 0.2;
 
 // ---------- buildings ----------
 export type Cost = { gold: number } & Partial<Record<GoodId, number>>;
@@ -228,8 +228,15 @@ export const REFUND = 0.5;
 /** a road tile over a river or lake */
 export const BRIDGE_COST: Cost = { gold: 12, planks: 1 };
 export const MAP_SIZE = 64;
-/** winter cold: year 1 = 1.0, +0.15 a year, capped */
-export const coldFactor = (year: number) => Math.min(2, 1 + (year - 1) * 0.15);
+// ---------- temperature ----------
+/** mid-season temperatures in °C */
+export const SEASON_TEMP = [13, 25, 12, -6];
+/** homes need heating below this */
+export const HEAT_BELOW = 8;
+/** each year the cold season bites a little harder (°C per year, capped) */
+export const COLDER_PER_YEAR = 1.5, COLDER_MAX = 12;
+/** how hard homes must be heated: 0 when mild, 1 at -6 °C, more below */
+export const coldness = (t: number) => Math.max(0, (HEAT_BELOW - t) / 14);
 export const POLLUTION_RADIUS = 5;
 
 // ---------- weather ----------
@@ -243,6 +250,7 @@ export interface WeatherDef {
   wind: number;                   // wind turbine output factor
   sun: number;                    // solar output factor in daylight
 }
+export const WEATHER_TEMP: Record<WeatherId, number> = { sunny: 1.5, cloudy: 0, rain: -3, storm: -4, fog: -1, snow: -3 };
 export const WEATHER: Record<WeatherId, WeatherDef> = {
   sunny: { name: '晴', effect: '一切正常', duration: [90, 150], next: { cloudy: 5, fog: 1, rain: 2, sunny: 2 }, prod: {}, wind: 0.6, sun: 1 },
   cloudy: { name: '多云', effect: '风力充足', duration: [60, 100], next: { sunny: 3.5, rain: 4, storm: 1, fog: 1.5 }, prod: {}, wind: 1, sun: 0.6 },
@@ -254,7 +262,7 @@ export const WEATHER: Record<WeatherId, WeatherDef> = {
 
 // ---------- calendar ----------
 export const DAY_LENGTH = 240;
-export const SEASON_DAYS = 2;
+export const SEASON_DAYS = 3;
 export const START_HOUR = 8;
 export type SeasonId = 'spring' | 'summer' | 'autumn' | 'winter';
 export const SEASON_IDS: SeasonId[] = ['spring', 'summer', 'autumn', 'winter'];

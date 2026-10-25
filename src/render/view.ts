@@ -253,14 +253,13 @@ export class View {
         this.bridges[k].setMatrixAt(nb[k]++, M);
         continue;
       }
-      M.makeTranslation(wx, 0, wz);
-      this.roads.setMatrixAt(n++, M);
+      // the street itself is painted into the ground by the terrain shader
       // a street lamp on every few road tiles, on a side without road
       if ((x * 7 + z * 13) % 5 === 0 && nl < 600) {
         for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
           const nx = x + dx, nz = z + dz;
           if (nx < 0 || nz < 0 || nx >= W || nz >= W || occ[nz * W + nx] === -1 || this.game.isBridge(nx, nz)) continue;
-          M.compose(new THREE.Vector3(wx + dx * 0.44, 0, wz + dz * 0.44), Q.identity(), S);
+          M.compose(new THREE.Vector3(wx + dx * 0.44, this.terrain.height(wx + dx * 0.44, wz + dz * 0.44), wz + dz * 0.44), Q.identity(), S);
           this.lamps.setMatrixAt(nl++, M);
           break;
         }
@@ -477,6 +476,10 @@ export class View {
   render(dt: number, gameDt: number) {
     const g = this.game;
     this.time += dt;
+    if (g.bVersion !== this.bVersion || g.rVersion !== this.rVersion) {
+      // level the ground and repaint streets first, everything else sits on it
+      this.terrain.setGround(g.occ, i => g.occ[i] === -1 && !g.isBridge(i % g.W, (i / g.W) | 0), g.era >= 3 ? 2 : g.era >= 2 ? 1 : 0);
+    }
     if (g.bVersion !== this.bVersion) { this.syncBuildings(); this.bVersion = g.bVersion; this.tVersion = -1; }
     if (g.rVersion !== this.rVersion) { this.syncRoads(); this.rVersion = g.rVersion; this.tVersion = -1; }
     if (g.tVersion !== this.tVersion) { this.syncTrees(); this.tVersion = g.tVersion; }
