@@ -57,8 +57,41 @@ function build(meshes: { mesh: THREE.Mesh; rel: THREE.Matrix4 }[]): ModelGeo {
   return { body, line: welded };
 }
 
+/**
+ * Reads either a .glb or a glTF JSON whose buffer is embedded as base64. The JSON form is
+ * repacked into a .glb in memory, because some hosts forbid fetching data: URLs.
+ */
+async function fetchGlb(url: string): Promise<ArrayBuffer> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${url}: ${res.status}`);
+  const buf = await res.arrayBuffer();
+  const head = new Uint8Array(buf, 0, 4);
+  if (String.fromCharCode(...head) === 'glTF') return buf;
+  const json = JSON.parse(new TextDecoder().decode(buf));
+  const uri: string = json.buffers?.[0]?.uri ?? '';
+  const b64 = uri.slice(uri.indexOf(',') + 1);
+  const bin = atob(b64);
+  const binBytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) binBytes[i] = bin.charCodeAt(i);
+  delete json.buffers[0].uri;
+  const pad = (n: number) => (4 - (n % 4)) % 4;
+  let jsonBytes = new TextEncoder().encode(JSON.stringify(json));
+  const jp = pad(jsonBytes.length), bp = pad(binBytes.length);
+  const total = 12 + 8 + jsonBytes.length + jp + 8 + binBytes.length + bp;
+  const out = new ArrayBuffer(total);
+  const dv = new DataView(out), u8 = new Uint8Array(out);
+  dv.setUint32(0, 0x46546c67, true); dv.setUint32(4, 2, true); dv.setUint32(8, total, true);
+  dv.setUint32(12, jsonBytes.length + jp, true); dv.setUint32(16, 0x4e4f534a, true);
+  u8.set(jsonBytes, 20); u8.fill(0x20, 20 + jsonBytes.length, 20 + jsonBytes.length + jp);
+  let o = 20 + jsonBytes.length + jp;
+  dv.setUint32(o, binBytes.length + bp, true); dv.setUint32(o + 4, 0x004e4942, true);
+  u8.set(binBytes, o + 8);
+  jsonBytes = new Uint8Array(0);
+  return out;
+}
+
 export async function loadModels(url: string) {
-  const gltf = await new GLTFLoader().loadAsync(url);
+  const gltf = await new GLTFLoader().parseAsync(await fetchGlb(url), '');
   const scene = gltf.scene;
   scene.updateMatrixWorld(true);
   for (const rootObj of scene.children) {
