@@ -15,6 +15,10 @@ const CLOTHES = ['#F2766B', '#6FA8DC', '#8FCF6F', '#F7B955', '#B58BD8', '#F2A5C0
 const CARGO: Record<GoodId, THREE.Color> = {
   wood: new THREE.Color('#B87A48'), planks: new THREE.Color('#F2CF93'), fish: new THREE.Color('#8CC8EA'),
   grain: new THREE.Color('#F2CF5B'), flour: new THREE.Color('#FFF6E3'), bread: new THREE.Color('#D9944F'),
+  wool: new THREE.Color('#FFFAF0'), firewood: new THREE.Color('#A86E44'), clay: new THREE.Color('#D98A5F'), bricks: new THREE.Color('#D9674F'),
+  cloth: new THREE.Color('#E9B8D6'), clothes: new THREE.Color('#7FB6E0'), ore: new THREE.Color('#8C8F9C'), tools: new THREE.Color('#C9CCD6'),
+  coal: new THREE.Color('#4A4752'), steel: new THREE.Color('#B9C2CF'), cans: new THREE.Color('#F2766B'), beer: new THREE.Color('#F2C14E'),
+  cement: new THREE.Color('#C9C4BB'), appliances: new THREE.Color('#F2F4F8'),
 };
 const HEADS = ['villager_head', 'villager_head_straw', 'villager_head_cap', 'villager_head_bun'];
 
@@ -159,7 +163,7 @@ export class People {
     for (const b of g.buildings.values()) {
       if (!b.connected) continue;
       if (b.type === 'house' && b.residents > 0) houses.push(b);
-      else if (b.type === 'market' || b.type === 'tavern' || b.type === 'bakery') fun.push(b);
+      else if (b.type === 'market' || b.type === 'tavern' || b.type === 'bakery' || b.type === 'church' || b.type === 'park' || b.type === 'theatre' || b.type === 'school') fun.push(b);
       if (b.staff > 0) works.push(b);
     }
     if (!houses.length) return;
@@ -184,7 +188,7 @@ export class People {
       return false;
     });
     // errands through the day, evening outings, quiet nights
-    const pop = g.pop.peasant + g.pop.worker;
+    const pop = g.pop.peasant + g.pop.worker + g.pop.technician + g.pop.citizen;
     const rate = h < 5.5 || h > 22 ? 0.02 : h < 8 ? 0.4 : h < 17 ? 0.7 : h < 21 ? 0.9 : 0.25;
     this.errandAcc += gameDt * rate * Math.min(pop, 160) / 40;
     while (this.errandAcc >= 1) {

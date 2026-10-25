@@ -23,10 +23,19 @@ export class Terrain {
     uRange: { value: new THREE.Vector3() }, uRangeOn: { value: 0 },
     uSel: { value: new THREE.Vector4() },
     uGrass: { value: new THREE.Color('#86CC63') },
+    uPoll: { value: null as THREE.DataTexture | null }, uPollOn: { value: 0 },
   };
+  private pollData!: Uint8Array;
   waterU: Record<string, THREE.IUniform>;
   terrain: THREE.Mesh;
   water: THREE.Mesh;
+
+  /** pollution per tile (0..~100) into the ground texture */
+  setPollution(p: Float32Array) {
+    const d = this.pollData;
+    for (let i = 0; i < p.length; i++) { const v = Math.min(255, p[i] / 60 * 255); d[i * 4] = v; d[i * 4 + 3] = 255; }
+    this.terrainU.uPoll.value!.needsUpdate = true;
+  }
 
   constructor(private world: World) {
     const W = world.W;
@@ -34,6 +43,11 @@ export class Terrain {
     this.half = W / 2;
     this.TW = W + MARGIN * 2;
     this.terrainU.uW.value = W;
+    this.pollData = new Uint8Array(W * W * 4);
+    const pt = new THREE.DataTexture(this.pollData, W, W, THREE.RGBAFormat);
+    pt.magFilter = THREE.LinearFilter; pt.minFilter = THREE.LinearFilter;
+    pt.needsUpdate = true;
+    this.terrainU.uPoll.value = pt;
     // tile-level fields with margin, then a light blur to round the corners
     const TW = this.TW;
     const raw = new Float32Array(TW * TW), rawR = new Float32Array(TW * TW);
@@ -124,7 +138,8 @@ export class Terrain {
       Object.assign(sh.uniforms, U, ENV);
       sh.vertexShader = 'attribute vec3 kind;\nvarying vec3 vKind;\nvarying vec3 vWP;\n' + sh.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvKind = kind;');
       sh.fragmentShader = `
-uniform float uGrid, uW, uRangeOn, uSnow, uWet;
+uniform float uGrid, uW, uRangeOn, uSnow, uWet, uPollOn;
+uniform sampler2D uPoll;
 uniform vec3 uRange, uGrass;
 uniform vec4 uSel;
 varying vec3 vKind;
@@ -154,6 +169,9 @@ float tfbm(vec2 p){ return tn(p) * 0.6 + tn(p * 2.3 + 7.1) * 0.3 + tn(p * 5.1 + 
   c = mix(c, wetSand, smoothstep(-0.02, -0.14, vWP.y) * vKind.y);
   c = mix(c, under, smoothstep(-0.2, -0.45, vWP.y));
   c = mix(c, rock, vKind.z);
+  // pollution turns the grass dusty and olive
+  float poll = texture2D(uPoll, (vWP.xz + uW * 0.5) / uW).r;
+  c = mix(c, vec3(0.64, 0.6, 0.46) * (0.95 + 0.05 * n1), smoothstep(0.15, 0.8, poll) * 0.7 * vKind.x * step(-0.1, vWP.y));
   float snowAmt = uSnow * smoothstep(-0.24, -0.1, vWP.y) * (1.0 - 0.25 * vKind.z);
   c = mix(c, vec3(0.94, 0.96, 1.0) * (0.96 + 0.04 * n2), snowAmt);
   c *= 1.0 - uWet * 0.14;
@@ -163,6 +181,12 @@ float tfbm(vec2 p){ return tn(p) * 0.6 + tn(p * 2.3 + 7.1) * 0.3 + tn(p * 5.1 + 
   float inMap = step(0.0, gp.x) * step(0.0, gp.y) * step(gp.x, uW) * step(gp.y, uW);
   float line = smoothstep(0.47, 0.5, max(f.x, f.y));
   gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(1.0), line * 0.28 * uGrid * inMap * step(-0.05, vWP.y));
+  // pollution view: clean green, then yellow, orange and smoggy purple
+  float pv = texture2D(uPoll, gp / uW).r;
+  vec3 heat = pv < 0.33 ? mix(vec3(0.55, 0.85, 0.5), vec3(1.0, 0.86, 0.35), pv / 0.33)
+            : pv < 0.66 ? mix(vec3(1.0, 0.86, 0.35), vec3(0.95, 0.45, 0.3), (pv - 0.33) / 0.33)
+            : mix(vec3(0.95, 0.45, 0.3), vec3(0.55, 0.3, 0.55), (pv - 0.66) / 0.34);
+  gl_FragColor.rgb = mix(gl_FragColor.rgb, heat, uPollOn * inMap * 0.6);
   float d = distance(vWP.xz, uRange.xy);
   float inside = 1.0 - smoothstep(uRange.z - 0.06, uRange.z, d);
   float ring = smoothstep(uRange.z - 0.18, uRange.z - 0.06, d) * inside;

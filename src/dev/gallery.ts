@@ -8,6 +8,11 @@ const NAMES = ['house_peasant_0', 'house_peasant_1', 'house_worker_0', 'house_wo
   'lumberjack', 'sawmill', 'fishery', 'farm', 'mill', 'bakery', 'market', 'tavern',
   'tree_round', 'tree_pine', 'bush', 'rock', 'lamp', 'boat', 'cart', 'villager_body'];
 
+const NAMES_M1 = ['house_technician_0', 'house_technician_1', 'house_citizen_0', 'house_citizen_2', 'study', 'church',
+  'sheepfarm', 'woodshed', 'claypit', 'brickworks', 'weaver', 'tailor', 'mine', 'smithy', 'park', 'guild', 'ore_iron', 'ore_coal',
+  'factory', 'cannery', 'brewery', 'powerplant', 'heatplant', 'school', 'clinic', 'townhall', 'university',
+  'factory_small', 'plant_modern', 'windturbine', 'solar', 'hydro', 'purifier', 'recycler', 'hospital', 'theatre', 'lab'];
+
 export function gallery(container: HTMLElement, opts: { snow?: number; glow?: number } = {}) {
   const r = new THREE.WebGLRenderer({ antialias: true });
   r.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -22,8 +27,9 @@ export function gallery(container: HTMLElement, opts: { snow?: number; glow?: nu
   const mat = worldMaterial();
   ENV.uSnow.value = opts.snow ?? 0;
   ENV.uGlow.value = opts.glow ?? 0;
-  const cols = 6;
-  NAMES.filter(hasModel).forEach((n, i) => {
+  const list = location.hash.includes('m1') ? NAMES_M1 : NAMES;
+  const cols = location.hash.includes('m1') ? 8 : 6;
+  list.filter(hasModel).forEach((n, i) => {
     const m = getModel(n);
     const g = new THREE.Group();
     g.add(new THREE.Mesh(m.body, mat), new THREE.Mesh(m.line, outlineMat(0.022)));
@@ -42,14 +48,16 @@ export function gallery(container: HTMLElement, opts: { snow?: number; glow?: nu
         g.add(p);
       });
     }
-    g.position.set((i % cols) * 3.4 - 8.5, 0, Math.floor(i / cols) * 3.6 - 5);
+    g.position.set((i % cols) * 3.4 - (cols - 1) * 1.7, 0, Math.floor(i / cols) * 3.6 - 5);
     scene.add(g);
   });
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(60, 60).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: '#9fd27c' }));
   scene.add(ground);
   const cam = new THREE.PerspectiveCamera(32, innerWidth / innerHeight, 0.1, 200);
-  cam.position.set(2, 17, 19);
-  cam.lookAt(0, 0, 0.5);
+  const rows = Math.ceil(list.length / cols);
+  const far = location.hash.includes('m1') ? 1.45 : 1;
+  cam.position.set(2 * far, 17 * far, 19 * far + (rows - 4) * 1.5);
+  cam.lookAt(0, 0, (rows - 4) * 1.8 + 0.5);
   const loop = () => { requestAnimationFrame(loop); r.render(scene, cam); };
   loop();
 }

@@ -1,6 +1,6 @@
 import './style.css';
 import { Game } from './sim/game';
-import { BUILDINGS, BuildingId, BUILD_MENU } from './sim/data';
+import { BUILDINGS, BuildingId } from './sim/data';
 import { View } from './render/view';
 import { Hud, Tool } from './ui/hud';
 import { makeThumbs } from './render/thumbs';
@@ -8,7 +8,10 @@ import { Sound } from './audio/sound';
 import { loadModels } from './render/assets';
 import type { RotateMode } from './render/camera';
 
-const SAVE_KEY = 'cozy-harbor-save-v1';
+const SAVE_KEY = 'cozy-harbor-save-v2';
+
+/** the hand-picked harbour map (fixed maps are designed per seed) */
+const MAP_SEED = 11;
 
 async function boot() {
   const stage = document.getElementById('stage')!;
@@ -50,20 +53,23 @@ async function boot() {
   view.rig.mode = rotMode;
   view.onThunder = d => setTimeout(() => sound.play('thunder'), d * 1000);
 
-  const allTypes = BUILD_MENU.flatMap(c => c.items);
+  const allTypes = (Object.keys(BUILDINGS) as BuildingId[]).filter(t => t !== 'road' && BUILDINGS[t].buildable !== false);
   const hud = new Hud(hudEl, {
     tool: t => setTool(t),
     speed: s => { game.speed = s; },
     save: () => save(true),
-    newGame: () => start(new Game(Math.floor(Math.random() * 1e9))),
+    newGame: () => start(new Game(MAP_SEED)),
     upgrade: b => game.upgrade(b),
-    upgradeAll: () => game.upgradeAll(),
+    upgradeAll: b => game.upgradeAll(b.tier),
     demolish: b => { game.demolish(b.x, b.z); select(null); },
     close: () => select(null),
     focus: b => { const c = game.center(b); view.rig.jumpTo(c.x - view.half, c.z - view.half); },
     audio: p => sound.set(p),
     rotateMode: m => { view.rig.mode = m; try { localStorage.setItem('cozy-harbor-rotate2', m); } catch { /* ignore */ } },
     click: () => sound.play('click'),
+    research: t => { if (game.research.current === t) return; game.setResearch(t); },
+    trade: (g, n) => { n > 0 ? game.buy(g, n) : game.sell(g, -n); },
+    overlay: on => view.setPollutionView(on),
   }, makeThumbs(allTypes));
   hud.setAudio(sound.settings, rotMode);
 
@@ -107,7 +113,7 @@ async function boot() {
   // ---------- load ----------
   let saved: string | null = null;
   try { saved = localStorage.getItem(SAVE_KEY); } catch { /* storage blocked */ }
-  start((saved && Game.load(saved)) || new Game(20261025));
+  start((saved && Game.load(saved)) || new Game(MAP_SEED));
   setInterval(() => save(false), 30000);
 
   // ---------- input ----------
@@ -231,7 +237,10 @@ async function boot() {
     if ((e.target as HTMLElement).closest('input,textarea')) return;
     const k = e.key.toLowerCase();
     keys.add(k);
-    if (k === 'escape') { setTool('select'); select(null); }
+    if (k === 'escape') { if (hud.panelOpen) { hud.closePanels(); return; } setTool('select'); select(null); }
+    if (k === 't') hud.togglePanel('research');
+    if (k === 'g') hud.togglePanel('goods');
+    if (k === 'p') hud.setOverlay(!hud.overlay);
     if (k === ' ') { e.preventDefault(); game.speed = game.speed === 0 ? 1 : 0; }
     if (k === 'x') setTool(tool === 'demolish' ? 'select' : 'demolish');
     for (const t of Object.keys(BUILDINGS) as BuildingId[]) if (BUILDINGS[t].hotkey?.toLowerCase() === k) setTool(tool === t ? 'select' : t);

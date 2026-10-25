@@ -32,11 +32,17 @@ export class World {
   readonly tiles: Uint8Array;
   readonly trees: Uint8Array;   // 0 none, 1 round tree, 2 pine
   readonly depot: { x: number; z: number };
+  /** 0 none, 1 iron ore, 2 coal */
+  readonly deposits: Uint8Array;
+  /** 1 for water connected to the sea, 0 for rivers and lakes */
+  readonly ocean: Uint8Array;
 
   constructor(W: number, readonly seed: number) {
     this.W = W;
     this.tiles = new Uint8Array(W * W);
     this.trees = new Uint8Array(W * W);
+    this.deposits = new Uint8Array(W * W);
+    this.ocean = new Uint8Array(W * W);
     const r = rng(seed);
     const coastBase = W * 0.7;
     const riverX0 = W * (0.55 + r() * 0.12);
@@ -86,10 +92,60 @@ export class World {
       if (!nearDepot && (f > 0.56 || (f > 0.5 && r() < 0.4)) ) this.trees[i] = r() < 0.55 ? 1 : 2;
       else if (!nearDepot && r() < 0.025) this.trees[i] = 1;
     }
+    this.markOcean();
+    this.placeDeposits(r);
+  }
+
+  /** flood fill from the southern sea edge so rivers and lakes count as inland water */
+  private markOcean() {
+    const W = this.W, q: number[] = [];
+    for (let x = 0; x < W; x++) { const i = (W - 1) * W + x; if (this.tiles[i] === Tile.Water) { this.ocean[i] = 1; q.push(i); } }
+    while (q.length) {
+      const i = q.pop()!, x = i % W, z = (i / W) | 0;
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = x + dx, nz = z + dz;
+        if (!this.inside(nx, nz)) continue;
+        const k = nz * W + nx;
+        // the river mouth: only wide water counts as sea, so stop where the channel narrows
+        if (this.ocean[k] || this.tiles[k] !== Tile.Water) continue;
+        if (nz < W * 0.55) continue;
+        this.ocean[k] = 1; q.push(k);
+      }
+    }
+  }
+
+  /** iron near the northern hills, coal further inland; each vein is a 4x4 patch of open ground */
+  private placeDeposits(r: () => number) {
+    const W = this.W;
+    const want: [number, number, number][] = [
+      [1, W * 0.18, W * 0.42], [1, W * 0.8, W * 0.2],
+      [2, W * 0.45, W * 0.1], [2, W * 0.12, W * 0.08],
+    ];
+    for (const [kind, cx, cz] of want) {
+      let best = -1, bestD = 1e9;
+      for (let z = 1; z < W * 0.6; z++) for (let x = 1; x < W - 5; x++) {
+        if (!this.areaLand(x, z, 4, 4) || Math.hypot(x - this.depot.x, z - this.depot.z) < 10) continue;
+        let clash = false;
+        for (let j = -1; j < 5 && !clash; j++) for (let i = -1; i < 5; i++) if (this.inside(x + i, z + j) && this.deposits[(z + j) * W + x + i]) { clash = true; break; }
+        if (clash) continue;
+        const d = Math.hypot(x + 2 - cx, z + 2 - cz) + r() * 2;
+        if (d < bestD) { bestD = d; best = z * W + x; }
+      }
+      if (best < 0) continue;
+      const bx = best % W, bz = (best / W) | 0;
+      for (let j = 0; j < 4; j++) for (let i = 0; i < 4; i++) {
+        if ((i === 0 || i === 3) && (j === 0 || j === 3) && r() < 0.6) continue; // rounded corners
+        const k = (bz + j) * W + bx + i;
+        this.deposits[k] = kind; this.trees[k] = 0;
+        if (this.tiles[k] === Tile.Sand) this.tiles[k] = Tile.Grass;
+      }
+    }
   }
 
   inside(x: number, z: number) { return x >= 0 && z >= 0 && x < this.W && z < this.W; }
   tile(x: number, z: number): Tile { return this.inside(x, z) ? this.tiles[z * this.W + x] : Tile.Water; }
+  deposit(x: number, z: number) { return this.inside(x, z) ? this.deposits[z * this.W + x] : 0; }
+  isOcean(x: number, z: number) { return this.inside(x, z) ? this.ocean[z * this.W + x] === 1 : true; }
   areaLand(x: number, z: number, w: number, h: number) {
     for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
       const t = this.tile(x + i, z + j);

@@ -12,7 +12,8 @@ import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferG
 
 export interface ModelGeo { body: THREE.BufferGeometry; line: THREE.BufferGeometry }
 export interface AnimPart { geo: ModelGeo; at: [number, number, number]; kind: 'spinZ' | 'spinX' | 'bob' }
-export interface Model extends ModelGeo { anims: AnimPart[]; height: number }
+/** smoke: chimney tops (model space) where the game puffs smoke while the building works */
+export interface Model extends ModelGeo { anims: AnimPart[]; height: number; smoke: [number, number, number][] }
 
 const models = new Map<string, Model>();
 
@@ -116,9 +117,15 @@ export async function loadModels(url: string) {
       statics.push({ mesh: o as THREE.Mesh, rel: new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld) });
     });
     if (!statics.length) continue;
+    const smoke: [number, number, number][] = [];
+    rootObj.traverse(o => {
+      if (!o.name.startsWith('smoke_')) return;
+      const p = new THREE.Vector3().setFromMatrixPosition(new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld));
+      smoke.push([p.x, p.y, p.z]);
+    });
     const geo = build(statics);
     geo.body.computeBoundingBox();
-    models.set(rootObj.name, { ...geo, anims, height: geo.body.boundingBox!.max.y });
+    models.set(rootObj.name, { ...geo, anims, height: geo.body.boundingBox!.max.y, smoke });
   }
   return models;
 }

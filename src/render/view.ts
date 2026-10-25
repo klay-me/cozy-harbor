@@ -17,8 +17,9 @@ import { Terrain } from './terrain';
 import { Env } from './env';
 import { People } from './people';
 import { Decor } from './decor';
+import { Smoke } from './smoke';
 
-interface BView { group: THREE.Group; tier: string; spins: { o: THREE.Object3D; axis: 'x' | 'z' }[]; bobs: THREE.Object3D[]; born: number; b: Bld }
+interface BView { group: THREE.Group; tier: string; smoke: THREE.Vector3[]; smokeT: number; spins: { o: THREE.Object3D; axis: 'x' | 'z' }[]; bobs: THREE.Object3D[]; born: number; b: Bld }
 
 export class View {
   renderer: THREE.WebGLRenderer;
@@ -29,6 +30,9 @@ export class View {
   private terrain!: Terrain;
   private people: People | null = null;
   private decor: Decor | null = null;
+  private smoke: Smoke | null = null;
+  private pVersion = -1;
+  private deposits: THREE.InstancedMesh[] = [];
   private worldMat = worldMaterial();
   private ghostMat = worldMaterial({ transparent: true, opacity: 0.8 });
   private roadMat: THREE.MeshToonMaterial;
@@ -98,6 +102,9 @@ export class View {
     this.add(this.decor.group);
     this.buildTrees();
     this.buildRocks();
+    this.buildDeposits();
+    this.smoke = new Smoke(this.scene);
+    this.pVersion = -1;
     this.buildRoads();
     this.buildGhost();
     this.people = new People(this.scene, game, this.half, b => this.door(b), b => this.facing(b), this.terrain);
@@ -150,6 +157,8 @@ export class View {
       }
     }
     this.trees.forEach((m, i) => { m.count = n[i]; (m.userData.line as THREE.InstancedMesh).count = n[i]; m.instanceMatrix.needsUpdate = true; });
+    this.colorTrees();
+    this.syncDeposits();
     this.decor?.sync();
   }
 
@@ -168,6 +177,45 @@ export class View {
       m.setMatrixAt(i, M);
     });
   }
+
+  /** little ore and coal outcrops on mineral veins that nothing is built on */
+  private buildDeposits() {
+    const { world, W } = this.game;
+    this.deposits = ['ore_iron', 'ore_coal'].map(n => {
+      const [m, l] = this.instanced(getModel(n), W * W, 0.015);
+      m.userData.line = l;
+      return m;
+    });
+  }
+  private syncDeposits() {
+    const { world, W, occ } = this.game;
+    const M = new THREE.Matrix4(), Q = new THREE.Quaternion(), S = new THREE.Vector3();
+    const n = [0, 0];
+    for (let z = 0; z < W; z++) for (let x = 0; x < W; x++) {
+      const k = z * W + x, d = world.deposits[k];
+      if (!d || occ[k] !== 0 || (x * 5 + z * 3) % 2) continue;
+      const wx = x + 0.5 - this.half, wz = z + 0.5 - this.half;
+      const s = 0.9 + ((x * 13 + z * 7) % 5) * 0.1;
+      M.compose(new THREE.Vector3(wx, this.terrain.height(wx, wz), wz), Q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), (x * 3 + z * 5) % 6), S.set(s, s, s));
+      this.deposits[d - 1].setMatrixAt(n[d - 1]++, M);
+    }
+    this.deposits.forEach((m, i) => { m.count = n[i]; (m.userData.line as THREE.InstancedMesh).count = n[i]; m.instanceMatrix.needsUpdate = true; });
+  }
+  /** trees in smog wither towards brown */
+  private colorTrees() {
+    const g = this.game, C = new THREE.Color(), M = new THREE.Matrix4(), P = new THREE.Vector3();
+    for (const m of this.trees) {
+      for (let i = 0; i < m.count; i++) {
+        m.getMatrixAt(i, M);
+        P.setFromMatrixPosition(M);
+        const p = g.pollutionAt(P.x + this.half, P.z + this.half);
+        const w = Math.min(0.85, Math.max(0, (p - 15) / 50));
+        m.setColorAt(i, C.setRGB(1, 1 - w, 1));
+      }
+      if (m.instanceColor) m.instanceColor.needsUpdate = true;
+    }
+  }
+  setPollutionView(on: boolean) { this.terrain.terrainU.uPollOn.value = on ? 1 : 0; }
 
   private buildRoads() {
     const W = this.game.W;
@@ -265,7 +313,7 @@ export class View {
     const body = new THREE.Mesh(m.body, this.worldMat);
     body.castShadow = true; body.receiveShadow = true;
     group.add(body, new THREE.Mesh(m.line, outlineMat(0.022)));
-    const v: BView = { group, tier: b.tier, born: this.time, b, spins: [], bobs: [] };
+    const v: BView = { group, tier: b.tier, born: this.time, b, spins: [], bobs: [], smoke: m.smoke.map(p => new THREE.Vector3(...p)), smokeT: Math.random() };
     for (const a of m.anims) {
       const o = new THREE.Group();
       const ab = new THREE.Mesh(a.geo.body, this.worldMat);
@@ -343,7 +391,7 @@ export class View {
     const c = this.game.center(b);
     s.set(c.x - this.half, c.z - this.half, b.w, b.h);
     const r = BUILDINGS[b.type].radius;
-    if (r) { U.uRangeOn.value = 1; U.uRange.value.set(c.x - this.half, c.z - this.half, r + (BUILDINGS[b.type].service ? 0 : 0.5)); }
+    if (r) { U.uRangeOn.value = 1; U.uRange.value.set(c.x - this.half, c.z - this.half, this.game.radiusOf(b) + (BUILDINGS[b.type].service ? 0 : 0.5)); }
     else if (!this.ghost.visible) U.uRangeOn.value = 0;
   }
 
@@ -382,12 +430,39 @@ export class View {
 
   weatherMix() { return this.env.mix(); }
 
+  /** chimneys: factories smoke while working, homes when cooking (mornings, evenings) or heating */
+  private puff(v: BView, gameDt: number) {
+    const b = v.b, g = this.game, d = BUILDINGS[b.type];
+    let rate = 0, grey = 0.15, size = 1;
+    if (b.type === 'house') {
+      if (!b.residents) return;
+      const h = g.hour;
+      const cooking = (h > 6 && h < 8.5) || (h > 17.5 && h < 20);
+      rate = g.heatingOn ? (b.warm > 0.4 ? 0.9 : 0) : cooking ? 0.5 : 0.06;
+      grey = g.era >= 3 ? 0.35 : 0.1;
+      size = 0.75;
+    } else {
+      if (!b.working) return;
+      const pol = d.pollution ?? 0;
+      rate = 0.8 + Math.max(0, pol) / 25;
+      grey = Math.min(1, 0.12 + Math.max(0, pol) / 45) * Math.max(0.3, 1 + g.mods.pollution);
+      size = 0.9 + Math.max(0, pol) / 60;
+    }
+    v.smokeT += gameDt * rate;
+    if (v.smokeT < 1) return;
+    v.smokeT -= 1;
+    const p = v.smoke[Math.floor(Math.random() * v.smoke.length)].clone();
+    p.multiply(v.group.scale).applyAxisAngle(new THREE.Vector3(0, 1, 0), v.group.rotation.y).add(v.group.position);
+    this.smoke!.emit(p.x, p.y, p.z, grey, size);
+  }
+
   render(dt: number, gameDt: number) {
     const g = this.game;
     this.time += dt;
     if (g.bVersion !== this.bVersion) { this.syncBuildings(); this.bVersion = g.bVersion; this.tVersion = -1; }
     if (g.rVersion !== this.rVersion) { this.syncRoads(); this.rVersion = g.rVersion; this.tVersion = -1; }
     if (g.tVersion !== this.tVersion) { this.syncTrees(); this.tVersion = g.tVersion; }
+    if (g.pVersion !== this.pVersion) { this.terrain.setPollution(g.pollution); this.colorTrees(); this.pVersion = g.pVersion; }
     for (const ev of g.events.splice(0)) {
       const b = g.buildings.get(ev.id);
       if (!b) continue;
@@ -406,12 +481,14 @@ export class View {
         const sp = v.b.type === 'sawmill' ? (s.axis === 'z' ? 7 : 1.4) : 1.4;
         if (s.axis === 'z') s.o.rotation.z -= gameDt * sp; else s.o.rotation.x -= gameDt * sp;
       }
+      if (v.smoke.length && gameDt > 0) this.puff(v, gameDt);
       for (const o of v.bobs) { o.position.y = o.userData.base + Math.sin(this.time * 1.8 + v.b.id) * 0.03; o.rotation.z = Math.sin(this.time * 1.3 + v.b.id) * 0.06; }
     }
     this.rig.update(dt);
     this.decor?.setSeason(g.seasonPos);
     this.env.update(dt, g, this.rig.target, this.terrain, this.scene.fog as THREE.Fog);
     this.people?.update(dt, gameDt);
+    this.smoke?.update(dt);
     const v3 = new THREE.Vector3();
     this.floats = this.floats.filter(f => {
       f.t += dt;

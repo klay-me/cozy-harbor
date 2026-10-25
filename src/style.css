@@ -182,3 +182,95 @@ svg { flex: none; }
 .flash { position: fixed; inset: 0; background: #f4f8ff; opacity: 0; pointer-events: none; z-index: 1; }
 
 .loading { position: fixed; inset: 0; display: grid; place-items: center; font-family: var(--display); font-size: 22px; color: var(--ink); background: #d6eef7; z-index: 10; }
+
+/* ---------- milestone 1: eras, research, trade ---------- */
+button.chip { cursor: pointer; font: inherit; color: inherit; }
+button.chip:hover { border-color: var(--ink); }
+.chip.pop { gap: 8px; }
+.chip.pop > span { display: inline-flex; align-items: center; gap: 2px; }
+.chip .short b, .cost .short, .reward .short { color: var(--danger); }
+.chip.ok { background: #e6f6dd; border-color: #a9d99a; }
+.chip.mid { background: #fff4d1; border-color: #f0d27a; }
+.chip.bad { background: #ffe1dc; border-color: var(--coral); }
+.chip.research b { max-width: 7.5em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip .mini { width: 34px; height: 6px; border-radius: 4px; background: #efe3cb; overflow: hidden; }
+.chip .mini i { display: block; height: 100%; background: var(--sky); }
+.chip.more b { font-size: 12px; }
+.item { position: relative; }
+.item .cost { flex-wrap: wrap; justify-content: center; gap: 1px 5px; text-align: center; }
+.item .cost > span { display: inline-flex; align-items: center; gap: 1px; }
+.item.locked { opacity: .6; filter: grayscale(.7); }
+.item.locked .cost { font-size: 11px; line-height: 1.25; }
+.item .lk { position: absolute; top: 6px; right: 8px; }
+.item .lk svg { width: 16px; height: 16px; }
+.tools button { display: inline-flex; align-items: center; gap: 3px; }
+.tools button svg { width: 16px; height: 16px; }
+.info .primary small { flex-wrap: wrap; gap: 2px 6px; }
+.info .primary small span, .reward span { display: inline-flex; align-items: center; gap: 1px; }
+.info h4 b { color: var(--ink); margin-left: 4px; }
+.parts .need, .goal .need { grid-template-columns: 58px 1fr; }
+.goal .need { grid-template-columns: 64px 1fr auto; font-size: 12px; }
+.goal .need b { font-variant-numeric: tabular-nums; font-size: 12px; min-width: 3em; text-align: right; }
+.quest .goal { display: flex; flex-direction: column; gap: 5px; margin-bottom: 8px; }
+.quest .sub { font-size: 12px; color: var(--ink-soft); line-height: 1.45; display: block; margin-bottom: 6px; }
+.quest .task { display: flex; flex-direction: column; gap: 2px; border-top: 1.5px dashed #e6d8bd; padding-top: 7px; font-size: 13px; line-height: 1.4; }
+.quest .eyebrow.soft { color: var(--ink-soft); }
+.quest .reward { gap: 6px; flex-wrap: wrap; }
+.need .bar i.ok, .goal .bar i.ok { background: var(--leaf); }
+
+.panel {
+  position: fixed; left: 50%; top: 50%; transform: translate(-50%, -52%); z-index: 7;
+  width: min(980px, calc(100vw - 24px)); max-height: min(78vh, 720px); overflow: auto; padding: 14px 16px 16px;
+}
+.panel header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 8px; position: sticky; top: -14px; background: var(--card); padding-top: 2px; z-index: 1; }
+.panel h3 { margin: 0; font-family: var(--display); font-weight: 400; font-size: 26px; }
+.panel .sub { font-size: 13px; color: var(--ink-soft); flex: 1; }
+.panel .x { border: 0; background: var(--card-2); width: 32px; height: 32px; border-radius: 50%; font-size: 18px; line-height: 1; margin-left: auto; }
+.panel .desc { margin: 0 0 10px; font-size: 13px; color: var(--ink-soft); }
+.cols { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.col h4 { margin: 0 0 6px; font-size: 12px; letter-spacing: .06em; color: var(--ink-soft); }
+.col.future h4::after { content: "（未到）"; }
+.col { display: flex; flex-direction: column; gap: 6px; }
+.tech { text-align: left; display: flex; flex-direction: column; gap: 3px; padding: 7px 9px; background: #fff; border: 2px solid #e6d8bd; border-left-width: 6px; border-radius: 12px; }
+.tech.b-prod { border-left-color: #f2a541; }
+.tech.b-life { border-left-color: #f2766b; }
+.tech.b-env { border-left-color: #7cc36a; }
+.tech .tn { font-weight: 700; font-size: 14px; display: flex; align-items: center; gap: 4px; }
+.tech .tn svg { width: 16px; height: 16px; }
+.tech .tn small { font-weight: 600; color: var(--ink-soft); }
+.tech .tn em { margin-left: auto; font-style: normal; font-size: 11px; font-weight: 600; color: var(--ink-soft); }
+.tech .td { font-size: 12px; color: var(--ink-soft); line-height: 1.4; }
+.tech .tc { display: flex; align-items: center; gap: 3px; font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.tech .tc svg { width: 14px; height: 14px; }
+.tech .tc .bar { flex: 1; }
+.tech .tc .bar i { background: var(--sky); }
+.tech.avail:hover { border-color: var(--ink); transform: translateY(-1px); }
+.tech.cur { border-color: var(--sky); box-shadow: 0 0 0 2px var(--sky); }
+.tech.done { background: #eef8e8; opacity: .8; cursor: default; }
+.tech.locked { opacity: .45; cursor: not-allowed; }
+.goods-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 6px; }
+.gd { display: grid; grid-template-columns: 22px 1fr auto; grid-template-rows: auto auto; align-items: center; gap: 4px 6px; padding: 7px 9px; background: #fff; border: 2px solid #e6d8bd; border-radius: 12px; }
+.gd .gn { font-weight: 700; font-size: 14px; }
+.gd b { font-variant-numeric: tabular-nums; }
+.gd b.full { color: var(--coral); }
+.gd button { grid-row: 2; border: 1.5px solid #e6d8bd; background: var(--card); border-radius: 8px; padding: 3px 6px; font-size: 12px; font-weight: 700; }
+.gd button:nth-of-type(1) { grid-column: 1 / 3; }
+.gd button:nth-of-type(2) { grid-column: 3; }
+.gd button small { font-weight: 600; color: var(--ink-soft); }
+.gd button:hover { border-color: var(--ink); }
+@media (max-width: 720px) {
+  .cols { grid-template-columns: 1fr 1fr; }
+  .panel { max-height: 70vh; top: 46%; }
+  .tools button { padding: 4px 6px; }
+  .tools button svg { display: none; }
+  .chip.research b { max-width: 4.5em; }
+}
+.quest { cursor: pointer; }
+.quest.mini .goal, .quest.mini .task, .quest.mini .sub { display: none; }
+.quest.mini p { margin-bottom: 0; }
+@media (max-width: 720px) {
+  .build { grid-template-columns: minmax(0, 1fr); grid-template-areas: "tabs" "tools" "items"; width: calc(100vw - 20px); }
+  .tabs, .tools { overflow-x: auto; scrollbar-width: none; flex-wrap: nowrap; }
+  .tabs button, .tools button { flex: none; white-space: nowrap; }
+  .quest .goal .need { grid-template-columns: 56px 1fr auto; }
+}

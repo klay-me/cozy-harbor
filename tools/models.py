@@ -732,13 +732,31 @@ def lamp():
     box(p, (0.11, 0.11, 0.13), (0, 0, 0.84), '#FFE29A', bevel=0.015, kind='G', name='lamplight')
     cyl(p, 0.1, 0.0, 0.08, (0, 0, 0.94), P['dark'], seg=4, rot=(0, 0, math.pi / 4), name='lamptop', smooth=False)
 
+# ---------- milestone 1 models ----------
+exec(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models_m1.py'), encoding='utf-8').read())
+
 # ---------- build all ----------
 for v in range(4):
     house_peasant(v)
     house_worker(v)
+    house_technician(v)
+    house_citizen(v)
 for f in (depot, warehouse, lumberjack, sawmill, fishery, farm, mill, bakery, market, tavern,
-          tree_round, tree_pine, bush, rock, villager, cart, boat, lamp):
+          tree_round, tree_pine, bush, rock, villager, cart, boat, lamp,
+          sheepfarm, study, church, woodshed, claypit, brickworks, weaver, tailor, mine, smithy, park, guild,
+          factory, plant_modern, cannery, brewery, powerplant, heatplant, school, clinic, townhall, university,
+          factory_small, windturbine, solar, hydro, purifier, recycler, hospital, theatre, lab, ore_iron, ore_coal):
     f()
+# chimney smoke markers on the older houses
+for o in list(bpy.data.objects):
+    if o.parent is None and o.name.startswith('house_peasant_'):
+        smoke(o, 0.33, 0.28, 1.62)
+    if o.parent is None and o.name.startswith('house_worker_'):
+        smoke(o, 0.42, 0.32, 2.32)
+    if o.parent is None and o.name == 'bakery':
+        smoke(o, 0.42, 0.42, 2.06)
+    if o.parent is None and o.name == 'tavern':
+        smoke(o, -0.4, 0.45, 2.27)
 
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
 bpy.ops.export_scene.gltf(filepath=OUT, export_format='GLB', export_apply=True, export_yup=True,
