@@ -17,6 +17,8 @@ export class Smoke {
   private V = new THREE.Vector3();
   private C = new THREE.Color();
   wind = new THREE.Vector2(0.25, 0.1);
+  private flameMesh: THREE.InstancedMesh;
+  private flames: Puff[] = [];
 
   constructor(scene: THREE.Scene) {
     const geo = new THREE.IcosahedronGeometry(0.5, 1);
@@ -33,6 +35,18 @@ export class Smoke {
     this.mesh.renderOrder = 2;
     this.mesh.userData.world = true;
     scene.add(this.mesh);
+    // fire: bright tongues that lick upwards and shrink
+    const fg = new THREE.ConeGeometry(0.22, 0.6, 6);
+    fg.translate(0, 0.3, 0);
+    this.flameMesh = new THREE.InstancedMesh(fg, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, depthWrite: false }), 300);
+    this.flameMesh.frustumCulled = false;
+    this.flameMesh.count = 0;
+    this.flameMesh.userData.world = true;
+    scene.add(this.flameMesh);
+  }
+  flame(x: number, y: number, z: number) {
+    if (this.flames.length >= 300) return;
+    this.flames.push({ x, y, z, vx: (Math.random() - 0.5) * 0.2, vz: (Math.random() - 0.5) * 0.2, age: 0, life: 0.5 + Math.random() * 0.5, size: 0.7 + Math.random() * 0.8, grey: Math.random() });
   }
 
   /** grey: 0 white wisp .. 1 dark industrial smoke; size scales the puff */
@@ -61,6 +75,22 @@ export class Smoke {
       return true;
     });
     this.mesh.count = n;
+    let nf = 0;
+    this.flames = this.flames.filter(p => {
+      p.age += dt;
+      if (p.age >= p.life) return false;
+      const k = p.age / p.life;
+      p.y += dt * 1.1; p.x += p.vx * dt; p.z += p.vz * dt;
+      const sc = p.size * (1 - k * 0.8);
+      M.compose(V.set(p.x, p.y, p.z), Q.identity(), S.set(sc, sc * (1.2 + Math.sin(p.age * 30) * 0.2), sc));
+      this.flameMesh.setMatrixAt(nf, M);
+      this.flameMesh.setColorAt(nf, C.setRGB(1, 0.45 + 0.4 * (1 - k) * p.grey + 0.2 * (1 - k), 0.15 * (1 - k)));
+      nf++;
+      return true;
+    });
+    this.flameMesh.count = nf;
+    this.flameMesh.instanceMatrix.needsUpdate = true;
+    if (this.flameMesh.instanceColor) this.flameMesh.instanceColor.needsUpdate = true;
     this.mesh.instanceMatrix.needsUpdate = true;
     if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
   }

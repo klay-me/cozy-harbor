@@ -310,3 +310,15 @@ button.chip:hover { border-color: var(--ink); }
   .lhead, .lgood { grid-template-columns: 20px 1.2fr 1fr .9fr .9fr .9fr; font-size: 12px; gap: 3px; }
   .chip .mini.season { display: none; }
 }
+.chain { display: flex; flex-direction: column; gap: 3px; padding: 6px 8px; background: #fff; border: 1.5px dashed #e6d8bd; border-radius: 10px; font-size: 12px; }
+.chain span { display: flex; align-items: center; gap: 4px; }
+.chain svg { width: 14px; height: 14px; }
+.chain small { color: var(--ink-soft); font-size: 11px; }
+.safety { display: flex; flex-wrap: wrap; gap: 4px; }
+.safety span { font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 999px; border: 1.5px solid #e6d8bd; }
+.safety .on { background: #e6f6dd; border-color: #a9d99a; }
+.safety .off { background: #ffe1dc; border-color: var(--coral); }
+.need.minus { grid-template-columns: 58px 1fr; color: var(--danger); font-weight: 700; }
+.need.minus b { text-align: left; }
+.lh { margin: 12px 0 4px; font-size: 12px; letter-spacing: .06em; color: var(--ink-soft); }
+.lhist .lrow .soft { color: var(--ink-soft); margin-left: auto; padding-left: 12px; }

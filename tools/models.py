@@ -745,7 +745,7 @@ for f in (depot, warehouse, lumberjack, sawmill, fishery, farm, mill, bakery, ma
           tree_round, tree_pine, bush, rock, villager, cart, boat, lamp,
           sheepfarm, study, church, woodshed, claypit, brickworks, weaver, tailor, mine, smithy, park, guild,
           factory, plant_modern, cannery, brewery, powerplant, heatplant, school, clinic, townhall, university,
-          factory_small, windturbine, solar, hydro, purifier, recycler, hospital, theatre, lab, ore_iron, ore_coal, bridge, bridge_plain):
+          factory_small, windturbine, solar, hydro, purifier, recycler, hospital, theatre, lab, ore_iron, ore_coal, bridge, bridge_plain, garden, herbalist, firestation, police):
     f()
 # chimney smoke markers on the older houses
 for o in list(bpy.data.objects):

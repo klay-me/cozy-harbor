@@ -7,7 +7,8 @@ import {
 import type { AudioSettings } from '../audio/sound';
 import type { RotateMode } from '../render/camera';
 import { icon } from './icons';
-import { SEASON_IDS, SEASON_DAYS, DAY_LENGTH, HEAT_BELOW } from '../sim/data';
+import { SEASON_IDS, SEASON_DAYS, DAY_LENGTH, HEAT_BELOW, PER_DAY, FOODS, FoodId, PROTECTS, ProtectId } from '../sim/data';
+import { supplies, needs as chainNeeds, chainSummary, outPerDay } from './chain';
 
 export type Tool = 'select' | 'demolish' | BuildingId;
 
@@ -261,7 +262,7 @@ export class Hud {
       const d = BUILDINGS[t];
       const lock = g.lockReason(t);
       const thumb = this.thumbs[t] ? `<img src="${this.thumbs[t]}" alt="">` : `<span class="road-ico"></span>`;
-      return `<button class="item${this.tool === t ? ' on' : ''}${lock ? ' locked' : ''}" data-type="${t}" data-lock="${lock}" title="${lock ? `${lock}：` : ''}${d.desc}">
+      return `<button class="item${this.tool === t ? ' on' : ''}${lock ? ' locked' : ''}" data-type="${t}" data-lock="${lock}" title="${lock ? `${lock}：` : ''}${d.desc}${d.output ? '&#10;' + chainSummary(t) : ''}&#10;维护费 ${Math.round(d.upkeep * PER_DAY)}/天">
         ${thumb}${lock ? `<span class="lk">${icon('lock')}</span>` : ''}<span class="nm">${d.name}${d.hotkey ? `<kbd>${d.hotkey}</kbd>` : ''}</span>
         <span class="cost">${lock ? `<span>${lock}</span>` : costHtml(d.cost)}</span></button>`;
     }).join('');
@@ -304,9 +305,9 @@ export class Hud {
     for (const t of TIER_IDS) {
       if (!g.pop[t] && TIERS[t].era > g.era) continue;
       if (!g.pop[t] && t !== 'peasant') continue;
-      for (const k of Object.keys(TIERS[t].essentials)) set.add(k as GoodId);
+      for (const k of TIERS[t].foods) if (GOODS[k].era <= g.era) set.add(k);
       for (const k of Object.keys(TIERS[t].comforts)) set.add(k as GoodId);
-      if (g.era >= 2 && TIERS[t].fuel !== 'power') set.add(TIERS[t].fuel as GoodId);
+      if (TIERS[t].fuel !== 'power') set.add(TIERS[t].fuel as GoodId);
     }
     set.add('planks');
     if (g.era >= 2) set.add('bricks');
@@ -324,7 +325,7 @@ export class Hud {
     const cur = g.research.current;
     const rPct = cur ? Math.min(100, Math.round(g.research.points / g.techCost(cur) * 100)) : 0;
     const essentials = new Set<string>();
-    for (const t of TIER_IDS) if (g.pop[t]) Object.keys(TIERS[t].essentials).forEach(k => essentials.add(k));
+    for (const t of TIER_IDS) if (g.pop[t]) TIERS[t].foods.forEach(k => essentials.add(k));
     const winterSoon = g.era >= 2 && (g.season === 'autumn' || g.season === 'winter');
     const fuel = g.era >= 3 ? g.storage.firewood + g.storage.coal : g.storage.firewood;
     const need = g.winterFuelEstimate();
@@ -334,14 +335,19 @@ export class Hud {
     const leftTxt = leftMin >= 1 ? `${Math.ceil(leftMin)} 分钟` : `${Math.ceil(g.seasonLeft)} 秒`;
     const tempCls = g.era >= 2 && g.temp < HEAT_BELOW ? (g.temp < -3 ? 'bad' : 'mid') : g.temp > 24 ? 'hot' : '';
     const rates = g.ledger.rates();
+    const foodDays = g.foodDays(), hungry = TIER_IDS.some(t => g.pop[t] && g.fedRatio[t] < 0.95);
+    const foodCls = hungry || foodDays < 1 ? 'low' : foodDays < 3 ? 'mid' : 'ok';
+    const foodKey = (['fish', 'veg', 'bread', 'cans'] as FoodId[]).find(f => GOODS[f].era <= g.era && g.storage[f] < 1) ?? 'fish';
+    const foodTip = `食物储备：库存够全城吃 ${foodDays === Infinity ? '很久' : foodDays.toFixed(1) + ' 天'}（每天要 ${Math.round(g.foodNeed())} 份饱食，库存 ${Math.round(g.foodStock())} 份）。` + TIER_IDS.filter(t => g.pop[t]).map(t => `${TIERS[t].name}吃饱 ${Math.round(g.fedRatio[t] * 100)}%`).join('，') + '。冬天菜园停产、渔场减产，秋天要多囤。';
     $('#res', this.root).innerHTML = `
-      <span class="chip gold" data-open="ledger" title="金币。税收 ${fmt(g.taxRate)}/分，维护费 ${fmt(g.upkeepRate)}/分（点击看收支明细）">${icon('gold')}<b>${fmt(g.gold)}</b><i class="${net >= 0 ? 'up' : 'down'}">${net >= 0 ? '+' : ''}${Math.round(net)}/分</i></span>
+      <span class="chip gold${g.gold < 0 ? ' low' : ''}" data-open="ledger" title="金币。每天税收 ${fmt(g.taxRate * PER_DAY)}，维护费 ${fmt(g.upkeepRate * PER_DAY)}${g.gold < 0 ? `。已经亏空 ${g.debtDays} 天：大家越来越不满，会罢工` : ''}（点击看收支明细）">${icon('gold')}<b>${fmt(g.gold)}</b><i class="${net >= 0 ? 'up' : 'down'}">${net >= 0 ? '+' : ''}${Math.round(net * PER_DAY)}/天</i></span>
+      <span class="chip ${foodCls}" data-open="ledger" data-good="${foodKey}" title="${foodTip}">${icon('food')}<b>${foodDays === Infinity ? '—' : foodDays >= 10 ? Math.round(foodDays) : foodDays.toFixed(1)}</b><i>天</i></span>
       <span class="chip pop" title="人口 ${total}">${tiers.map(t => `<span title="${TIERS[t].name}：${g.pop[t]} 人（空闲劳动力 ${Math.max(0, g.workforce[t].have - g.workforce[t].need)}，岗位 ${g.workforce[t].need}）" class="${g.workforce[t].need > g.workforce[t].have ? 'short' : ''}">${icon(t)}<b>${g.pop[t]}</b></span>`).join('')}</span>
       <span class="chip ${happyCls}" title="平均幸福度">${icon('happy')}<b>${Math.round(g.happyAvg)}</b></span>
       ${g.era >= 3 ? `<span class="chip ${g.power.use > g.power.gen + 0.05 ? 'low' : ''}" title="电网：发电 ${g.power.gen.toFixed(1)} / 用电 ${g.power.use.toFixed(1)}">${icon('power')}<b>${g.power.gen.toFixed(0)}</b><i>/${g.power.use.toFixed(0)}</i></span>
       <span class="chip ${g.pollutionAvg > 25 ? 'low' : ''}" title="住宅区平均污染（点"污染"查看分布）">${icon('pollution')}<b>${g.pollutionAvg.toFixed(0)}</b></span>` : ''}
       <button class="chip research" data-open="research" title="研究（T）">${icon('research')}<b>${cur ? TECHS[cur].name : '选择研究'}</b>${cur ? `<span class="mini"><i style="width:${rPct}%"></i></span>` : ''}</button>
-      <span class="chip clock" title="${SEASONS[g.season].name}季 第 ${g.seasonDay}/${SEASON_DAYS} 天：${SEASONS[g.season].effect}&#10;距离${SEASONS[nextSeason].name}天还有 ${leftTxt}（游戏内约 ${(g.seasonLeft / DAY_LENGTH).toFixed(1)} 天）&#10;开局以来第 ${g.day + 1} 天">${icon(g.night > 0.5 ? 'moon' : g.season)}<b>第${g.year}年 ${SEASONS[g.season].name}</b><i>${g.seasonDay}/${SEASON_DAYS}天 ${String(Math.floor(g.hour)).padStart(2, '0')}:${String(Math.floor((g.hour % 1) * 60)).padStart(2, '0')}</i><span class="mini season"><i style="width:${Math.round(g.seasonFrac * 100)}%"></i></span></span>
+      <span class="chip clock" title="${SEASONS[g.season].name}季 第 ${g.seasonDay}/${SEASON_DAYS} 天：${SEASONS[g.season].effect}&#10;距离${SEASONS[nextSeason].name}天还有 ${leftTxt}（游戏内约 ${(g.seasonLeft / DAY_LENGTH).toFixed(1)} 天）&#10;开局以来第 ${g.day + 1} 天">${icon(g.night > 0.5 ? 'moon' : g.season)}<b>第${g.day + 1}天</b><i>${g.year}年${SEASONS[g.season].name} ${g.seasonDay}/${SEASON_DAYS} ${String(Math.floor(g.hour)).padStart(2, '0')}:${String(Math.floor((g.hour % 1) * 60)).padStart(2, '0')}</i><span class="mini season"><i style="width:${Math.round(g.seasonFrac * 100)}%"></i></span></span>
       <span class="chip temp ${tempCls}" title="气温 ${g.temp.toFixed(1)}°C。低于 ${HEAT_BELOW}°C 住宅要烧燃料取暖，越冷烧得越多${g.era < 2 ? '（田园时代还不用取暖）' : ''}">${icon('thermo')}<b>${Math.round(g.temp)}°C</b></span>
       <span class="chip weather" title="${wx.effect}">${icon(g.weather.cur)}<b>${wx.name}</b>${wx.effect !== '一切正常' ? `<i>${wx.effect}</i>` : ''}</span>
       ${winterSoon ? `<span class="chip ${fuel < need ? 'low' : 'ok'}" title="冬季燃料：库存 ${fmt(fuel)}，整个冬天大约要烧 ${Math.ceil(need)}">${icon(g.season === 'winter' ? 'cold' : 'warm')}<b>${fmt(fuel)}</b><i>/${Math.ceil(need)}</i></span>` : ''}
@@ -420,7 +426,10 @@ export class Hud {
   private ledgerT = 0;
   private renderLedger() {
     const g = this.game, box = $('#ledger', this.root);
-    const r = g.ledger.rates();
+    const r0 = g.ledger.rates();
+    // per-minute rates shown per day
+    const r: typeof r0 = {};
+    for (const [k, v] of Object.entries(r0)) r[k] = { in: Object.fromEntries(Object.entries(v.in).map(([a, b]) => [a, b * PER_DAY])), out: Object.fromEntries(Object.entries(v.out).map(([a, b]) => [a, b * PER_DAY])) };
     const sum = (o: Record<string, number> = {}) => Object.values(o).reduce((a, b) => a + b, 0);
     const lines = (o: Record<string, number> = {}, sign: string) => Object.entries(o).filter(([, v]) => v >= 0.05).sort((a, b) => b[1] - a[1])
       .map(([k, v]) => `<div class="lrow"><span>${k}</span><b class="${sign === '+' ? 'up' : 'down'}">${sign}${v >= 10 ? Math.round(v) : v.toFixed(1)}</b></div>`).join('') || '<div class="lrow none"><span>暂无</span></div>';
@@ -436,21 +445,23 @@ export class Hud {
         outs[n ? `${n} ×${counts[n] ?? 0}（维护）` : k] = v;
       }
       const net = sum(gi) - sum(go);
-      body = `<div class="lsum"><span>最近一分钟</span><b class="${net >= 0 ? 'up' : 'down'}">${net >= 0 ? '+' : ''}${Math.round(net)} 金币/分</b><span class="soft">收入 ${Math.round(sum(gi))} · 支出 ${Math.round(sum(go))}</span></div>
-        <div class="lcols"><section><h4>收入</h4>${lines(gi, '+')}</section><section><h4>支出</h4>${lines(outs, '-')}</section></div>
-        <p class="desc">税收按住户的幸福度收取，幸福度 80 以上多收 20%；生病的人不交税。建造、升级和买卖也记在这里。</p>`;
+      const hist = g.days.slice(-8).reverse();
+      body = `<div class="lsum"><span>第 ${g.day + 1} 天 · 按此刻的速度</span><b class="${net >= 0 ? 'up' : 'down'}">${net >= 0 ? '+' : ''}${Math.round(net)} 金币/天</b><span class="soft">收入 ${Math.round(sum(gi))} · 支出 ${Math.round(sum(go))}</span></div>
+        <div class="lcols"><section><h4>收入（每天）</h4>${lines(gi, '+')}</section><section><h4>支出（每天）</h4>${lines(outs, '-')}</section></div>
+        ${hist.length ? `<h4 class="lh">最近几天</h4><div class="lhist">${hist.map(h => `<div class="lrow"><span>第 ${h.day} 天</span><b class="${h.gold >= 0 ? 'up' : 'down'}">${h.gold >= 0 ? '+' : ''}${h.gold} 金币</b><span class="soft">人口 ${h.pop} · 食物够 ${h.food === Infinity ? '—' : h.food.toFixed(1)} 天</span></div>`).join('')}</div>` : ''}
+        <p class="desc">一天 = ${DAY_LENGTH / 60} 分钟（1 倍速）。税收按住户的幸福度收取，幸福度 80 以上多收 20%；生病、挨饿和房子着火的住户不交税。金库亏空时工人领不到工钱：幸福度下降，过一天开始罢工。</p>`;
     } else {
       const goods = GOOD_IDS.filter(k => GOODS[k].era <= g.era || g.storage[k] > 0);
       body = `<div class="lgoods">
-        <div class="lhead"><span></span><span>货物</span><span>库存</span><span>产出/分</span><span>消耗/分</span><span>净值</span></div>
+        <div class="lhead"><span></span><span>货物</span><span>库存</span><span>产出/天</span><span>消耗/天</span><span>净值/天</span></div>
         ${goods.map(k => {
           const f = r[k], pin = sum(f?.in), pout = sum(f?.out), net = pin - pout;
-          const eta = net < -0.05 && g.storage[k] > 0 ? `约 ${Math.max(1, Math.round(g.storage[k] / -net))} 分钟用完` : net > 0.05 && g.storage[k] < g.cap ? `约 ${Math.max(1, Math.round((g.cap - g.storage[k]) / net))} 分钟存满` : '';
+          const eta = net < -0.05 && g.storage[k] > 0 ? `照这样约 ${(g.storage[k] / -net).toFixed(1)} 天用完` : net > 0.05 && g.storage[k] < g.cap ? `照这样约 ${((g.cap - g.storage[k]) / net).toFixed(1)} 天存满` : '';
           const open = this.ledgerOpen === k;
           return `<button class="lgood${open ? ' open' : ''}" data-lgood="${k}">${icon(k)}<span class="gn">${GOODS[k].name}</span><span>${fmt(g.storage[k])}<small>/${g.cap}</small></span><span class="up">+${pin.toFixed(1)}</span><span class="down">-${pout.toFixed(1)}</span><b class="${net >= 0.05 ? 'up' : net <= -0.05 ? 'down' : ''}">${net >= 0 ? '+' : ''}${net.toFixed(1)}</b></button>
             ${open ? `<div class="ldetail"><div class="lcols"><section><h4>来源</h4>${lines(f?.in, '+')}</section><section><h4>去向</h4>${lines(f?.out, '-')}</section></div>${eta ? `<p class="desc">${eta}</p>` : ''}</div>` : ''}`;
         }).join('')}</div>
-        <p class="desc">按最近一分钟的实际进出计算。点一行看来源和去向。<button class="link" data-a="trade">去商船买卖 →</button></p>`;
+        <p class="desc">按最近一分钟的实际进出折算成每天。点一行看来源和去向。<button class="link" data-a="trade">去商船买卖 →</button></p>`;
     }
     box.innerHTML = `<header><h3>账本</h3><div class="ltabs"><button data-ltab="gold" class="${this.ledgerTab === 'gold' ? 'on' : ''}">${icon('gold')}金币</button><button data-ltab="goods" class="${this.ledgerTab === 'goods' ? 'on' : ''}">${icon('box')}货物</button></div><button class="x" data-a="close" aria-label="关闭">×</button></header>${body}`;
     if (this.ledgerOpen && this.ledgerTab === 'goods') box.querySelector('.lgood.open')?.scrollIntoView({ block: 'nearest' });
@@ -497,7 +508,8 @@ export class Hud {
         <div class="row"><span>税收</span><b data-f="tax"></b></div>
         <h4>幸福度 <b data-f="happy"></b></h4><div data-f="parts" class="needs parts"></div>
         <h4>需求</h4><div data-f="needs" class="needs"></div>
-        <div class="row"><span>冬季取暖</span><b data-f="fuel"></b></div>
+        <div class="row"><span>取暖</span><b data-f="fuel"></b></div>
+        <div class="row"><span>吃饱</span><b data-f="fed"></b></div>
         ${up ? `<button class="primary" data-a="upgrade">升级为${TIERS[up.to].name} <small>${costHtml(up.cost)}</small></button>
         <p class="hint" data-f="block"></p><button class="ghost" data-a="upgradeAll">升级所有满足条件的${HOUSE_NAMES[b.tier]}</button>` : ''}`;
     } else if (d.cycle || d.powerGen) {
@@ -507,7 +519,8 @@ export class Hud {
       body = `${flow}
         ${d.cycle ? '<div class="bar"><i data-f="prog"></i></div>' : ''}
         ${d.workers ? `<div class="row"><span>${TIERS[d.workers.tier].name}</span><b data-f="staff"></b></div>` : ''}
-        ${d.output ? '<div class="row"><span>产量</span><b data-f="rate"></b></div>' : ''}
+        ${d.output ? `<div class="row"><span>每天产出</span><b data-f="rate"></b></div>
+        <div class="chain">${chainNeeds(b.type).map(t => `<span>${icon('box')}${t}</span>`).join('')}${supplies(b.type).map(t => `<span>${icon('check')}${t}</span>`).join('')}<small>以上按满员、一天 ${DAY_LENGTH / 60} 分钟计算</small></div>` : ''}
         ${d.powerGen ? '<div class="row"><span>发电</span><b data-f="gen"></b></div>' : ''}
         ${d.power ? `<div class="row"><span>用电</span><b data-f="pow"></b></div>` : ''}
         ${d.needs === 'forest' ? '<div class="row"><span>附近树木</span><b data-f="trees"></b></div>' : ''}
@@ -525,21 +538,24 @@ export class Hud {
       body = `<div class="row"><span>${TIERS[d.workers.tier].name}</span><b data-f="staff"></b></div>`;
     }
     if (d.pollution) body += `<div class="row"><span>${d.pollution > 0 ? '污染' : '净化'}</span><b>${d.pollution > 0 ? '' : '-'}${Math.abs(d.pollution)}</b></div>`;
+    if (d.protects) body += `<div class="row"><span>${PROTECTS[d.protects]}覆盖</span><b>半径 ${d.radius} 格，覆盖 <span data-f="pcov"></span> 座建筑</b></div>`;
+    if (b.type !== 'depot') body += `<div class="safety" data-f="safety"></div>`;
     box.innerHTML = `
       <header><h3>${title}</h3><button class="x" data-a="close" aria-label="关闭">×</button></header>
       <span class="pill" data-f="status"></span>
       <p class="desc">${isHouse ? this.houseDesc(b) : d.desc}</p>
       ${body}
-      <footer>${d.upkeep ? `<span class="upkeep">维护费 ${d.upkeep}/分</span>` : '<span></span>'}${b.type !== 'depot' ? '<button class="danger" data-a="demolish">拆除</button>' : ''}</footer>`;
+      <footer>${d.upkeep ? `<span class="upkeep">维护费 ${Math.round(d.upkeep * PER_DAY)}/天</span>` : '<span></span>'}${b.type !== 'depot' ? '<button class="danger" data-a="demolish">拆除</button>' : ''}</footer>`;
     box.querySelector('[data-a="research"]')?.addEventListener('click', () => this.togglePanel('research', true));
     box.querySelector('[data-a="goods"]')?.addEventListener('click', () => this.togglePanel('goods', true));
     this.updateInfo();
   }
   private houseDesc(b: Bld) {
     const T = TIERS[b.tier];
-    const goods = [...Object.keys(T.essentials), ...Object.keys(T.comforts)].map(k => GOODS[k as GoodId].name);
+    const foods = T.foods.map(k => GOODS[k].name).join('、');
+    const com = Object.keys(T.comforts).map(k => GOODS[k as GoodId].name);
     const svc = T.services.map(s => SERVICES[s]);
-    return `${T.name}的家。需要${goods.join('、')}，以及${svc.join('、')}的覆盖。`;
+    return `${T.name}的家。每人每天要吃 ${T.hunger} 份饱食，爱吃${foods}（种类越多越开心）${com.length ? `；还想要${com.join('、')}` : ''}；需要${svc.join('、')}的覆盖。`;
   }
 
   private updateInfo() {
@@ -563,12 +579,14 @@ export class Hud {
     if (b.type === 'house') {
       const T = TIERS[b.tier], hp = b.happy * 100;
       f('res')!.textContent = `${b.residents} / ${T.cap} ${T.name}${b.sick ? `（${b.sick} 人生病）` : ''}`;
-      f('tax')!.textContent = `${((b.residents - b.sick) * T.tax * (hp / 100) * (hp > 80 ? 1.2 : 1)).toFixed(1)} 金币/分`;
+      f('tax')!.textContent = `${((b.residents - b.sick) * T.tax * (hp / 100) * (hp > 80 ? 1.2 : 1) * PER_DAY).toFixed(0)} 金币/天`;
+      const kinds = T.foods.filter(k => g.storage[k] >= 0.5).map(k => GOODS[k].name);
+      f('fed')!.textContent = `${Math.round(b.fed * 100)}%${kinds.length ? `，有${kinds.join('、')}` : '，家里没吃的了'}`;
       f('happy')!.textContent = String(Math.round(hp));
-      f('parts')!.innerHTML = b.parts.map(p => { const v = p.value / p.max; return `<div class="need"><span>${p.label}</span><span class="bar"><i style="width:${Math.round(v * 100)}%" class="${v > 0.95 ? 'ok' : v > 0.4 ? 'mid' : 'bad'}"></i></span></div>`; }).join('');
+      f('parts')!.innerHTML = b.parts.map(p => { if (p.max === 0) return `<div class="need minus"><span>${p.label}</span><b>${Math.round(p.value)}</b></div>`; const v = p.value / p.max; return `<div class="need"><span>${p.label}</span><span class="bar"><i style="width:${Math.round(v * 100)}%" class="${v > 0.95 ? 'ok' : v > 0.4 ? 'mid' : 'bad'}"></i></span></div>`; }).join('');
       f('needs')!.innerHTML = b.needs.map(n => `<div class="need"><span>${n.label}</span><span class="bar"><i style="width:${Math.round(n.value * 100)}%" class="${n.value > 0.95 ? 'ok' : n.value > 0.4 ? 'mid' : 'bad'}"></i></span></div>`).join('');
       const fuel = T.fuel === 'power' ? '电' : g.heatedBy(b) ? '煤（集中供暖）' : GOODS[T.fuel as GoodId].name;
-      f('fuel')!.textContent = g.era < 2 ? '田园时代不需要' : g.heatingOn ? `${fuel} · ${b.warm > 0.9 ? '温暖' : b.warm > 0.5 ? '有点冷' : '很冷'}` : `${fuel}（冬天）`;
+      f('fuel')!.textContent = g.heatingOn ? `${fuel} · ${b.warm > 0.9 ? '温暖' : b.warm > 0.5 ? '有点冷' : '很冷'}` : `${fuel}（低于 ${HEAT_BELOW}°C 才烧）`;
       const up = box.querySelector<HTMLButtonElement>('[data-a="upgrade"]');
       if (up) {
         const block = g.upgradeBlock(b);
@@ -579,18 +597,24 @@ export class Hud {
       if (f('prog')) f('prog')!.style.width = `${Math.round(b.progress * 100)}%`;
       if (f('rate')) {
         const mult = 1 + (g.mods.prod[b.type] ?? 0) + g.mods.prodAll;
-        f('rate')!.textContent = `${((60 / d.cycle!) * (d.outQty ?? 1) * b.staff * b.env * mult * g.prodFactor(b.type)).toFixed(1)} / 分`;
+        const now = outPerDay(b.type) * b.staff * b.env * mult * g.prodFactor(b.type);
+        f('rate')!.textContent = `${now.toFixed(1)}（满员 ${outPerDay(b.type).toFixed(0)}）`;
       }
       if (f('gen')) f('gen')!.textContent = `${b.gen.toFixed(1)} / ${d.powerGen}`;
       if (f('pow')) f('pow')!.textContent = `${d.power}（电网满足 ${Math.round(g.power.ratio * 100)}%）`;
       if (f('trees')) f('trees')!.textContent = `${g.treesAround(b, d.radius!)} 棵（效率 ${Math.round(b.env * 100)}%）`;
       if (f('env')) f('env')!.textContent = b.env < 0.99 ? `污染减产 ${Math.round((1 - b.env) * 100)}%` : '良好';
     } else if (d.research_pts) {
-      f('rp')!.textContent = `${(d.research_pts * b.staff).toFixed(0)} 点/分`;
+      f('rp')!.textContent = `${(d.research_pts * b.staff * PER_DAY).toFixed(0)} 点/天`;
     } else if (d.heating || d.service) {
       let n = 0;
       g.buildings.forEach(h => { if (h.type === 'house' && (d.heating ? h.heaters.includes(b) : g.covered(h, d.service!))) n++; });
       f('cov')!.textContent = b.connected ? `${n} 座` : '没有连上道路，无法服务';
     } else if (f('cap')) f('cap')!.textContent = String(g.cap);
+    if (f('pcov')) { let n = 0; g.buildings.forEach(o => { if (o !== b && o.protect.has(d.protects!)) n++; }); f('pcov')!.textContent = String(n); }
+    if (f('safety')) {
+      const ps = (['fire', 'health', 'police'] as ProtectId[]).filter(p => p !== 'police' || g.era >= 2).filter(p => b.type === 'house' || p === 'fire');
+      f('safety')!.innerHTML = ps.map(p => `<span class="${b.protect.has(p) ? 'on' : 'off'}">${b.protect.has(p) ? '✓' : '✗'} ${PROTECTS[p]}</span>`).join('') + (b.fire > 0 ? '<span class="off">🔥 着火了</span>' : '') + (b.plague > 0 ? '<span class="off">瘟疫</span>' : '');
+    }
   }
 }

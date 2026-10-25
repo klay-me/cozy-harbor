@@ -4,6 +4,7 @@ import {
   START, REFUND, BUY_MARKUP, BRIDGE_COST, MAP_SIZE, WEATHER, WeatherId, Era, ERAS, TECHS, TECH_IDS, TechId, TechEffect,
   HEAT_PER_RESIDENT, POWER_HEAT_PER_RESIDENT, coldness, SEASON_TEMP, COLDER_PER_YEAR, COLDER_MAX, WEATHER_TEMP, POLLUTION_RADIUS,
   DAY_LENGTH, SEASON_DAYS, START_HOUR, SEASONS, SEASON_IDS, SeasonId,
+  FOODS, FoodId, ProtectId, FIRE, PLAGUE, CRIME, STRIKE, HUNGER, PER_DAY, DEBT,
 } from './data';
 
 export interface Bld {
@@ -32,6 +33,12 @@ export interface Bld {
   heaters: Bld[];          // heating plants in range (cached on refresh)
   coldT: number;
   growT: number;
+  protect: Set<ProtectId>; // health / fire / police cover reaching this building (cached on refresh)
+  fire: number;            // seconds it has been burning (0 = not on fire)
+  strike: number;          // seconds of strike left
+  hungerT: number;         // seconds the household has gone short of food
+  fed: number;             // 0..1 share of hunger stilled
+  plague: number;          // seconds since infection (0 = healthy)
 }
 
 export interface ProdEvent { id: number; good: GoodId; n: number }
@@ -43,9 +50,12 @@ export const QUESTS: Quest[] = [
   { text: '在水边建一座渔场', reward: { gold: 200, planks: 6 }, done: g => g.count('fishery', true) >= 1 },
   { text: '建一座集市，覆盖住宅', reward: { gold: 200 }, done: g => g.count('market', true) >= 1 },
   { text: '建伐木场和锯木厂，自产木板', reward: { gold: 300 }, done: g => g.count('lumberjack', true) >= 1 && g.count('sawmill', true) >= 1 },
+  { text: '建一座菜园，让大家吃得更丰富', reward: { gold: 200, planks: 4 }, done: g => g.count('garden', true) >= 1 },
+  { text: '建柴火坊：气温低于 8°C 就要烧柴', reward: { gold: 250 }, done: g => g.count('firewood', true) >= 1 },
+  { text: '建消防队和草药铺，防火防病', reward: { gold: 300 }, done: g => g.count('firestation', true) >= 1 && g.count('herbalist', true) >= 1 },
   { text: '建一座村塾，开始研究', reward: { gold: 200, planks: 6 }, done: g => g.count('study', true) >= 1 },
   { text: '农民达到 60 人，并建起教堂', reward: { gold: 500 }, done: g => g.era >= 2 },
-  { text: '建柴火坊：入冬前要囤好柴火', reward: { gold: 300 }, done: g => g.count('firewood', true) >= 1 },
+  { text: '建巡警所，管住小偷', reward: { gold: 300 }, done: g => g.count('police', true) >= 1 },
   { text: '黏土坑 → 砖厂，自产砖', reward: { gold: 300 }, done: g => g.count('claypit', true) >= 1 && g.count('brickworks', true) >= 1 },
   { text: '把一户农民升级为工人', reward: { gold: 300, bricks: 6 }, done: g => g.pop.worker > 0 },
   { text: '建立面包链：麦田 → 磨坊 → 面包房', reward: { gold: 400 }, done: g => g.count('mill', true) >= 1 && g.count('bakery', true) >= 1 },
@@ -128,6 +138,19 @@ export class Game {
   heatBase: Partial<Record<GoodId | 'power', number>> = {};
   temp = 13;
   ledger = new Ledger();
+  /** 0..1 how well each tier was fed this step */
+  fedRatio: Record<TierId, number> = { peasant: 1, worker: 1, technician: 1, citizen: 1 };
+  /** days the treasury has been in the red */
+  debtDays = 0;
+  /** finished days: summaries for the ledger */
+  days: { day: number; gold: number; pop: number; food: number }[] = [];
+  private dayStart = { gold: START.gold, pop: 0 };
+  private lastDay = 0;
+  /** why people left today */
+  flowLeft = { hunger: 0, cold: 0, plague: 0, fire: 0 };
+  /** buildings currently burning, for the renderer */
+  fires = new Set<number>();
+  private toastAt: Record<string, number> = {};
   netRoads = new Uint8Array(0);
   // change counters for the renderer
   bVersion = 0; rVersion = 0; tVersion = 0; pVersion = 0;
@@ -166,8 +189,11 @@ export class Game {
     if (h >= 4.5 && h < 6.5) return 1 - (h - 4.5) / 2;
     return 1;
   }
-  /** heating only matters once firewood exists */
-  get heatingOn() { return this.era >= 2 && coldness(this.temp) > 0; }
+  get heatingOn() { return coldness(this.temp) > 0; }
+  /** 饱食 the town eats per day, and how many days the food in store lasts */
+  foodNeed() { return TIER_IDS.reduce((a, t) => a + this.pop[t] * TIERS[t].hunger, 0); }
+  foodStock() { return (Object.keys(FOODS) as FoodId[]).reduce((a, f) => a + this.storage[f] * FOODS[f].fill, 0); }
+  foodDays() { const n = this.foodNeed(); return n > 0 ? this.foodStock() / n : Infinity; }
   /** 0..1 how far through the current season */
   get seasonFrac() { return this.seasonPos % 1; }
   /** game seconds until the next season */
@@ -310,7 +336,7 @@ export class Game {
     const b: Bld = {
       id, type, x, z, w, h, variant: (x * 7 + z * 13) % 4,
       progress: 0, loaded: false, staff: 0, env: 1, working: false, status: '', connected: false, gen: 0,
-      tier: 'peasant', residents: 0, sick: 0, happy: 0, parts: [], needs: [], warm: 1, coldT: 0, growT: 0, cover: new Set(), heaters: [],
+      tier: 'peasant', residents: 0, sick: 0, happy: 0, parts: [], needs: [], warm: 1, coldT: 0, growT: 0, cover: new Set(), heaters: [], protect: new Set(), fire: 0, strike: 0, hungerT: 0, fed: 1, plague: 0,
     };
     this.buildings.set(id, b);
     for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
@@ -372,14 +398,19 @@ export class Game {
       const b = this.buildings.get(o)!;
       if (b.type === 'depot') { this.notify('港口不能拆除', 'warn'); return false; }
       this.gain(BUILDINGS[b.type].cost, REFUND);
-      for (let j = 0; j < b.h; j++) for (let i = 0; i < b.w; i++) this.occ[(b.z + j) * this.W + b.x + i] = 0;
-      this.buildings.delete(o);
-      this.bVersion++;
+      this.remove(b);
       this.sfx.push('demolish');
-      this.refresh();
       return true;
     }
     return false;
+  }
+
+  /** take a building off the map (demolished or burnt down) */
+  private remove(b: Bld) {
+    for (let j = 0; j < b.h; j++) for (let i = 0; i < b.w; i++) this.occ[(b.z + j) * this.W + b.x + i] = 0;
+    this.buildings.delete(b.id);
+    this.bVersion++;
+    this.refresh();
   }
 
   upgradeBlock(b: Bld): string | null {
@@ -514,6 +545,16 @@ export class Game {
       b.connected = ok;
     });
     void hubs;
+    // protection (health, fire, police) for every building
+    const prot = [...this.buildings.values()].filter(s => BUILDINGS[s.type].protects && s.connected);
+    this.buildings.forEach(b => {
+      b.protect = new Set();
+      const c = this.center(b);
+      for (const s of prot) {
+        const sc = this.center(s);
+        if (Math.hypot(sc.x - c.x, sc.z - c.z) <= this.radiusOf(s)) b.protect.add(BUILDINGS[s.type].protects!);
+      }
+    });
     // cache which services and heating plants reach each house
     const cov = [...this.buildings.values()].filter(s => BUILDINGS[s.type].service || BUILDINGS[s.type].heating);
     this.buildings.forEach(b => {
@@ -569,11 +610,17 @@ export class Game {
     TIER_IDS.forEach(t => { this.pop[t] = 0; });
     const remain = {} as Record<TierId, number>;
     TIER_IDS.forEach(t => { remain[t] = 0; });
-    this.buildings.forEach(b => { if (b.type === 'house') { this.pop[b.tier] += b.residents; remain[b.tier] += Math.max(0, b.residents - b.sick); } });
+    this.buildings.forEach(b => {
+      if (b.type !== 'house') return;
+      this.pop[b.tier] += b.residents;
+      // the sick stay home; hungry people only manage half a day's work
+      const able = Math.max(0, b.residents - b.sick) * (b.hungerT > HUNGER.hungrySecs ? 0.5 : 1);
+      remain[b.tier] += b.fire > 0 ? 0 : Math.floor(able);
+    });
     TIER_IDS.forEach(t => { this.workforce[t] = { have: remain[t], need: 0 }; });
 
     const broke = this.gold < 0;
-    if (broke) this.once('broke', '金库空了！先别建新东西：在仓库面板卖掉多余的货物，或拆掉闲置的建筑', 'warn');
+    if (broke) this.once('broke', '金库空了！工人领不到工钱会不开心，拖久了会罢工。卖掉多余的货物或拆掉闲置的建筑', 'warn');
     else this.flags.delete('broke');
     const powerRatio = this.power.ratio;
     let upkeep = 0, gen = 0, use = 0, rp = 0;
@@ -581,8 +628,10 @@ export class Game {
 
     for (const b of this.buildings.values()) {
       const def = BUILDINGS[b.type];
-      upkeep += def.upkeep;
-      this.ledger.add('gold', 'out', `维护·${def.name}`, def.upkeep / 60 * dt);
+      // idle workshops (no staff, no input, strike, fire) only cost a quarter
+      const fee = def.workers && !b.working ? def.upkeep * 0.25 : def.upkeep;
+      upkeep += fee;
+      this.ledger.add('gold', 'out', `维护·${def.name}`, fee / 60 * dt);
       b.gen = 0;
       if (b.type === 'house' || b.type === 'road') continue;
       // staffing
@@ -595,6 +644,8 @@ export class Game {
       } else b.staff = b.connected ? 1 : 0;
       if (!def.workers && !def.powerGen && !def.cycle && !def.heating && def.pollution === undefined) { b.working = b.connected; b.status = b.connected ? '' : '没有连上道路'; continue; }
       if (!b.connected) { b.status = '没有连上道路'; b.working = false; continue; }
+      if (b.fire > 0) { b.status = '着火了！'; b.working = false; continue; }
+      if (b.strike > 0) { b.strike = Math.max(0, b.strike - dt); b.status = `罢工中（还有 ${Math.ceil(b.strike)} 秒）`; b.working = false; continue; }
       if (b.staff === 0) { b.status = `缺少${TIERS[def.workers!.tier].name}`; b.working = false; continue; }
       const staffNote = b.staff < 1 ? `工人不足 (${Math.round(b.staff * this.workersFor(b.type))}/${this.workersFor(b.type)})` : '';
 
@@ -669,12 +720,30 @@ export class Game {
       b.status = staffNote || (pf < 0.99 ? `电力不足 (${Math.round(pf * 100)}%)` : def.powerGen ? `发电 ${b.gen.toFixed(0)}` : Math.abs(pct) >= 1 ? `运转中（${pct > 0 ? '+' : ''}${pct}%）` : '运转中');
     }
 
-    // ---- consumption of goods
+    // ---- food: each tier eats what it likes from the shared store, spread across the kinds in stock
+    for (const t of [...TIER_IDS].reverse()) {
+      const T = TIERS[t];
+      let need = this.pop[t] * T.hunger / DAY_LENGTH * dt;   // 饱食 this step
+      if (need <= 0) { this.fedRatio[t] = 1; continue; }
+      const want = need;
+      for (let pass = 0; pass < 2 && need > 1e-9; pass++) {
+        const avail = T.foods.filter(f => this.storage[f] > 1e-6);
+        if (!avail.length) break;
+        const share = need / avail.length;
+        for (const f of avail) {
+          const units = Math.min(this.storage[f], share / FOODS[f].fill);
+          this.storage[f] -= units;
+          need -= units * FOODS[f].fill;
+          this.ledger.add(f, 'out', `${T.name}吃掉`, units);
+        }
+      }
+      this.fedRatio[t] = Math.max(0, Math.min(1, 1 - need / want));
+    }
+    // ---- comforts (happiness only)
     const demand: Partial<Record<GoodId, number>> = {};
     const byTier: Partial<Record<GoodId, [TierId, number][]>> = {};
     TIER_IDS.forEach(t => {
-      const T = TIERS[t];
-      for (const [g, r] of [...Object.entries(T.essentials), ...Object.entries(T.comforts)]) {
+      for (const [g, r] of Object.entries(TIERS[t].comforts)) {
         const d = this.pop[t] * (r as number) / 60 * dt;
         demand[g as GoodId] = (demand[g as GoodId] ?? 0) + d;
         (byTier[g as GoodId] ??= []).push([t, d]);
@@ -682,15 +751,15 @@ export class Game {
     });
     GOOD_IDS.forEach(g => {
       const d = demand[g];
-      if (!d) { this.supply[g] += (1 - this.supply[g]) * Math.min(1, dt / 4); return; }
+      if (!d) { this.supply[g] += ((this.storage[g] >= 1 ? 1 : 0) - this.supply[g]) * Math.min(1, dt / 4); return; }
       const ratio = Math.min(1, this.storage[g] / d);
       this.storage[g] = Math.max(0, this.storage[g] - d * ratio);
-      for (const [t, dd] of byTier[g]!) this.ledger.add(g, 'out', `${TIERS[t].name}生活`, dd * ratio);
+      for (const [t, dd] of byTier[g]!) this.ledger.add(g, 'out', `${TIERS[t].name}使用`, dd * ratio);
       this.supply[g] += (ratio - this.supply[g]) * Math.min(1, dt / 4);
     });
 
     // ---- winter heating: work out what every house burns, then draw it from storage
-    const cold = this.era >= 2 ? coldness(this.temp) : 0;
+    const cold = coldness(this.temp);
     const heat = cold > 0, heatMul = Math.max(0.2, 1 + this.mods.heating) * cold;
     const heatBase: Partial<Record<GoodId | 'power', number>> = {};
     const fuelNeed: Partial<Record<GoodId | 'power', number>> = {};
@@ -727,13 +796,18 @@ export class Game {
     for (const b of this.buildings.values()) {
       if (b.type !== 'house') continue;
       const T = TIERS[b.tier];
-      const ess = Object.keys(T.essentials) as GoodId[], com = Object.keys(T.comforts) as GoodId[];
-      const essV = comfortSupply(ess), comV = comfortSupply(com);
+      const com = Object.keys(T.comforts) as GoodId[];
+      const comV = com.length ? com.reduce((a, g) => a + (this.storage[g] >= 1 ? 1 : this.supply[g]), 0) / com.length : 1;
+      // food: how full they are, and how many of their favourite foods are on the shelf
+      b.fed += (this.fedRatio[b.tier] - b.fed) * Math.min(1, dt / 2);
+      const kinds = T.foods.filter(f => this.storage[f] >= 0.5);
+      const joy = kinds.reduce((a, f) => a + FOODS[f].joy, 0) / T.foods.reduce((a, f) => a + FOODS[f].joy, 0);
+      const foodV = b.fed * (0.55 + 0.45 * joy);
       const svc = T.services.map(s => b.connected && this.covered(b, s) ? 1 : 0);
       const svcV = svc.reduce((a: number, v) => a + v, 0) / T.services.length;
       const c = this.center(b);
       const pol = this.pollutionAt(c.x, c.z);
-      const park = this.covered(b, 'park') ? 4 : 0;
+      const park = this.covered(b, 'park') ? 3 : 0;
       const envV = Math.max(0, 1 - pol / 60);
       // warmth eases towards the share of fuel that arrived
       const hf = houseFuel.get(b);
@@ -741,44 +815,59 @@ export class Game {
       // a chilly evening without fuel is bearable; a freezing one is not
       const warmGoal = heat && hf ? ok + (1 - ok) * Math.max(0, 1 - cold * 2) : 1;
       b.warm += (warmGoal - b.warm) * Math.min(1, dt / 3);
+      const healthV = b.residents ? 1 - b.sick / b.residents : 1;
+      const debtPen = this.gold < 0 ? Math.min(DEBT.max, DEBT.base + this.debtDays * DEBT.perDay) : 0;
       b.parts = [
-        { label: '必需品', value: essV * 30, max: 30 },
-        { label: '舒适品', value: comV * 20, max: 20 },
+        { label: '食物', value: foodV * 30, max: 30 },
+        { label: '舒适品', value: comV * 15, max: 15 },
         { label: '公共服务', value: svcV * 20, max: 20 },
-        { label: '环境', value: Math.min(15, envV * 15 + park), max: 15 },
+        { label: '环境', value: Math.min(10, envV * 10 + park), max: 10 },
         { label: '温暖', value: b.warm * 15, max: 15 },
+        { label: '健康', value: healthV * 10, max: 10 },
       ];
+      if (debtPen) b.parts.push({ label: '欠薪', value: -debtPen, max: 0 });
+      if (b.fire > 0) b.parts.push({ label: '火灾', value: -40, max: 0 });
       b.needs = [
-        ...ess.map(g => ({ label: GOODS[g].name, value: this.storage[g] >= 1 ? 1 : this.supply[g] })),
+        ...T.foods.map(f => ({ label: GOODS[f].name, value: this.storage[f] >= 0.5 ? 1 : 0 })),
         ...com.map(g => ({ label: GOODS[g].name, value: this.storage[g] >= 1 ? 1 : this.supply[g] })),
         ...T.services.map((s, i) => ({ label: SERVICES[s], value: svc[i] })),
       ];
       let happy = b.parts.reduce((a, p) => a + p.value, 0) + this.mods.happiness;
       happy = Math.max(0, Math.min(100, happy));
       b.happy = b.connected ? happy / 100 : 0;
+      // hunger: short of food for a while -> weak; longer -> families leave
+      if (b.residents && b.fed < 0.8) b.hungerT += dt; else b.hungerT = Math.max(0, b.hungerT - dt * 2);
       // the cold: sickness after 30 s, people leave after 90 s
       if (heat && b.warm < 0.5 && b.residents) {
         b.coldT += dt; coldHouses++;
-      } else b.coldT = Math.max(0, b.coldT - dt * (this.covered(b, 'clinic') || this.covered(b, 'hospital') ? 3 : 1.5));
-      const sickShare = b.coldT > 30 ? 0.5 * Math.max(0.1, 1 + this.mods.sickness) : 0;
+      } else b.coldT = Math.max(0, b.coldT - dt * (b.protect.has('health') ? 3 : 1.5));
+      const sickShare = Math.max(b.coldT > 30 ? 0.5 : 0, b.plague > 0 ? PLAGUE.sickShare : 0, b.hungerT > HUNGER.leaveSecs ? 0.3 : 0) * Math.max(0.1, 1 + this.mods.sickness);
       b.sick = Math.min(b.residents, Math.round(b.residents * sickShare));
       // growth
       const hp = b.happy * 100;
       let target = !b.connected ? 0 : hp >= 60 ? T.cap : Math.max(1, Math.round(T.cap * Math.max(0.25, (hp - 10) / 50)));
-      if (essV < 0.3) target = Math.min(target, Math.ceil(T.cap / 2));
-      if (b.coldT > 90) target = Math.min(target, Math.max(0, b.residents - 1));
+            if (b.coldT > 90) target = Math.min(target, Math.max(0, b.residents - 1));
+      // long hunger: the household shrinks to what the food can feed
+      if (b.hungerT > HUNGER.leaveSecs) target = Math.min(target, b.fed < 0.05 ? 0 : Math.ceil(T.cap * Math.min(1, b.fed / 0.8)));
       if (hp < 20 && b.connected) target = Math.min(target, Math.max(1, b.residents - 1));
+      if (b.fire > 0) target = b.residents;
       b.growT += dt;
-      if (b.residents < target && b.growT >= 4) { b.residents++; b.growT = 0; }
-      else if (b.residents > target && b.growT >= 6) { b.residents--; b.growT = 0; }
+      // nobody moves into a hungry, burning or sick street
+      const pantry = T.foods.reduce((a, f) => a + this.storage[f] * FOODS[f].fill, 0);
+      const welcoming = (b.fed >= 0.9 && pantry >= T.hunger * 2 || this.pop[b.tier] < 12) && b.fire === 0 && b.plague === 0 && b.coldT < 30;
+      if (b.residents < target && b.growT >= 4 && welcoming) { b.residents++; b.growT = 0; }
+      else if (b.residents > target && b.growT >= (b.hungerT > HUNGER.leaveSecs ? 12 : 6)) { b.residents--; b.growT = 0; if (b.hungerT > HUNGER.leaveSecs) this.flowLeft.hunger++; else if (b.coldT > 90) this.flowLeft.cold++; }
+      if (b.residents < 0) b.residents = 0;
       if (b.residents === target) b.growT = Math.min(b.growT, 4);
-      b.status = !b.connected ? '没有连上道路' : b.coldT > 30 ? '天太冷，有人生病了' : b.warm < 0.5 && heat ? '家里没有燃料取暖' : hp >= 80 ? '生活美满' : hp >= 50 ? '还算满意' : '日子不好过';
-      const t1 = (b.residents - b.sick) * T.tax * (hp / 100) * (hp > 80 ? 1.2 : 1);
+      b.status = !b.connected ? '没有连上道路' : b.fire > 0 ? '着火了！' : b.plague > 0 ? '闹瘟疫，有人病倒了' : b.hungerT > HUNGER.leaveSecs ? '饿得受不了，有人要搬走' : b.hungerT > HUNGER.hungrySecs ? '吃不饱，干活没力气' : b.coldT > 30 ? '天太冷，有人生病了' : b.warm < 0.5 && heat ? '家里没有燃料取暖' : this.gold < 0 ? '领不到工钱' : hp >= 80 ? '生活美满' : hp >= 50 ? '还算满意' : '日子不好过';
+      const t1 = b.fire > 0 || b.hungerT > HUNGER.hungrySecs ? 0 : (b.residents - b.sick) * T.tax * (hp / 100) * (hp > 80 ? 1.2 : 1);
       tax += t1;
       this.ledger.add('gold', 'in', `${T.name}税收`, t1 / 60 * dt);
       happySum += hp; houses++;
     }
     this.happyAvg = houses ? happySum / houses : 0;
+    this.stepDisasters(dt);
+    this.stepDay();
     if (coldHouses > 0) this.once('cold' + this.year, `有 ${coldHouses} 户人家没有燃料取暖！快补充${this.era >= 3 ? '柴火或煤' : '柴火'}`, 'warn');
 
     // ---- research
@@ -820,6 +909,142 @@ export class Game {
         break;
       }
     }
+  }
+
+  /** a toast at most once every `gap` game seconds per key */
+  private throttle(key: string, gap: number, text: string, kind: Toast['kind'] = 'warn') {
+    if ((this.toastAt[key] ?? -1e9) + gap > this.time) return false;
+    this.toastAt[key] = this.time;
+    this.notify(text, kind);
+    return true;
+  }
+  private houseNear(b: Bld, r: number) {
+    const c = this.center(b), out: Bld[] = [];
+    for (const o of this.buildings.values()) {
+      if (o === b) continue;
+      const oc = this.center(o);
+      if (Math.hypot(oc.x - c.x, oc.z - c.z) <= r) out.push(o);
+    }
+    return out;
+  }
+
+  // ---------- fire, plague, crime and strikes ----------
+  private stepDisasters(dt: number) {
+    const day = dt / DAY_LENGTH;
+    const settled = this.time > DAY_LENGTH * 2;       // a grace period at the start
+    const wx = this.weather.cur;
+    const wet = wx === 'rain' || wx === 'storm' || wx === 'snow';
+    const fireMul = wet ? 0.3 : (this.season === 'summer' && wx === 'sunny') ? 1.7 : this.season === 'summer' ? 1.3 : 1;
+    // fire
+    this.fires.clear();
+    for (const b of [...this.buildings.values()]) {
+      const d = BUILDINGS[b.type];
+      if (b.type === 'depot') continue;
+      if (b.fire > 0) {
+        b.fire += dt * (wet ? 0.7 : 1);
+        if (b.protect.has('fire') && b.fire > FIRE.putOutSecs) { b.fire = 0; this.throttle('putout', 10, `消防队扑灭了${b.type === 'house' ? '住宅' : d.name}的火`, 'good'); continue; }
+        if (Math.random() < FIRE.spread * dt / FIRE.burnSecs) {
+          const nb = this.houseNear(b, Math.max(b.w, b.h) / 2 + 2.2).filter(o => o.fire === 0 && o.type !== 'depot');
+          if (nb.length) { const o = nb[Math.floor(Math.random() * nb.length)]; o.fire = 0.01; this.throttle('spread', 8, '火势蔓延到了隔壁！'); }
+        }
+        if (b.fire > FIRE.burnSecs) {
+          if (b.type === 'house') this.flowLeft.fire += b.residents;
+          this.notify(`${b.type === 'house' ? TIERS[b.tier].name + '的住宅' : d.name}被烧毁了${b.protect.has('fire') ? '' : '——那里没有消防队'}`, 'warn');
+          this.sfx.push('demolish');
+          this.remove(b);
+          continue;
+        }
+        this.fires.add(b.id);
+      } else if (settled && b.connected) {
+        const base = b.type === 'house' ? FIRE.house * (b.tier === 'peasant' ? 1.2 : b.tier === 'worker' ? 1 : b.tier === 'technician' ? 0.6 : 0.4)
+          : (d.pollution ?? 0) >= 10 ? FIRE.polluter : FIRE.other;
+        if (Math.random() < base * fireMul * (b.protect.has('fire') ? FIRE.coverMul : 1) * day) {
+          b.fire = 0.01;
+          this.fires.add(b.id);
+          this.notify(`${b.type === 'house' ? TIERS[b.tier].name + '的住宅' : d.name}着火了！${b.protect.has('fire') ? '消防队正在赶来' : '附近没有消防队，快想办法'}`, 'warn');
+          this.sfx.push('bell');
+        }
+      }
+    }
+    // plague
+    const houses = [...this.buildings.values()].filter(b => b.type === 'house' && b.residents > 0);
+    const total = houses.reduce((a, b) => a + b.residents, 0);
+    if (settled && !houses.some(h => h.plague > 0) && houses.length) {
+      const dense = Math.max(0.3, Math.min(2, total / 200));
+      if (Math.random() < PLAGUE.perDay * (this.season === 'winter' ? PLAGUE.winterMul : 1) * dense * day) {
+        const h = houses[Math.floor(Math.random() * houses.length)];
+        h.plague = 0.01;
+        this.notify(`瘟疫爆发了！病人会传染给邻居。${h.protect.has('health') ? '草药铺正在治疗' : '那一带没有医疗覆盖'}`, 'warn');
+        this.sfx.push('error');
+      }
+    }
+    for (const h of houses) {
+      if (h.plague <= 0) continue;
+      h.plague += dt;
+      const cured = h.protect.has('health') ? PLAGUE.cureCovered : PLAGUE.cureBare;
+      if (h.plague > cured) { h.plague = 0; continue; }
+      if (!h.protect.has('health') && Math.random() < PLAGUE.leavePerSec * dt && h.residents > 0) { h.residents--; this.flowLeft.plague++; }
+      for (const o of this.houseNear(h, 3.5)) {
+        if (o.type !== 'house' || o.plague > 0 || !o.residents) continue;
+        if (Math.random() < PLAGUE.spreadPerSec * dt * (o.protect.has('health') ? 0.2 : 1)) o.plague = 0.01;
+      }
+    }
+    // crime: unhappy households steal when nobody keeps order
+    if (this.era >= 2) {
+      for (const h of houses) {
+        if (h.happy * 100 >= CRIME.below) continue;
+        if (Math.random() >= CRIME.perHouseDay * (h.protect.has('police') ? CRIME.coverMul : 1) * day * (1 + (CRIME.below - h.happy * 100) / 20)) continue;
+        const goods = GOOD_IDS.filter(g => this.storage[g] >= 6);
+        if (goods.length && Math.random() < 0.7) {
+          const g = goods[Math.floor(Math.random() * goods.length)];
+          const n = Math.ceil(this.storage[g] * (0.05 + Math.random() * 0.1));
+          this.storage[g] -= n;
+          this.ledger.add(g, 'out', '被偷走', n);
+          this.throttle('theft', 30, `小偷从仓库偷走了 ${n} ${GOODS[g].name}${h.protect.has('police') ? '' : '（那一带没有巡警）'}`);
+        } else if (this.gold > 0) {
+          const n = Math.min(this.gold, 20 + Math.round(Math.random() * 40));
+          this.gold -= n;
+          this.ledger.add('gold', 'out', '被偷走', n);
+          this.throttle('theft', 30, `有人撬开了钱箱，丢了 ${n} 金币`);
+        }
+      }
+    }
+    // strikes: unpaid or very unhappy workers down tools
+    const tierHappy: Partial<Record<TierId, [number, number]>> = {};
+    for (const h of houses) { const a = (tierHappy[h.tier] ??= [0, 0]); a[0] += h.happy * 100 * h.residents; a[1] += h.residents; }
+    const unpaid = this.gold < 0 && this.debtDays >= STRIKE.debtDays;
+    for (const b of this.buildings.values()) {
+      const wk = BUILDINGS[b.type].workers;
+      if (!wk || b.strike > 0 || !b.working) continue;
+      const th = tierHappy[wk.tier];
+      const avg = th && th[1] ? th[0] / th[1] : 100;
+      if (!unpaid && avg >= STRIKE.below) continue;
+      if (Math.random() < 0.6 * day) {
+        b.strike = STRIKE.secs;
+        this.throttle('strike', 20, `${BUILDINGS[b.type].name}的${TIERS[wk.tier].name}罢工了：${unpaid ? '已经好几天领不到工钱' : '日子过得太苦'}`);
+      }
+    }
+    // hunger and cold warnings
+    for (const t of TIER_IDS) if (this.pop[t] && this.fedRatio[t] < 0.8) this.throttle('hunger', 40, `${TIERS[t].name}吃不饱了！多建渔场、菜园，或者向商船买食物`);
+  }
+
+  /** at dawn of each new day: a short report and the debt clock */
+  private stepDay() {
+    const d = this.day;
+    if (d === this.lastDay) return;
+    const pop = TIER_IDS.reduce((a, t) => a + this.pop[t], 0);
+    const dg = Math.round(this.gold - this.dayStart.gold), dp = pop - this.dayStart.pop;
+    this.days.push({ day: this.lastDay + 1, gold: dg, pop, food: this.foodDays() });
+    if (this.days.length > 30) this.days.shift();
+    const left = this.flowLeft, lost = left.hunger + left.cold + left.plague + left.fire;
+    const why = [left.hunger && `饿走 ${left.hunger}`, left.cold && `冻走 ${left.cold}`, left.plague && `病倒 ${left.plague}`, left.fire && `火灾 ${left.fire}`].filter(Boolean).join('，');
+    const fd = this.foodDays();
+    this.notify(`第 ${this.lastDay + 1} 天结束：金币 ${dg >= 0 ? '+' : ''}${dg}，人口 ${pop}（${dp >= 0 ? '+' : ''}${dp}）${lost ? `，离开 ${lost} 人（${why}）` : ''}。食物${fd === Infinity ? '充足' : `还够吃 ${fd.toFixed(1)} 天`}`, lost || dg < 0 ? 'warn' : 'info');
+    this.debtDays = this.gold < 0 ? this.debtDays + 1 : 0;
+    if (this.debtDays >= 1) this.notify(`金库已经亏空 ${this.debtDays} 天：大家越来越不满${this.debtDays >= STRIKE.debtDays ? '，工人开始罢工' : '，明天起工人会罢工'}`, 'warn');
+    this.flowLeft = { hunger: 0, cold: 0, plague: 0, fire: 0 };
+    this.dayStart = { gold: this.gold, pop };
+    this.lastDay = d;
   }
 
   private computePollution() {
@@ -886,7 +1111,10 @@ export class Game {
     const s = this.season;
     if (this.lastSeason && s !== this.lastSeason) {
       this.notify(`${s === 'spring' ? `第 ${this.year} 年，` : ''}${SEASONS[s].name}天到了：${SEASONS[s].effect}`, 'good');
-      if (s === 'autumn' && this.era >= 2) this.notify(`冬天快到了：今年冬天大约要烧 ${Math.ceil(this.winterFuelEstimate())} 份燃料`, 'info');
+      if (s === 'autumn') {
+        const winterNeed = this.foodNeed() * SEASON_DAYS;
+        this.notify(`冬天快到了：菜园和麦田会停产，渔场减产。三天冬天全城要吃约 ${Math.ceil(winterNeed)} 份饱食（现在库存 ${Math.floor(this.foodStock())}），还要烧约 ${Math.ceil(this.winterFuelEstimate())} 份燃料`, 'warn');
+      }
       this.sfx.push('season');
       const mapped = SEASONS[s].weather[this.weather.cur];
       if (mapped) this.setWeather(mapped);
@@ -954,6 +1182,8 @@ export class Game {
       g.rVersion++; g.tVersion++;
       g.refresh();
       g.lastSeason = g.season;
+      g.lastDay = g.day;
+      g.dayStart = { gold: g.gold, pop: 0 };
       // settle the derived state (staffing, power, pollution) before the first frame
       for (let i = 0; i < 12; i++) { g.step(STEP); }
       for (let i = 0; i < 8; i++) g.computePollution();

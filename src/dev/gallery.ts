@@ -11,7 +11,7 @@ const NAMES = ['house_peasant_0', 'house_peasant_1', 'house_worker_0', 'house_wo
 const NAMES_M1 = ['house_technician_0', 'house_technician_1', 'house_citizen_0', 'house_citizen_2', 'study', 'church',
   'sheepfarm', 'woodshed', 'claypit', 'brickworks', 'weaver', 'tailor', 'mine', 'smithy', 'park', 'guild', 'ore_iron', 'ore_coal',
   'factory', 'cannery', 'brewery', 'powerplant', 'heatplant', 'school', 'clinic', 'townhall', 'university',
-  'factory_small', 'plant_modern', 'windturbine', 'solar', 'hydro', 'purifier', 'recycler', 'hospital', 'theatre', 'lab'];
+  'factory_small', 'plant_modern', 'windturbine', 'solar', 'hydro', 'purifier', 'recycler', 'hospital', 'theatre', 'lab', 'garden', 'herbalist', 'firestation', 'police', 'bridge'];
 
 export function gallery(container: HTMLElement, opts: { snow?: number; glow?: number } = {}) {
   const r = new THREE.WebGLRenderer({ antialias: true });

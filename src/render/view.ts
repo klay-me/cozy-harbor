@@ -503,6 +503,16 @@ export class View {
         if (s.axis === 'z') s.o.rotation.z -= gameDt * sp; else s.o.rotation.x -= gameDt * sp;
       }
       if (v.smoke.length && gameDt > 0) this.puff(v, gameDt);
+      if (v.b.fire > 0 && this.smoke) {
+        // flames over the roof and thick dark smoke
+        const h = model(v.b.type, v.b.tier, v.b.variant).height;
+        const k = Math.min(1, v.b.fire / 10);
+        for (let i = 0; i < 3; i++) if (Math.random() < 0.5 + k * 0.5) {
+          const x = v.group.position.x + (Math.random() - 0.5) * v.b.w * 0.7, z = v.group.position.z + (Math.random() - 0.5) * v.b.h * 0.7;
+          this.smoke.flame(x, h * (0.45 + Math.random() * 0.45), z);
+        }
+        if (Math.random() < 0.35) this.smoke.emit(v.group.position.x + (Math.random() - 0.5) * 0.6, h + 0.2, v.group.position.z + (Math.random() - 0.5) * 0.6, 1, 1.8);
+      }
       for (const o of v.bobs) { o.position.y = o.userData.base + Math.sin(this.time * 1.8 + v.b.id) * 0.03; o.rotation.z = Math.sin(this.time * 1.3 + v.b.id) * 0.06; }
     }
     this.rig.update(dt);

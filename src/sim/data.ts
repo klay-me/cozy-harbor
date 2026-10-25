@@ -1,22 +1,32 @@
-// All gameplay numbers live here. Rates are per game-minute unless noted.
+// All gameplay numbers live here. Rates are per game-minute unless noted; the UI shows them per day
+// (one day = DAY_LENGTH seconds = 4 game-minutes).
 // See the design document for the reasoning behind each system.
 
 // ---------- goods ----------
 export type GoodId =
-  | 'wood' | 'planks' | 'fish' | 'grain' | 'wool'
+  | 'wood' | 'planks' | 'fish' | 'veg' | 'grain' | 'wool'
   | 'firewood' | 'clay' | 'bricks' | 'flour' | 'bread' | 'cloth' | 'clothes' | 'ore' | 'tools'
   | 'coal' | 'steel' | 'cans' | 'beer'
   | 'cement' | 'appliances';
-export const GOOD_IDS: GoodId[] = ['wood', 'planks', 'fish', 'grain', 'wool', 'firewood', 'clay', 'bricks', 'flour', 'bread', 'cloth', 'clothes', 'ore', 'tools', 'coal', 'steel', 'cans', 'beer', 'cement', 'appliances'];
+export const GOOD_IDS: GoodId[] = ['wood', 'planks', 'fish', 'veg', 'grain', 'wool', 'firewood', 'clay', 'bricks', 'flour', 'bread', 'cloth', 'clothes', 'ore', 'tools', 'coal', 'steel', 'cans', 'beer', 'cement', 'appliances'];
 /** price: what the harbour trader pays per unit; buying costs BUY_MARKUP times as much */
 export const GOODS: Record<GoodId, { name: string; era: Era; price: number }> = {
-  wood: { name: '木材', era: 1, price: 2 }, planks: { name: '木板', era: 1, price: 4 }, fish: { name: '鱼', era: 1, price: 3 }, grain: { name: '小麦', era: 1, price: 2 }, wool: { name: '羊毛', era: 1, price: 3 },
-  firewood: { name: '柴火', era: 2, price: 3 }, clay: { name: '黏土', era: 2, price: 2 }, bricks: { name: '砖', era: 2, price: 6 }, flour: { name: '面粉', era: 2, price: 4 }, bread: { name: '面包', era: 2, price: 7 },
+  wood: { name: '木材', era: 1, price: 2 }, planks: { name: '木板', era: 1, price: 4 }, fish: { name: '鱼', era: 1, price: 3 }, veg: { name: '蔬菜', era: 1, price: 2 }, grain: { name: '小麦', era: 1, price: 2 }, wool: { name: '羊毛', era: 1, price: 3 },
+  firewood: { name: '柴火', era: 1, price: 3 }, clay: { name: '黏土', era: 2, price: 2 }, bricks: { name: '砖', era: 2, price: 6 }, flour: { name: '面粉', era: 2, price: 4 }, bread: { name: '面包', era: 2, price: 7 },
   cloth: { name: '布', era: 2, price: 6 }, clothes: { name: '衣服', era: 2, price: 10 }, ore: { name: '铁矿石', era: 2, price: 5 }, tools: { name: '工具', era: 2, price: 12 },
   coal: { name: '煤', era: 3, price: 5 }, steel: { name: '钢', era: 3, price: 15 }, cans: { name: '罐头', era: 3, price: 12 }, beer: { name: '啤酒', era: 3, price: 8 },
   cement: { name: '水泥', era: 4, price: 14 }, appliances: { name: '电器', era: 4, price: 25 },
 };
 export const BUY_MARKUP = 2.5;
+
+// ---------- food ----------
+/** fill: how much hunger one unit stills (饱食); joy: how much people like it */
+export type FoodId = 'fish' | 'veg' | 'bread' | 'cans';
+export const FOODS: Record<FoodId, { fill: number; joy: number }> = {
+  fish: { fill: 1, joy: 1 }, veg: { fill: 1, joy: 1 }, bread: { fill: 2, joy: 1.5 }, cans: { fill: 3, joy: 1.5 },
+};
+export const FOOD_IDS = Object.keys(FOODS) as FoodId[];
+export const isFood = (g: string): g is FoodId => g in FOODS;
 
 // ---------- eras ----------
 export type Era = 1 | 2 | 3 | 4;
@@ -35,23 +45,27 @@ export type ServiceId = 'market' | 'tavern' | 'church' | 'school' | 'clinic' | '
 export const SERVICES: Record<ServiceId, string> = {
   market: '集市', tavern: '酒馆', church: '教堂', school: '学校', clinic: '诊所', hospital: '医院', park: '公园', theatre: '剧院',
 };
+/** protection a building can give its surroundings (not a happiness need, but it keeps disasters small) */
+export type ProtectId = 'health' | 'fire' | 'police';
+export const PROTECTS: Record<ProtectId, string> = { health: '医疗', fire: '消防', police: '治安' };
 export type Fuel = GoodId | 'power';
 export interface TierDef {
   name: string;
   era: Era;
   cap: number;                               // residents per house
   tax: number;                               // gold per resident per minute at happiness 100
-  essentials: Partial<Record<GoodId, number>>; // per resident per minute; shortage shrinks the house
+  foods: FoodId[];                           // what they will eat; more kinds in stock = happier
+  hunger: number;                            // 饱食 per resident per day
   comforts: Partial<Record<GoodId, number>>;   // per resident per minute; happiness only
   services: ServiceId[];
   fuel: Fuel;                                 // winter heating
   upgrade?: { to: TierId; cost: Cost };
 }
 export const TIERS: Record<TierId, TierDef> = {
-  peasant: { name: '农民', era: 1, cap: 4, tax: 1.5, essentials: { fish: 0.075 }, comforts: {}, services: ['market'], fuel: 'firewood', upgrade: { to: 'worker', cost: { gold: 50, bricks: 4 } } },
-  worker: { name: '工人', era: 2, cap: 8, tax: 3.2, essentials: { fish: 0.06, bread: 0.05 }, comforts: { clothes: 0.03 }, services: ['market', 'tavern', 'church'], fuel: 'firewood', upgrade: { to: 'technician', cost: { gold: 150, steel: 4 } } },
-  technician: { name: '技工', era: 3, cap: 12, tax: 5.2, essentials: { bread: 0.05, cans: 0.04 }, comforts: { clothes: 0.03, beer: 0.035 }, services: ['tavern', 'school', 'clinic'], fuel: 'coal', upgrade: { to: 'citizen', cost: { gold: 300, cement: 6 } } },
-  citizen: { name: '市民', era: 4, cap: 16, tax: 8, essentials: { bread: 0.04, cans: 0.04 }, comforts: { clothes: 0.03, appliances: 0.02 }, services: ['school', 'hospital', 'park', 'theatre'], fuel: 'power' },
+  peasant: { name: '农民', era: 1, cap: 4, tax: 2.0, foods: ['fish', 'veg'], hunger: 0.6, comforts: {}, services: ['market'], fuel: 'firewood', upgrade: { to: 'worker', cost: { gold: 50, bricks: 4 } } },
+  worker: { name: '工人', era: 2, cap: 8, tax: 3.6, foods: ['fish', 'veg', 'bread'], hunger: 0.7, comforts: { clothes: 0.03 }, services: ['market', 'tavern', 'church'], fuel: 'firewood', upgrade: { to: 'technician', cost: { gold: 150, steel: 4 } } },
+  technician: { name: '技工', era: 3, cap: 12, tax: 5.6, foods: ['fish', 'bread', 'cans'], hunger: 0.8, comforts: { clothes: 0.03, beer: 0.035 }, services: ['tavern', 'school', 'clinic'], fuel: 'coal', upgrade: { to: 'citizen', cost: { gold: 300, cement: 6 } } },
+  citizen: { name: '市民', era: 4, cap: 16, tax: 8.5, foods: ['veg', 'bread', 'cans'], hunger: 0.9, comforts: { clothes: 0.03, appliances: 0.02 }, services: ['school', 'hospital', 'park', 'theatre'], fuel: 'power' },
 };
 /** winter fuel per resident per minute at cold factor 1; power is in units of the grid */
 export const HEAT_PER_RESIDENT = 0.04;
@@ -62,9 +76,9 @@ export type Cost = { gold: number } & Partial<Record<GoodId, number>>;
 export type BuildingId =
   | 'road' | 'house' | 'depot' | 'warehouse'
   // era 1
-  | 'lumberjack' | 'sawmill' | 'fishery' | 'farm' | 'sheepfarm' | 'market' | 'church' | 'study'
+  | 'lumberjack' | 'sawmill' | 'fishery' | 'garden' | 'farm' | 'sheepfarm' | 'market' | 'church' | 'study' | 'herbalist' | 'firestation'
   // era 2
-  | 'firewood' | 'claypit' | 'brickworks' | 'mill' | 'bakery' | 'weaver' | 'tailor' | 'ironmine' | 'smithy' | 'tavern' | 'park' | 'guild'
+  | 'firewood' | 'police' | 'claypit' | 'brickworks' | 'mill' | 'bakery' | 'weaver' | 'tailor' | 'ironmine' | 'smithy' | 'tavern' | 'park' | 'guild'
   // era 3
   | 'coalmine' | 'steelworks' | 'cannery' | 'brewery' | 'coalplant' | 'heatplant' | 'school' | 'clinic' | 'townhall' | 'university'
   // era 4
@@ -97,6 +111,7 @@ export interface BuildingDef {
   radius?: number;                // service / search / heating radius in tiles
   service?: ServiceId;
   heating?: boolean;              // district heating plant
+  protects?: ProtectId;           // health, fire or police cover within radius
   storage?: number;
   needs?: Need;
   buildable?: boolean;
@@ -113,14 +128,18 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
   lumberjack: B({ name: '伐木场', desc: '砍伐附近的树木，周围树越多效率越高，还会慢慢补种树苗。只要金币就能建。', era: 1, size: [2, 2], cost: { gold: 60 }, upkeep: 5, category: 'raw', model: 'lumberjack', workers: { tier: 'peasant', n: 4 }, cycle: 15, output: 'wood', radius: 3, needs: 'forest' }),
   sawmill: B({ name: '锯木厂', desc: '把木材加工成木板。', era: 1, size: [2, 2], cost: { gold: 100, planks: 4 }, upkeep: 10, category: 'craft', model: 'sawmill', workers: { tier: 'peasant', n: 6 }, cycle: 15, input: { wood: 1 }, output: 'planks' }),
   fishery: B({ name: '渔场', desc: '必须紧挨水边。为居民提供鱼。', era: 1, size: [2, 2], cost: { gold: 80, planks: 2 }, upkeep: 5, category: 'raw', model: 'fishery', workers: { tier: 'peasant', n: 3 }, cycle: 20, output: 'fish', needs: 'water' }),
+  garden: B({ name: '菜园', desc: '种蔬菜，和鱼一样能填饱肚子。冬天不长菜，记得秋天多囤一些。', era: 1, size: [3, 3], cost: { gold: 80, planks: 3 }, upkeep: 4, category: 'raw', model: 'garden', workers: { tier: 'peasant', n: 4 }, cycle: 15, output: 'veg' }),
+  herbalist: B({ name: '草药铺', desc: '医疗覆盖：范围内的病人好得快，瘟疫不容易扩散。', era: 1, size: [2, 2], cost: { gold: 120, planks: 6 }, upkeep: 5, category: 'public', model: 'herbalist', workers: { tier: 'peasant', n: 2 }, radius: 8, protects: 'health' }),
+  firestation: B({ name: '消防队', desc: '消防覆盖：范围内着火的建筑很快就能扑灭；没有覆盖的火会把房子烧光。', era: 1, size: [2, 2], cost: { gold: 150, planks: 8 }, upkeep: 5, category: 'public', model: 'firestation', workers: { tier: 'peasant', n: 3 }, radius: 9, protects: 'fire' }),
   farm: B({ name: '麦田', desc: '种植小麦。冬天休耕。', era: 1, size: [3, 3], cost: { gold: 100, planks: 4 }, upkeep: 10, category: 'raw', model: 'farm', workers: { tier: 'peasant', n: 4 }, cycle: 30, output: 'grain' }),
   sheepfarm: B({ name: '牧羊场', desc: '养羊产羊毛，织布的原料。', era: 1, size: [3, 3], cost: { gold: 120, planks: 4 }, upkeep: 8, category: 'raw', model: 'sheepfarm', workers: { tier: 'peasant', n: 3 }, cycle: 30, output: 'wool' }),
-  market: B({ name: '集市', desc: '覆盖范围内的住宅满足"集市"需求。', era: 1, size: [2, 2], cost: { gold: 120, planks: 6 }, upkeep: 8, category: 'public', model: 'market', radius: 9, service: 'market' }),
+  market: B({ name: '集市', desc: '覆盖范围内的住宅满足"集市"需求。', era: 1, size: [2, 2], cost: { gold: 120, planks: 6 }, upkeep: 6, category: 'public', model: 'market', radius: 9, service: 'market' }),
   church: B({ name: '教堂', desc: '小镇的精神中心。工人需要它；建成后才能进入手工业时代。', era: 1, size: [3, 3], cost: { gold: 400, planks: 24 }, upkeep: 10, category: 'public', model: 'church', radius: 11, service: 'church' }),
-  study: B({ name: '村塾', desc: '产生研究点，解锁田园时代的研究。', era: 1, size: [2, 2], cost: { gold: 150, planks: 8 }, upkeep: 6, category: 'public', model: 'study', workers: { tier: 'peasant', n: 2 }, research_pts: 6 }),
+  study: B({ name: '村塾', desc: '产生研究点，解锁田园时代的研究。', era: 1, size: [2, 2], cost: { gold: 150, planks: 8 }, upkeep: 5, category: 'public', model: 'study', workers: { tier: 'peasant', n: 2 }, research_pts: 6 }),
 
   // ---- era 2 ----
-  firewood: B({ name: '柴火坊', desc: '把木材劈成柴火，冬天取暖用。', era: 2, size: [2, 2], cost: { gold: 80, planks: 4 }, upkeep: 4, category: 'craft', model: 'woodshed', workers: { tier: 'peasant', n: 2 }, cycle: 20, input: { wood: 1 }, output: 'firewood', outQty: 2, pollution: 2 }),
+  police: B({ name: '巡警所', desc: '治安覆盖：住户不开心时容易有小偷和闹事，巡警能管住他们。', era: 2, size: [2, 2], cost: { gold: 250, planks: 6, bricks: 6 }, upkeep: 12, category: 'public', model: 'police', workers: { tier: 'worker', n: 2 }, radius: 10, protects: 'police' }),
+  firewood: B({ name: '柴火坊', desc: '把木材劈成柴火。气温低于 8°C 住宅就要烧柴取暖。', era: 1, size: [2, 2], cost: { gold: 80, planks: 4 }, upkeep: 3, category: 'craft', model: 'woodshed', workers: { tier: 'peasant', n: 2 }, cycle: 20, input: { wood: 1 }, output: 'firewood', outQty: 2, pollution: 2 }),
   claypit: B({ name: '黏土坑', desc: '在河岸或湖边挖黏土。', era: 2, size: [2, 2], cost: { gold: 100, planks: 4 }, upkeep: 6, category: 'raw', model: 'claypit', workers: { tier: 'peasant', n: 4 }, cycle: 20, output: 'clay', needs: 'water', pollution: 2 }),
   brickworks: B({ name: '砖厂', desc: '把黏土烧成砖，手工业时代的主要建材。', era: 2, size: [2, 2], cost: { gold: 150, planks: 6 }, upkeep: 8, category: 'craft', model: 'brickworks', workers: { tier: 'peasant', n: 6 }, cycle: 20, input: { clay: 1 }, output: 'bricks', pollution: 10 }),
   mill: B({ name: '磨坊', desc: '把小麦磨成面粉。', era: 2, size: [2, 2], cost: { gold: 150, planks: 8 }, upkeep: 8, category: 'craft', model: 'mill', workers: { tier: 'worker', n: 4 }, cycle: 30, input: { grain: 1 }, output: 'flour' }),
@@ -141,7 +160,7 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
   coalplant: B({ name: '燃煤电厂', desc: '烧煤发电，便宜稳定，但污染最重。', era: 3, research: 'steam', size: [3, 3], cost: { gold: 800, bricks: 20, tools: 6 }, upkeep: 30, category: 'power', model: 'powerplant', workers: { tier: 'worker', n: 6 }, cycle: 30, input: { coal: 1 }, powerGen: 20, powerKind: 'coal', pollution: 50 }),
   heatplant: B({ name: '煤炉房', desc: '集中供暖：半径内的住宅冬天不必各自烧燃料，比分散取暖省 30% 的煤。', era: 3, research: 'central', size: [2, 2], cost: { gold: 400, bricks: 12, steel: 4 }, upkeep: 20, category: 'power', model: 'heatplant', workers: { tier: 'technician', n: 4 }, radius: 6, heating: true, pollution: 20 }),
   school: B({ name: '学校', desc: '技工和市民需要它。', era: 3, size: [2, 2], cost: { gold: 400, bricks: 12 }, upkeep: 20, category: 'public', model: 'school', radius: 10, service: 'school' }),
-  clinic: B({ name: '诊所', desc: '技工需要它；覆盖范围内冬天生病的人恢复更快。', era: 3, size: [2, 2], cost: { gold: 400, bricks: 10, steel: 2 }, upkeep: 20, category: 'public', model: 'clinic', radius: 9, service: 'clinic' }),
+  clinic: B({ name: '诊所', desc: '技工需要它；同时提供医疗覆盖。', era: 3, size: [2, 2], cost: { gold: 400, bricks: 10, steel: 2 }, upkeep: 20, category: 'public', model: 'clinic', radius: 9, service: 'clinic', protects: 'health' }),
   townhall: B({ name: '市政厅', desc: '建成后才能进入现代城市时代。', era: 3, size: [3, 3], cost: { gold: 1200, bricks: 30, steel: 10 }, upkeep: 40, category: 'public', model: 'townhall' }),
   university: B({ name: '大学', desc: '产生研究点，解锁工业时代的研究。', era: 3, size: [3, 3], cost: { gold: 800, bricks: 20, steel: 6 }, upkeep: 35, category: 'public', model: 'university', workers: { tier: 'technician', n: 6 }, research_pts: 24 }),
 
@@ -153,7 +172,7 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
   hydro: B({ name: '水电站', desc: '必须建在内陆河湖边，稳定无污染，造价高。', era: 4, research: 'hydro', size: [3, 3], cost: { gold: 1500, steel: 10, cement: 20 }, upkeep: 30, category: 'power', model: 'hydro', workers: { tier: 'technician', n: 4 }, powerGen: 30, powerKind: 'hydro', needs: 'river' }),
   purifier: B({ name: '净化厂', desc: '大幅降低周围的污染。', era: 4, research: 'purify', size: [2, 2], cost: { gold: 800, steel: 10, cement: 6 }, upkeep: 30, category: 'power', model: 'purifier', workers: { tier: 'technician', n: 4 }, radius: 6, power: 8, pollution: -40 }),
   recycler: B({ name: '回收站', desc: '回收垃圾，产出少量钢，顺便减少污染。', era: 4, size: [2, 2], cost: { gold: 600, steel: 6, cement: 6 }, upkeep: 18, category: 'craft', model: 'recycler', workers: { tier: 'citizen', n: 4 }, cycle: 60, output: 'steel', power: 4, pollution: -10 }),
-  hospital: B({ name: '医院', desc: '市民需要它。', era: 4, size: [3, 3], cost: { gold: 1000, cement: 10, steel: 6 }, upkeep: 40, category: 'public', model: 'hospital', radius: 12, service: 'hospital' }),
+  hospital: B({ name: '医院', desc: '市民需要它；同时提供大范围医疗覆盖。', era: 4, size: [3, 3], cost: { gold: 1000, cement: 10, steel: 6 }, upkeep: 40, category: 'public', model: 'hospital', radius: 12, service: 'hospital', protects: 'health' }),
   theatre: B({ name: '剧院', desc: '市民需要它。', era: 4, size: [3, 3], cost: { gold: 1200, cement: 12 }, upkeep: 40, category: 'public', model: 'theatre', radius: 12, service: 'theatre' }),
   lab: B({ name: '研究所', desc: '产生大量研究点，包括无限研究。', era: 4, size: [2, 2], cost: { gold: 1500, cement: 10, steel: 10 }, upkeep: 50, category: 'public', model: 'lab', workers: { tier: 'citizen', n: 6 }, research_pts: 40 }),
 };
@@ -228,6 +247,15 @@ export const REFUND = 0.5;
 /** a road tile over a river or lake */
 export const BRIDGE_COST: Cost = { gold: 12, planks: 1 };
 export const MAP_SIZE = 64;
+// ---------- disasters & unrest (chances are per building per day) ----------
+export const FIRE = { house: 0.007, other: 0.005, polluter: 0.012, coverMul: 0.4, burnSecs: 45, putOutSecs: 8, spread: 0.35 };
+export const PLAGUE = { perDay: 0.12, winterMul: 2, sickShare: 0.6, spreadPerSec: 0.025, cureCovered: 25, cureBare: 90, leavePerSec: 0.012 };
+export const CRIME = { below: 45, perHouseDay: 0.05, coverMul: 0.15 };
+export const STRIKE = { below: 35, debtDays: 2, secs: 40 };
+/** happiness lost while wages are unpaid: base + per day in debt, capped */
+export const DEBT = { base: 8, perDay: 4, max: 20 };
+export const HUNGER = { hungrySecs: 20, leaveSecs: 60 };
+
 // ---------- temperature ----------
 /** mid-season temperatures in °C */
 export const SEASON_TEMP = [13, 25, 12, -6];
@@ -262,6 +290,8 @@ export const WEATHER: Record<WeatherId, WeatherDef> = {
 
 // ---------- calendar ----------
 export const DAY_LENGTH = 240;
+/** per-minute rate -> per-day */
+export const PER_DAY = DAY_LENGTH / 60;
 export const SEASON_DAYS = 3;
 export const START_HOUR = 8;
 export type SeasonId = 'spring' | 'summer' | 'autumn' | 'winter';
@@ -269,7 +299,7 @@ export const SEASON_IDS: SeasonId[] = ['spring', 'summer', 'autumn', 'winter'];
 export interface SeasonDef { name: string; effect: string; prod: Partial<Record<BuildingId, number>>; weather: Partial<Record<WeatherId, WeatherId>> }
 export const SEASONS: Record<SeasonId, SeasonDef> = {
   spring: { name: '春', effect: '万物生长', prod: {}, weather: { snow: 'rain' } },
-  summer: { name: '夏', effect: '麦田 +20%', prod: { farm: 1.2 }, weather: { snow: 'sunny' } },
-  autumn: { name: '秋', effect: '丰收季，麦田 +40%，记得囤粮和燃料', prod: { farm: 1.4 }, weather: { snow: 'rain' } },
-  winter: { name: '冬', effect: '麦田和牧羊场停产，渔场 -30%，住宅要取暖', prod: { farm: 0, sheepfarm: 0, fishery: 0.7 }, weather: { rain: 'snow', storm: 'snow' } },
+  summer: { name: '夏', effect: '麦田和菜园 +20%，天干容易着火', prod: { farm: 1.2, garden: 1.2 }, weather: { snow: 'sunny' } },
+  autumn: { name: '秋', effect: '丰收季，麦田和菜园 +40%，记得囤粮和燃料', prod: { farm: 1.4, garden: 1.4 }, weather: { snow: 'rain' } },
+  winter: { name: '冬', effect: '麦田、菜园和牧羊场停产，渔场 -30%，住宅要取暖', prod: { farm: 0, garden: 0, sheepfarm: 0, fishery: 0.7 }, weather: { rain: 'snow', storm: 'snow' } },
 };

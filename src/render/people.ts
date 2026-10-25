@@ -14,7 +14,7 @@ const MAX_WALK = 220, MAX_CART = 40, MAX_BOAT = 24;
 const CLOTHES = ['#F2766B', '#6FA8DC', '#8FCF6F', '#F7B955', '#B58BD8', '#F2A5C0', '#5FB7B0', '#EFE6D2'].map(c => new THREE.Color(c));
 const CARGO: Record<GoodId, THREE.Color> = {
   wood: new THREE.Color('#B87A48'), planks: new THREE.Color('#F2CF93'), fish: new THREE.Color('#8CC8EA'),
-  grain: new THREE.Color('#F2CF5B'), flour: new THREE.Color('#FFF6E3'), bread: new THREE.Color('#D9944F'),
+  veg: new THREE.Color('#8FCF6F'), grain: new THREE.Color('#F2CF5B'), flour: new THREE.Color('#FFF6E3'), bread: new THREE.Color('#D9944F'),
   wool: new THREE.Color('#FFFAF0'), firewood: new THREE.Color('#A86E44'), clay: new THREE.Color('#D98A5F'), bricks: new THREE.Color('#D9674F'),
   cloth: new THREE.Color('#E9B8D6'), clothes: new THREE.Color('#7FB6E0'), ore: new THREE.Color('#8C8F9C'), tools: new THREE.Color('#C9CCD6'),
   coal: new THREE.Color('#4A4752'), steel: new THREE.Color('#B9C2CF'), cans: new THREE.Color('#F2766B'), beer: new THREE.Color('#F2C14E'),
