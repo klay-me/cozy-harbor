@@ -16,7 +16,11 @@ async function boot() {
   loading.className = 'loading';
   loading.textContent = '正在搭建小镇…';
   document.body.appendChild(loading);
-  try { await loadModels(new URL('models/town.glb', document.baseURI).href); }
+  try {
+    // the .glb is used normally; some hosts only serve JSON, so an embedded .json copy is the fallback
+    try { await loadModels(new URL('models/town.glb', document.baseURI).href); }
+    catch { await loadModels(new URL('models/town.json', document.baseURI).href); }
+  }
   catch (e) {
     loading.textContent = '模型加载失败，请刷新页面重试。';
     console.error(e);
