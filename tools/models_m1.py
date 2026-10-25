@@ -155,7 +155,7 @@ def sheepfarm():
     for x, y in ((0.2, 0.9), (0.45, 0.95), (0.32, 0.92)):
         cyl(p, 0.14, 0.14, 0.22, (x, y, 0.16 + (0.18 if x == 0.32 else 0)), P['hay'], seg=12, rot=(0, math.pi / 2, 0), name='hay')
     box(p, (0.5, 0.18, 0.12), (0.7, -0.05, 0.12), P['wood2'], bevel=0.015, name='trough')
-    box(p, (0.44, 0.12, 0.02), (0.7, -0.05, 0.18), P['water'], kind='G', bevel=0, name='troughwater')
+    box(p, (0.44, 0.12, 0.02), (0.7, -0.05, 0.18), P['water'], bevel=0, name='troughwater')
     # sheep
     random.seed(31)
     for i, (x, y) in enumerate(((-0.6, -0.5), (-0.1, -0.8), (0.4, -0.55), (0.85, -0.85), (0.1, -0.15), (0.75, 0.45), (-0.95, -0.95))):
@@ -212,9 +212,13 @@ def church():
     for k in range(5):
         box(p, (0.64, 0.64, 0.03), (tx, ty, 0.5 + k * 0.4), P['stone2'], bevel=0, name='course')
     box(p, (0.7, 0.7, 0.08), (tx, ty, 2.25), P['stone2'], bevel=0.015, name='belfry')
-    for sx, sy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-        box(p, (0.2 if sx == 0 else 0.04, 0.04 if sx == 0 else 0.2, 0.3), (tx + sx * 0.31, ty + sy * 0.31, 2.47), P['dark'], bevel=0.005, name='louvre')
     box(p, (0.66, 0.66, 0.4), (tx, ty, 2.49), P['stone'], bevel=0.02, name='belfrywall')
+    # arched bell openings: a dark recess standing proud of the wall, with a white frame
+    for sx, sy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+        rz = 0 if sx == 0 else math.pi / 2
+        box(p, (0.2, 0.03, 0.26), (tx + sx * 0.342, ty + sy * 0.342, 2.45), P['dark'], rot=(0, 0, rz), bevel=0.004, name='louvre')
+        cyl(p, 0.1, 0.1, 0.03, (tx + sx * 0.342, ty + sy * 0.342, 2.58), P['dark'], seg=12, rot=(math.pi / 2, 0, rz), name='louvrearch')
+        box(p, (0.28, 0.025, 0.04), (tx + sx * 0.355, ty + sy * 0.355, 2.31), P['white'], rot=(0, 0, rz), bevel=0.004, name='sill')
     cyl(p, 0.47, 0.0, 0.85, (tx, ty, 3.12), '#5D8FD0', seg=4, rot=(0, 0, math.pi / 4), name='spire', smooth=False)
     box(p, (0.03, 0.03, 0.3), (tx, ty, 3.65), P['gold'], bevel=0, name='cross')
     box(p, (0.16, 0.03, 0.03), (tx, ty, 3.7), P['gold'], bevel=0, name='cross')
@@ -253,7 +257,7 @@ def claypit():
     p = root('claypit')
     box(p, (1.75, 1.75, 0.06), (0, 0, 0.03), '#C9A27A', bevel=0.02, name='ground')
     cyl(p, 0.62, 0.5, 0.06, (0.1, 0.05, 0.05), '#B5714E', seg=20, name='pit', smooth=True)
-    cyl(p, 0.48, 0.48, 0.02, (0.1, 0.05, 0.085), '#8EC5D9', seg=20, kind='G', bevel=0, name='puddle')
+    cyl(p, 0.48, 0.48, 0.02, (0.1, 0.05, 0.085), '#8EC5D9', seg=20, bevel=0, name='puddle')
     for i in range(6):
         a = i * 1.05
         ball(p, 0.11, (0.1 + math.cos(a) * 0.62, 0.05 + math.sin(a) * 0.62, 0.08), '#D98A5F', scale=(1.2, 1, 0.6), name='mound')
@@ -385,7 +389,7 @@ def park():
         x, y = -0.85 + t * 1.7, -0.3 + math.sin(t * 3.0) * 0.35
         cyl(p, 0.14, 0.14, 0.02, (x, y, 0.065), '#EADBBE', seg=10, bevel=0, name='pathstone')
     cyl(p, 0.3, 0.3, 0.05, (0.35, 0.45, 0.07), P['stone'], seg=18, name='pond')
-    cyl(p, 0.26, 0.26, 0.02, (0.35, 0.45, 0.1), P['water'], seg=18, kind='G', bevel=0, name='pondwater')
+    cyl(p, 0.26, 0.26, 0.02, (0.35, 0.45, 0.1), P['water'], seg=18, bevel=0, name='pondwater')
     ball(p, 0.04, (0.28, 0.42, 0.12), P['white'], scale=(1.4, 1, 1), name='duck')
     for x, y, s, c in ((-0.6, 0.55, 1.2, None), (-0.15, 0.7, 0.9, P['pine']), (0.7, -0.6, 1.1, None), (-0.7, -0.65, 0.8, '#F2A5C0')):
         tree_small(p, x, y, s, c)
@@ -709,7 +713,7 @@ def hydro():
         box(p, (0.42, 0.4, 0.9), (math.sin(a) * 1.0, 0.75 + (1 - math.cos(a)) * -0.8, 0.5), '#D9D4CB', rot=(0, 0, -a), bevel=0.02, name='damblock')
     box(p, (2.3, 0.2, 0.08), (0, 0.72, 0.98), '#BDB6AA', bevel=0.01, name='damtop')
     for x in (-0.5, 0, 0.5):
-        box(p, (0.24, 0.06, 0.6), (x, 0.52, 0.45), '#9ED3F0', kind='G', bevel=0.01, name='spillway')
+        box(p, (0.24, 0.06, 0.6), (x, 0.52, 0.45), '#9ED3F0', bevel=0.01, name='spillway')
     # turbine house
     box(p, (1.4, 0.8, 0.7), (0, -0.3, 0.45), '#E2E7EE', bevel=0.03, name='turbinehouse')
     flat_roof(p, 1.44, 0.84, 0.8, '#5D8FD0', y0=-0.3)
@@ -834,3 +838,24 @@ def ore_coal():
     for i in range(5):
         a = i * 1.3 + 0.4
         ball(p, random.uniform(0.09, 0.15), (math.cos(a) * 0.22, math.sin(a) * 0.22, 0.05), '#4A4752', scale=(1.2, 1, 0.7), seg=7, rings=5, name='coalrock', rot=(0, 0, a))
+
+# ---------------------------------------------------------------- bridges (one road tile over a river)
+def bridge_deck(p, rails):
+    box(p, (1.0, 0.98, 0.06), (0, 0, 0.05), P['wood2'], bevel=0.01, name='beam')
+    for i in range(7):
+        box(p, (0.135, 0.94, 0.04), (-0.43 + i * 0.143, 0, 0.09), '#C9925E' if i % 2 else '#BA8455', bevel=0.008, name='plank')
+    for x in (-0.38, 0.38):
+        for y in (-0.38, 0.38):
+            cyl(p, 0.05, 0.05, 0.7, (x, y, -0.3), P['beam'], seg=8, name='piling')
+    if rails:
+        for y in (-0.46, 0.46):
+            for x in (-0.45, 0.0, 0.45):
+                box(p, (0.06, 0.06, 0.26), (x, y, 0.22), P['wood'], bevel=0.01, name='railpost')
+            box(p, (1.02, 0.05, 0.05), (0, y, 0.33), P['wood'], bevel=0.01, name='rail')
+            box(p, (1.02, 0.03, 0.03), (0, y, 0.2), P['wood2'], bevel=0.005, name='rail')
+
+def bridge():
+    bridge_deck(root('bridge'), True)
+
+def bridge_plain():
+    bridge_deck(root('bridge_plain'), False)

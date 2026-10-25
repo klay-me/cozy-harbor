@@ -41,6 +41,7 @@ export class View {
   private trees: THREE.InstancedMesh[] = [];
   private roads!: THREE.InstancedMesh;
   private lamps!: THREE.InstancedMesh;
+  private bridges: THREE.InstancedMesh[] = [];
   private lampLine!: THREE.InstancedMesh;
   private ghost = new THREE.Group();
   private ghostFoot!: THREE.Mesh;
@@ -225,6 +226,12 @@ export class View {
     this.roads.receiveShadow = true;
     this.roads.frustumCulled = false;
     this.roads.count = 0;
+    this.bridges = ['bridge', 'bridge_plain'].map(n => {
+      const [m, l] = this.instanced(getModel(n), 600, 0.015);
+      m.userData.line = l;
+      m.count = l.count = 0;
+      return m;
+    });
     const [lm, ll] = this.instanced(getModel('lamp'), 600, 0.012);
     this.lamps = lm; this.lampLine = ll;
     lm.count = ll.count = 0;
@@ -233,16 +240,26 @@ export class View {
     const { W, occ } = this.game;
     const M = new THREE.Matrix4(), Q = new THREE.Quaternion(), S = new THREE.Vector3(1, 1, 1);
     let n = 0, nl = 0;
+    const nb = [0, 0];
+    const road = (x: number, z: number) => x >= 0 && z >= 0 && x < W && z < W && occ[z * W + x] === -1;
     for (let i = 0; i < W * W; i++) if (occ[i] === -1) {
       const x = i % W, z = (i / W) | 0;
       const wx = x + 0.5 - this.half, wz = z + 0.5 - this.half;
+      if (this.game.isBridge(x, z)) {
+        // railings along the crossing; junctions on the water get an open deck
+        const ew = road(x - 1, z) || road(x + 1, z), ns = road(x, z - 1) || road(x, z + 1);
+        const k = ew && ns ? 1 : 0;
+        M.compose(new THREE.Vector3(wx, 0, wz), Q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), ns && !ew ? Math.PI / 2 : 0), S);
+        this.bridges[k].setMatrixAt(nb[k]++, M);
+        continue;
+      }
       M.makeTranslation(wx, 0, wz);
       this.roads.setMatrixAt(n++, M);
       // a street lamp on every few road tiles, on a side without road
       if ((x * 7 + z * 13) % 5 === 0 && nl < 600) {
         for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
           const nx = x + dx, nz = z + dz;
-          if (nx < 0 || nz < 0 || nx >= W || nz >= W || occ[nz * W + nx] === -1) continue;
+          if (nx < 0 || nz < 0 || nx >= W || nz >= W || occ[nz * W + nx] === -1 || this.game.isBridge(nx, nz)) continue;
           M.compose(new THREE.Vector3(wx + dx * 0.44, 0, wz + dz * 0.44), Q.identity(), S);
           this.lamps.setMatrixAt(nl++, M);
           break;
@@ -253,6 +270,7 @@ export class View {
     this.roads.instanceMatrix.needsUpdate = true;
     this.lamps.count = this.lampLine.count = nl;
     this.lamps.instanceMatrix.needsUpdate = true;
+    this.bridges.forEach((m, i) => { m.count = (m.userData.line as THREE.InstancedMesh).count = nb[i]; m.instanceMatrix.needsUpdate = true; });
   }
 
   private buildGhost() {

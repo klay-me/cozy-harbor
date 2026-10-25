@@ -104,7 +104,7 @@ export interface BuildingDef {
 
 const B = (d: BuildingDef) => d;
 export const BUILDINGS: Record<BuildingId, BuildingDef> = {
-  road: B({ name: '道路', desc: '连接建筑与港口。按住拖动可以一次修一段。', era: 1, size: [1, 1], cost: { gold: 2 }, upkeep: 0, category: 'road', model: '', hotkey: 'R' }),
+  road: B({ name: '道路', desc: '连接建筑与港口。按住拖动可以一次修一段。也能架桥跨过河流和湖泊（每格 12 金币 + 1 木板），但不能跨海。', era: 1, size: [1, 1], cost: { gold: 2 }, upkeep: 0, category: 'road', model: '', hotkey: 'R' }),
   house: B({ name: '住宅', desc: '居民的家。满足需求、住得开心，就能升级为更高的阶层。', era: 1, size: [2, 2], cost: { gold: 40, planks: 2 }, upkeep: 0, category: 'home', model: 'house', hotkey: 'H' }),
   depot: B({ name: '港口', desc: '城镇的起点，存放所有货物。', era: 1, size: [3, 3], cost: { gold: 0 }, upkeep: 0, category: 'public', model: 'depot', storage: 60, buildable: false }),
   warehouse: B({ name: '仓库', desc: '每座仓库让每种货物的存储上限增加 40。', era: 1, size: [2, 2], cost: { gold: 100, planks: 6 }, upkeep: 5, category: 'public', model: 'warehouse', storage: 40 }),
@@ -225,6 +225,8 @@ export const TECH_IDS = Object.keys(TECHS) as TechId[];
 // ---------- start ----------
 export const START = { gold: 1500, goods: { planks: 40, wood: 6, fish: 16 } as Partial<Record<GoodId, number>> };
 export const REFUND = 0.5;
+/** a road tile over a river or lake */
+export const BRIDGE_COST: Cost = { gold: 12, planks: 1 };
 export const MAP_SIZE = 64;
 /** winter cold: year 1 = 1.0, +0.15 a year, capped */
 export const coldFactor = (year: number) => Math.min(2, 1 + (year - 1) * 0.15);

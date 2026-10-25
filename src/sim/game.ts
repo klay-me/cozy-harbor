@@ -1,7 +1,7 @@
 import { World, Tile } from './world';
 import {
   BUILDINGS, BuildingId, BuildingDef, GOOD_IDS, GoodId, GOODS, TIERS, TIER_IDS, TierId, ServiceId, SERVICES, Cost,
-  START, REFUND, BUY_MARKUP, MAP_SIZE, WEATHER, WeatherId, Era, ERAS, TECHS, TECH_IDS, TechId, TechEffect,
+  START, REFUND, BUY_MARKUP, BRIDGE_COST, MAP_SIZE, WEATHER, WeatherId, Era, ERAS, TECHS, TECH_IDS, TechId, TechEffect,
   HEAT_PER_RESIDENT, POWER_HEAT_PER_RESIDENT, coldFactor, POLLUTION_RADIUS,
   DAY_LENGTH, SEASON_DAYS, START_HOUR, SEASONS, SEASON_IDS, SeasonId,
 } from './data';
@@ -275,18 +275,23 @@ export class Game {
     }
     return out;
   }
+  /** rivers and lakes can be bridged; the sea cannot */
+  isBridge(x: number, z: number) { return this.world.tile(x, z) === Tile.Water; }
   roadTileOk(x: number, z: number) {
     if (!this.world.inside(x, z)) return false;
     const t = this.world.tile(x, z);
-    return t !== Tile.Water && t !== Tile.Rock && this.occ[z * this.W + x] === 0;
+    if (t === Tile.Rock || this.occ[z * this.W + x] !== 0) return false;
+    return t !== Tile.Water || !this.world.isOcean(x, z);
   }
   placeRoads(tiles: [number, number][]) {
     let n = 0;
-    const cost = BUILDINGS.road.cost.gold;
     for (const [x, z] of tiles) {
       if (!this.roadTileOk(x, z)) continue;
-      if (this.gold < cost) { this.notify('金币不够，路没修完', 'warn'); break; }
-      this.gold -= cost;
+      const bridge = this.isBridge(x, z);
+      const cost = bridge ? BRIDGE_COST : { gold: BUILDINGS.road.cost.gold };
+      const m = this.missing(cost);
+      if (m) { this.notify(`${m}，${bridge ? '桥' : '路'}没修完`, 'warn'); break; }
+      this.pay(cost);
       const k = z * this.W + x;
       this.occ[k] = -1;
       if (this.world.trees[k]) { this.world.trees[k] = 0; this.tVersion++; }

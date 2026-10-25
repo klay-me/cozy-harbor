@@ -27,7 +27,8 @@ export function gallery(container: HTMLElement, opts: { snow?: number; glow?: nu
   const mat = worldMaterial();
   ENV.uSnow.value = opts.snow ?? 0;
   ENV.uGlow.value = opts.glow ?? 0;
-  const list = location.hash.includes('m1') ? NAMES_M1 : NAMES;
+  const one = /one=([a-z_0-9]+)/.exec(location.hash)?.[1];
+  const list = one ? [one] : location.hash.includes('m1') ? NAMES_M1 : NAMES;
   const cols = location.hash.includes('m1') ? 8 : 6;
   list.filter(hasModel).forEach((n, i) => {
     const m = getModel(n);
@@ -48,7 +49,7 @@ export function gallery(container: HTMLElement, opts: { snow?: number; glow?: nu
         g.add(p);
       });
     }
-    g.position.set((i % cols) * 3.4 - (cols - 1) * 1.7, 0, Math.floor(i / cols) * 3.6 - 5);
+    g.position.set(one ? 0 : (i % cols) * 3.4 - (cols - 1) * 1.7, 0, one ? 0 : Math.floor(i / cols) * 3.6 - 5);
     scene.add(g);
   });
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(60, 60).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: '#9fd27c' }));
@@ -58,6 +59,7 @@ export function gallery(container: HTMLElement, opts: { snow?: number; glow?: nu
   const far = location.hash.includes('m1') ? 1.45 : 1;
   cam.position.set(2 * far, 17 * far, 19 * far + (rows - 4) * 1.5);
   cam.lookAt(0, 0, (rows - 4) * 1.8 + 0.5);
+  if (one) { cam.position.set(1.2, 3.2, 5.2); cam.lookAt(0, 1.2, 0); }
   const loop = () => { requestAnimationFrame(loop); r.render(scene, cam); };
   loop();
 }

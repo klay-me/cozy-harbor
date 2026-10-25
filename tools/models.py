@@ -581,10 +581,10 @@ def market():
         box(p, (1.86, 0.02, 0.085), (0, -0.74 + i * 0.37, 0.042), '#E0CFAE', bevel=0, name='joint')
     # fountain
     cyl(p, 0.36, 0.38, 0.2, (0, 0, 0.18), P['stone'], seg=20, name='basin')
-    cyl(p, 0.31, 0.31, 0.02, (0, 0, 0.27), P['water'], seg=20, bevel=0, kind='G', name='pool')
+    cyl(p, 0.31, 0.31, 0.02, (0, 0, 0.27), P['water'], seg=20, bevel=0, name='pool')
     cyl(p, 0.06, 0.08, 0.36, (0, 0, 0.43), P['stone2'], seg=10, name='pillar')
     cyl(p, 0.16, 0.06, 0.08, (0, 0, 0.63), P['stone'], seg=14, name='bowl')
-    ball(p, 0.06, (0, 0, 0.72), P['water'], kind='G', name='spout')
+    ball(p, 0.06, (0, 0, 0.72), P['water'], name='spout')
     stalls = [(-0.55, -0.55, 0, [P['red'], P['white']], [P['red'], '#F5A35C', P['red']]),
               (0.55, -0.55, 0, [P['blue'], P['white']], [P['sprout'], P['sprout'], '#F2CF5B']),
               (-0.55, 0.6, math.pi, [P['yellow'], P['white']], ['#F5A35C', '#FFE07A', '#F5A35C']),
@@ -745,7 +745,7 @@ for f in (depot, warehouse, lumberjack, sawmill, fishery, farm, mill, bakery, ma
           tree_round, tree_pine, bush, rock, villager, cart, boat, lamp,
           sheepfarm, study, church, woodshed, claypit, brickworks, weaver, tailor, mine, smithy, park, guild,
           factory, plant_modern, cannery, brewery, powerplant, heatplant, school, clinic, townhall, university,
-          factory_small, windturbine, solar, hydro, purifier, recycler, hospital, theatre, lab, ore_iron, ore_coal):
+          factory_small, windturbine, solar, hydro, purifier, recycler, hospital, theatre, lab, ore_iron, ore_coal, bridge, bridge_plain):
     f()
 # chimney smoke markers on the older houses
 for o in list(bpy.data.objects):
