@@ -360,7 +360,7 @@ export class Hud {
         return `<button class="tech ${cls} b-${d.branch}" data-tech="${t}" ${cls === 'locked' || done ? 'disabled' : ''}>
           <span class="tn">${done ? icon('check') : ''}${d.name}${d.infinite && lv ? ` <small>${lv} 级</small>` : ''}<em>${BRANCHES[d.branch]}</em></span>
           <span class="td">${d.desc}</span>
-          <span class="tc">${done ? '已完成' : curr ? `<span class="bar"><i data-rp style="width:0%"></i></span>` : `${icon('research')}${g.techCost(t)}`}</span>
+          <span class="tc">${done ? '已完成' : curr ? `<span class="bar"><i data-rp style="width:0%"></i></span>` : `${icon('research')}${g.techCost(t)}${g.research.saved[t] ? `<small>（已学 ${Math.floor(g.research.saved[t]! / g.techCost(t) * 100)}%）</small>` : ''}`}</span>
         </button>`;
       }).join('')}</section>`;
     }).join('');

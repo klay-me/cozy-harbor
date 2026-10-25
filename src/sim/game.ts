@@ -84,7 +84,7 @@ export class Game {
   taxRate = 0;
   upkeepRate = 0;
   power = { gen: 0, use: 0, ratio: 1 };
-  research = { current: null as TechId | null, points: 0, rate: 0, levels: {} as Partial<Record<TechId, number>> };
+  research = { current: null as TechId | null, points: 0, rate: 0, levels: {} as Partial<Record<TechId, number>>, saved: {} as Partial<Record<TechId, number>> };
   mods = emptyMods();
   pollution: Float32Array;
   pollutionAvg = 0;
@@ -374,8 +374,14 @@ export class Game {
   }
   setResearch(t: TechId | null) {
     if (t && !this.canResearch(t)) return false;
-    if (t !== this.research.current) this.research.points = 0;
-    this.research.current = t;
+    const r = this.research;
+    if (t !== r.current) {
+      // switching keeps what was already learned on the old topic
+      if (r.current && r.points > 0) r.saved[r.current] = r.points;
+      r.points = t ? r.saved[t] ?? 0 : 0;
+      if (t) delete r.saved[t];
+    }
+    r.current = t;
     return true;
   }
   private recomputeMods() {
@@ -831,7 +837,7 @@ export class Game {
     this.occ.forEach((o, i) => { if (o === -1) roads.push(i); });
     return JSON.stringify({
       v: 2, seed: this.world.seed, weather: this.weather.cur, gold: this.gold, time: this.time, quest: this.questIndex, era: this.era,
-      research: { current: this.research.current, points: this.research.points, levels: this.research.levels },
+      research: { current: this.research.current, points: this.research.points, levels: this.research.levels, saved: this.research.saved },
       storage: this.storage, roads,
       b: [...this.buildings.values()].filter(b => b.type !== 'depot').map(b => [b.type, b.x, b.z, b.tier, b.residents, b.progress]),
     });
@@ -842,7 +848,7 @@ export class Game {
       if (s.v !== 2) return null;
       const g = new Game(s.seed);
       g.gold = s.gold; g.time = s.time; g.questIndex = s.quest; g.era = s.era ?? 1;
-      if (s.research) { g.research.current = s.research.current; g.research.points = s.research.points; g.research.levels = s.research.levels ?? {}; }
+      if (s.research) { g.research.current = s.research.current; g.research.points = s.research.points; g.research.levels = s.research.levels ?? {}; g.research.saved = s.research.saved ?? {}; }
       if (s.weather && s.weather in WEATHER) { g.weather.cur = g.weather.prev = s.weather; }
       GOOD_IDS.forEach(k => { g.storage[k] = s.storage[k] ?? 0; });
       for (const i of s.roads) { g.occ[i] = -1; g.world.trees[i] = 0; }
