@@ -11,7 +11,7 @@ export class CameraRig {
   target = new THREE.Vector3();
   yaw = 0.6;
   dist = 26;
-  mode: RotateMode = 'look';
+  mode: RotateMode = 'orbit';
   private goal = { yaw: 0.6, dist: 26, target: new THREE.Vector3() };
   bounds = 30;
 
@@ -33,6 +33,14 @@ export class CameraRig {
     this.goal.target.x += dx * c - dz * s;
     this.goal.target.z += -dx * s - dz * c;
     this.clamp(this.goal.target);
+  }
+  /** Move the view immediately (used by drag panning so the map sticks to the cursor). */
+  shift(dx: number, dz: number) {
+    this.goal.target.x += dx; this.goal.target.z += dz;
+    this.clamp(this.goal.target);
+    this.target.x = this.goal.target.x; this.target.z = this.goal.target.z;
+    this.update(0);
+    this.camera.updateMatrixWorld();
   }
   /** Drag the ground with the pointer: the point under the cursor follows it. */
   panPixels(px: number, py: number) {

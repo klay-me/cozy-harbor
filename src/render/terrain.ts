@@ -129,11 +129,24 @@ uniform vec3 uRange, uGrass;
 uniform vec4 uSel;
 varying vec3 vKind;
 varying vec3 vWP;
+float th(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float tn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(th(i), th(i + vec2(1, 0)), f.x), mix(th(i + vec2(0, 1)), th(i + vec2(1, 1)), f.x), f.y); }
+float tfbm(vec2 p){ return tn(p) * 0.6 + tn(p * 2.3 + 7.1) * 0.3 + tn(p * 5.1 + 3.3) * 0.1; }
 ` + sh.fragmentShader.replace('vec4 diffuseColor = vec4( diffuse, opacity );', `
   float n1 = sin(vWP.x * 0.31 + vWP.z * 0.21) * 0.5 + 0.5;
   float n2 = sin(vWP.x * 1.7 - vWP.z * 1.3 + sin(vWP.z * 0.8)) * 0.5 + 0.5;
-  vec3 grass = uGrass * (0.92 + 0.1 * n1) * (0.97 + 0.05 * step(0.7, n2));
-  vec3 sand = vec3(0.96, 0.87, 0.64);
+  // hand-painted grass: large soft clumps cut into two or three flat tones, plus small dark flecks
+  float clump = tfbm(vWP.xz * 0.45);
+  float tone = 1.0 + 0.07 * smoothstep(0.58, 0.62, clump) - 0.07 * smoothstep(0.36, 0.32, clump);
+  float patchy = tfbm(vWP.xz * 1.6 + 11.0);
+  tone -= 0.05 * smoothstep(0.66, 0.7, patchy);
+  vec2 cell = floor(vWP.xz * 7.0);
+  float fleck = step(0.93, th(cell)) * step(length(fract(vWP.xz * 7.0) - 0.5), 0.22);
+  vec3 grass = uGrass * tone * (0.96 + 0.06 * n1);
+  grass = mix(grass, uGrass * 0.78, fleck * 0.8);
+  grass = mix(grass, mix(uGrass, vec3(1.0, 0.98, 0.7), 0.35), step(0.965, th(cell + 17.0)) * step(length(fract(vWP.xz * 7.0) - 0.5), 0.16));
+  vec3 sand = vec3(0.96, 0.87, 0.64) * (1.0 - 0.04 * step(0.8, sin(vWP.x * 3.0 + tn(vWP.xz * 1.5) * 4.0)));
   vec3 wetSand = vec3(0.86, 0.76, 0.55);
   vec3 under = vec3(0.70, 0.80, 0.68);
   vec3 rock = vec3(0.74, 0.71, 0.66) * (0.9 + 0.15 * n2);

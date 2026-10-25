@@ -16,6 +16,7 @@ import { ENV, worldMaterial } from './shared';
 import { Terrain } from './terrain';
 import { Env } from './env';
 import { People } from './people';
+import { Decor } from './decor';
 
 interface BView { group: THREE.Group; tier: string; spins: { o: THREE.Object3D; axis: 'x' | 'z' }[]; bobs: THREE.Object3D[]; born: number; b: Bld }
 
@@ -27,6 +28,7 @@ export class View {
   private game!: Game;
   private terrain!: Terrain;
   private people: People | null = null;
+  private decor: Decor | null = null;
   private worldMat = worldMaterial();
   private ghostMat = worldMaterial({ transparent: true, opacity: 0.8 });
   private roadMat: THREE.MeshToonMaterial;
@@ -92,6 +94,8 @@ export class View {
     this.terrain = new Terrain(game.world);
     this.add(this.terrain.terrain);
     this.add(this.terrain.water);
+    this.decor = new Decor(game, this.terrain, this.half);
+    this.add(this.decor.group);
     this.buildTrees();
     this.buildRocks();
     this.buildRoads();
@@ -146,6 +150,7 @@ export class View {
       }
     }
     this.trees.forEach((m, i) => { m.count = n[i]; (m.userData.line as THREE.InstancedMesh).count = n[i]; m.instanceMatrix.needsUpdate = true; });
+    this.decor?.sync();
   }
 
   private buildRocks() {
@@ -342,6 +347,21 @@ export class View {
     else if (!this.ghost.visible) U.uRangeOn.value = 0;
   }
 
+  private groundAt(clientX: number, clientY: number) {
+    const v = new THREE.Vector2((clientX / innerWidth) * 2 - 1, -(clientY / innerHeight) * 2 + 1);
+    this.raycaster.setFromCamera(v, this.rig.camera);
+    const p = new THREE.Vector3();
+    return this.raycaster.ray.intersectPlane(this.ground, p) ? p : null;
+  }
+  /** drag the map so the ground point under the cursor stays under the cursor */
+  panGrab(x0: number, y0: number, x1: number, y1: number) {
+    const a = this.groundAt(x0, y0), b = this.groundAt(x1, y1);
+    if (!a || !b) return;
+    const dx = a.x - b.x, dz = a.z - b.z;
+    if (Math.hypot(dx, dz) > 30) return;
+    this.rig.shift(dx, dz);
+  }
+
   pick(clientX: number, clientY: number): { x: number; z: number } | null {
     const v = new THREE.Vector2((clientX / innerWidth) * 2 - 1, -(clientY / innerHeight) * 2 + 1);
     this.raycaster.setFromCamera(v, this.rig.camera);
@@ -365,7 +385,7 @@ export class View {
   render(dt: number, gameDt: number) {
     const g = this.game;
     this.time += dt;
-    if (g.bVersion !== this.bVersion) { this.syncBuildings(); this.bVersion = g.bVersion; }
+    if (g.bVersion !== this.bVersion) { this.syncBuildings(); this.bVersion = g.bVersion; this.tVersion = -1; }
     if (g.rVersion !== this.rVersion) { this.syncRoads(); this.rVersion = g.rVersion; this.tVersion = -1; }
     if (g.tVersion !== this.tVersion) { this.syncTrees(); this.tVersion = g.tVersion; }
     for (const ev of g.events.splice(0)) {
@@ -389,6 +409,7 @@ export class View {
       for (const o of v.bobs) { o.position.y = o.userData.base + Math.sin(this.time * 1.8 + v.b.id) * 0.03; o.rotation.z = Math.sin(this.time * 1.3 + v.b.id) * 0.06; }
     }
     this.rig.update(dt);
+    this.decor?.setSeason(g.seasonPos);
     this.env.update(dt, g, this.rig.target, this.terrain, this.scene.fog as THREE.Fog);
     this.people?.update(dt, gameDt);
     const v3 = new THREE.Vector3();

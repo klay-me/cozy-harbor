@@ -45,8 +45,8 @@ async function boot() {
   const unlock = () => sound.unlock();
   addEventListener('pointerdown', unlock, true);
   addEventListener('keydown', unlock, true);
-  let rotMode: RotateMode = 'look';
-  try { if (localStorage.getItem('cozy-harbor-rotate') === 'orbit') rotMode = 'orbit'; } catch { /* ignore */ }
+  let rotMode: RotateMode = 'orbit';
+  try { if (localStorage.getItem('cozy-harbor-rotate2') === 'look') rotMode = 'look'; } catch { /* ignore */ }
   view.rig.mode = rotMode;
   view.onThunder = d => setTimeout(() => sound.play('thunder'), d * 1000);
 
@@ -62,7 +62,7 @@ async function boot() {
     close: () => select(null),
     focus: b => { const c = game.center(b); view.rig.jumpTo(c.x - view.half, c.z - view.half); },
     audio: p => sound.set(p),
-    rotateMode: m => { view.rig.mode = m; try { localStorage.setItem('cozy-harbor-rotate', m); } catch { /* ignore */ } },
+    rotateMode: m => { view.rig.mode = m; try { localStorage.setItem('cozy-harbor-rotate2', m); } catch { /* ignore */ } },
     click: () => sound.play('click'),
   }, makeThumbs(allTypes));
   hud.setAudio(sound.settings, rotMode);
@@ -113,7 +113,7 @@ async function boot() {
   // ---------- input ----------
   const canvas = view.renderer.domElement;
   let hover: { x: number; z: number } | null = null;
-  let down: { x: number; y: number; btn: number; moved: boolean; id: number } | null = null;
+  let down: { x: number; y: number; lx: number; ly: number; btn: number; moved: boolean; id: number } | null = null;
   const touches = new Map<number, { x: number; y: number }>();
   let pinch: { d: number; a: number; cx: number; cy: number } | null = null;
   let touchGhost: string | null = null;
@@ -157,7 +157,7 @@ async function boot() {
         return;
       }
     }
-    down = { x: e.clientX, y: e.clientY, btn: e.button, moved: false, id: e.pointerId };
+    down = { x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, btn: e.button, moved: false, id: e.pointerId };
     const p = view.pick(e.clientX, e.clientY);
     if (e.button === 0 && tool === 'road' && p) { roadStart = p; hover = p; updatePreview(); }
   });
@@ -171,21 +171,21 @@ async function boot() {
         const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
         view.rig.zoom(pinch.d / d);
         view.rig.rotate(ang - pinch.a);
-        view.rig.panPixels(cx - pinch.cx, cy - pinch.cy);
+        view.panGrab(pinch.cx, pinch.cy, cx, cy);
         pinch = { d, a: ang, cx, cy };
         return;
       }
       if (down && down.id === e.pointerId && tool !== 'road') {
         if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > 8) down.moved = true;
-        if (down.moved) view.rig.panPixels(e.clientX - prev.x, e.clientY - prev.y);
+        if (down.moved) view.panGrab(prev.x, prev.y, e.clientX, e.clientY);
       }
     } else if (down) {
-      const dx = e.movementX, dy = e.movementY;
       if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > 5) down.moved = true;
       if (down.moved) {
-        // right or left drag moves the map, middle drag turns the view
-        if (down.btn === 1) view.rig.rotate(-dx * 0.004);
-        else if (down.btn === 2 || (down.btn === 0 && tool !== 'road')) view.rig.panPixels(dx, dy);
+        // right or left drag moves the map, middle drag rotates it
+        if (down.btn === 1) view.rig.rotate(-(e.clientX - down.lx) * 0.006);
+        else if (down.btn === 2 || (down.btn === 0 && tool !== 'road')) view.panGrab(down.lx, down.ly, e.clientX, e.clientY);
+        down.lx = e.clientX; down.ly = e.clientY;
       }
     }
     const p = view.pick(e.clientX, e.clientY);

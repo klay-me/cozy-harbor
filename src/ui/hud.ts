@@ -65,12 +65,12 @@ export class Hud {
           <label for="volMusic">音乐</label><input type="range" id="volMusic" min="0" max="1" step="0.05">
           <label for="volSfx">音效</label><input type="range" id="volSfx" min="0" max="1" step="0.05">
           <label for="rotMode">转动方式</label>
-          <select id="rotMode"><option value="look">转动视角（镜头原地转）</option><option value="orbit">绕画面中心旋转</option></select>
+          <select id="rotMode"><option value="orbit">旋转地图（绕画面中心）</option><option value="look">转动视角（镜头原地转）</option></select>
         </div>
         <button data-m="help">操作说明</button>
         <div class="help" id="help" hidden>
           <p><b>移动镜头</b>：右键（或左键）拖动地面，或按 W A S D</p>
-          <p><b>转动视角</b>：按住中键（滚轮）拖动，或按住 Q / E</p>
+          <p><b>旋转地图</b>：按住中键（滚轮）拖动，或按住 Q / E</p>
           <p><b>缩放</b>：滚轮，手机上双指捏合</p>
           <p><b>修路</b>：选"道路"后按住拖动</p>
           <p><b>取消</b>：右键单击或 Esc</p>
