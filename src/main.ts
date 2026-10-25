@@ -189,7 +189,7 @@ async function boot() {
       if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > 5) down.moved = true;
       if (down.moved) {
         // right or left drag moves the map, middle drag rotates it
-        if (down.btn === 1) view.rig.rotate(-(e.clientX - down.lx) * 0.006);
+        if (down.btn === 1) view.rig.rotate((e.clientX - down.lx) * 0.006);
         else if (down.btn === 2 || (down.btn === 0 && tool !== 'road')) view.panGrab(down.lx, down.ly, e.clientX, e.clientY);
         down.lx = e.clientX; down.ly = e.clientY;
       }
@@ -261,8 +261,8 @@ async function boot() {
     if (keys.has('s') || keys.has('arrowdown')) view.rig.pan(0, -pan);
     if (keys.has('a') || keys.has('arrowleft')) view.rig.pan(-pan, 0);
     if (keys.has('d') || keys.has('arrowright')) view.rig.pan(pan, 0);
-    if (keys.has('q')) view.rig.rotate(1.5 * dt);
-    if (keys.has('e')) view.rig.rotate(-1.5 * dt);
+    if (keys.has('q')) view.rig.rotate(-1.5 * dt);
+    if (keys.has('e')) view.rig.rotate(1.5 * dt);
     game.update(dt);
     for (const s of game.sfx.splice(0)) sound.play(s);
     if (game.events.length) sound.play('produce');
