@@ -1,6 +1,8 @@
 // DOM interface: resource bar, quest card, build menu, info panel, toasts, menu.
 import { Game, Bld, QUESTS } from '../sim/game';
-import { BUILDINGS, BUILD_MENU, BuildingId, GOOD_IDS, GOODS, TIERS, UPGRADE_COST } from '../sim/data';
+import { BUILDINGS, BUILD_MENU, BuildingId, GOOD_IDS, GOODS, TIERS, UPGRADE_COST, WEATHER } from '../sim/data';
+import type { AudioSettings } from '../audio/sound';
+import type { RotateMode } from '../render/camera';
 import { icon } from './icons';
 
 export type Tool = 'select' | 'demolish' | BuildingId;
@@ -15,6 +17,9 @@ export interface HudHooks {
   demolish(b: Bld): void;
   close(): void;
   focus(b: Bld): void;
+  audio(p: Partial<AudioSettings>): void;
+  rotateMode(m: RotateMode): void;
+  click(): void;
 }
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string, root: ParentNode = document) => root.querySelector(sel) as T;
@@ -38,6 +43,7 @@ export class Hud {
           <button data-speed="2">2×</button>
           <button data-speed="4">4×</button>
         </div>
+        <button class="menu-btn icon-btn" id="muteBtn" aria-label="静音"></button>
         <button class="menu-btn" id="menuBtn" aria-haspopup="true">菜单</button>
       </div>
       <aside class="quest card" id="quest"></aside>
@@ -55,16 +61,29 @@ export class Hud {
         <h3>暖港</h3>
         <button data-m="save">保存游戏</button>
         <button data-m="new">换一张新地图</button>
+        <div class="settings">
+          <label for="volMusic">音乐</label><input type="range" id="volMusic" min="0" max="1" step="0.05">
+          <label for="volSfx">音效</label><input type="range" id="volSfx" min="0" max="1" step="0.05">
+          <label for="rotMode">转动方式</label>
+          <select id="rotMode"><option value="look">转动视角（镜头原地转）</option><option value="orbit">绕画面中心旋转</option></select>
+        </div>
         <button data-m="help">操作说明</button>
         <div class="help" id="help" hidden>
-          <p><b>移动镜头</b>：拖动地面，或按 W A S D</p>
-          <p><b>旋转</b>：右键拖动，或按 Q / E</p>
+          <p><b>移动镜头</b>：右键（或左键）拖动地面，或按 W A S D</p>
+          <p><b>转动视角</b>：按住中键（滚轮）拖动，或按住 Q / E</p>
           <p><b>缩放</b>：滚轮，手机上双指捏合</p>
           <p><b>修路</b>：选"道路"后按住拖动</p>
-          <p><b>取消</b>：右键或 Esc</p>
+          <p><b>取消</b>：右键单击或 Esc</p>
           <p>游戏每 30 秒自动保存在这台设备的浏览器里。</p>
         </div>
       </div>`;
+    root.addEventListener('click', e => { if ((e.target as HTMLElement).closest('button')) hooks.click(); });
+    // sound
+    const mute = $('#muteBtn', root);
+    mute.addEventListener('click', () => { this.audio.muted = !this.audio.muted; hooks.audio({ muted: this.audio.muted }); this.renderAudio(); });
+    $<HTMLInputElement>('#volMusic', root).addEventListener('input', e => { this.audio.music = Number((e.target as HTMLInputElement).value); hooks.audio({ music: this.audio.music }); });
+    $<HTMLInputElement>('#volSfx', root).addEventListener('input', e => { this.audio.sfx = Number((e.target as HTMLInputElement).value); hooks.audio({ sfx: this.audio.sfx }); });
+    $<HTMLSelectElement>('#rotMode', root).addEventListener('change', e => hooks.rotateMode((e.target as HTMLSelectElement).value as RotateMode));
     // speed
     $('#speed', root).addEventListener('click', e => {
       const b = (e.target as HTMLElement).closest('button');
@@ -116,6 +135,21 @@ export class Hud {
     this.renderItems();
   }
 
+  private audio: AudioSettings = { music: 0.6, sfx: 0.7, muted: false };
+  setAudio(a: AudioSettings, mode: RotateMode) {
+    this.audio = { ...a };
+    $<HTMLInputElement>('#volMusic', this.root).value = String(a.music);
+    $<HTMLInputElement>('#volSfx', this.root).value = String(a.sfx);
+    $<HTMLSelectElement>('#rotMode', this.root).value = mode;
+    this.renderAudio();
+  }
+  private renderAudio() {
+    const b = $('#muteBtn', this.root);
+    b.innerHTML = icon(this.audio.muted ? 'mute' : 'sound');
+    b.setAttribute('aria-label', this.audio.muted ? '打开声音' : '静音');
+    b.title = this.audio.muted ? '打开声音' : '静音';
+  }
+
   setGame(g: Game) { this.game = g; this.selected = null; this.infoKey = ''; this.renderInfo(); }
   setTool(t: Tool) {
     this.tool = t;
@@ -154,6 +188,7 @@ export class Hud {
       <span class="chip gold" title="金币。税收 ${fmt(g.taxRate)}/分，维护费 ${fmt(g.upkeepRate)}/分">${icon('gold')}<b>${fmt(g.gold)}</b><i class="${net >= 0 ? 'up' : 'down'}">${net >= 0 ? '+' : ''}${Math.round(net)}/分</i></span>
       <span class="chip" title="农民（劳动力 ${g.workforce.peasant.have} / 需要 ${g.workforce.peasant.need}）">${icon('peasant')}<b>${g.pop.peasant}</b></span>
       <span class="chip" title="工人（劳动力 ${g.workforce.worker.have} / 需要 ${g.workforce.worker.need}）">${icon('worker')}<b>${g.pop.worker}</b></span>
+      <span class="chip weather" title="${WEATHER[g.weather.cur].effect}">${icon(g.weather.cur)}<b>${WEATHER[g.weather.cur].name}</b>${WEATHER[g.weather.cur].effect !== '一切正常' ? `<i>${WEATHER[g.weather.cur].effect}</i>` : ''}</span>
       <span class="sep"></span>
       ${GOOD_IDS.map(k => {
         const v = g.storage[k], low = v < 1 && demanded.has(k);
@@ -233,7 +268,7 @@ export class Hud {
     const d = BUILDINGS[b.type];
     const st = f('status');
     if (st) {
-      const ok = b.type === 'house' ? b.status === '生活美满' : (b.status === '运转中' || !d.output);
+      const ok = b.type === 'house' ? b.status === '生活美满' : (b.status.startsWith('运转中') || !d.output);
       st.textContent = d.output || b.type === 'house' ? b.status : (b.connected ? '正常' : '没有连上道路');
       st.className = 'pill ' + (ok && b.connected ? 'ok' : 'bad');
     }

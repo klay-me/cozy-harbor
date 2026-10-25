@@ -4,6 +4,8 @@ import { BUILDINGS, BuildingId, BUILD_MENU } from './sim/data';
 import { View } from './render/view';
 import { Hud, Tool } from './ui/hud';
 import { makeThumbs } from './render/thumbs';
+import { Sound } from './audio/sound';
+import type { RotateMode } from './render/camera';
 
 const SAVE_KEY = 'cozy-harbor-save-v1';
 
@@ -18,6 +20,15 @@ function boot() {
     return;
   }
 
+  const sound = new Sound();
+  const unlock = () => sound.unlock();
+  addEventListener('pointerdown', unlock, true);
+  addEventListener('keydown', unlock, true);
+  let rotMode: RotateMode = 'look';
+  try { if (localStorage.getItem('cozy-harbor-rotate') === 'orbit') rotMode = 'orbit'; } catch { /* ignore */ }
+  view.rig.mode = rotMode;
+  view.onThunder = d => setTimeout(() => sound.play('thunder'), d * 1000);
+
   const allTypes = BUILD_MENU.flatMap(c => c.items);
   const hud = new Hud(hudEl, {
     tool: t => setTool(t),
@@ -29,7 +40,11 @@ function boot() {
     demolish: b => { game.demolish(b.x, b.z); select(null); },
     close: () => select(null),
     focus: b => { const c = game.center(b); view.rig.jumpTo(c.x - view.half, c.z - view.half); },
+    audio: p => sound.set(p),
+    rotateMode: m => { view.rig.mode = m; try { localStorage.setItem('cozy-harbor-rotate', m); } catch { /* ignore */ } },
+    click: () => sound.play('click'),
   }, makeThumbs(allTypes));
+  hud.setAudio(sound.settings, rotMode);
 
   let game: Game;
   let tool: Tool = 'select';
@@ -147,8 +162,9 @@ function boot() {
       const dx = e.movementX, dy = e.movementY;
       if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > 5) down.moved = true;
       if (down.moved) {
-        if (down.btn === 2) view.rig.rotate(-dx * 0.008);
-        else if (down.btn === 1 || (down.btn === 0 && tool !== 'road')) view.rig.panPixels(dx, dy);
+        // right or left drag moves the map, middle drag turns the view
+        if (down.btn === 1) view.rig.rotate(-dx * 0.004);
+        else if (down.btn === 2 || (down.btn === 0 && tool !== 'road')) view.rig.panPixels(dx, dy);
       }
     }
     const p = view.pick(e.clientX, e.clientY);
@@ -198,14 +214,13 @@ function boot() {
     if (k === ' ') { e.preventDefault(); game.speed = game.speed === 0 ? 1 : 0; }
     if (k === 'x') setTool(tool === 'demolish' ? 'select' : 'demolish');
     for (const t of Object.keys(BUILDINGS) as BuildingId[]) if (BUILDINGS[t].hotkey?.toLowerCase() === k) setTool(tool === t ? 'select' : t);
-    if (k === 'q') view.rig.rotate(Math.PI / 4);
-    if (k === 'e') view.rig.rotate(-Math.PI / 4);
   });
   addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
   addEventListener('blur', () => keys.clear());
 
   // ---------- loop ----------
   let last = performance.now();
+  let mixT = 0;
   function frame(now: number) {
     requestAnimationFrame(frame);
     const dt = Math.min(0.1, (now - last) / 1000);
@@ -215,14 +230,20 @@ function boot() {
     if (keys.has('s') || keys.has('arrowdown')) view.rig.pan(0, -pan);
     if (keys.has('a') || keys.has('arrowleft')) view.rig.pan(-pan, 0);
     if (keys.has('d') || keys.has('arrowright')) view.rig.pan(pan, 0);
+    if (keys.has('q')) view.rig.rotate(1.5 * dt);
+    if (keys.has('e')) view.rig.rotate(-1.5 * dt);
     game.update(dt);
+    for (const s of game.sfx.splice(0)) sound.play(s);
+    if (game.events.length) sound.play('produce');
+    mixT -= dt;
+    if (mixT <= 0) { mixT = 0.5; const m = view.weatherMix(); sound.setWeather(m.rain, m.storm, m.sunny); }
     if (selected && !game.buildings.has(selected)) select(null);
     view.render(dt);
     hud.update(dt);
   }
   requestAnimationFrame(frame);
   // test hook
-  (window as any).__cozy = { get game() { return game; }, view, setTool, select };
+  (window as any).__cozy = { get game() { return game; }, view, setTool, select, sound };
 }
 
 boot();

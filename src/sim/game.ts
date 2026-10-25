@@ -1,7 +1,7 @@
 import { World, Tile } from './world';
 import {
   BUILDINGS, BuildingId, GOOD_IDS, GoodId, GOODS, TIERS, TierId, ServiceId, SERVICES,
-  UPGRADE_COST, START, REFUND, MAP_SIZE,
+  UPGRADE_COST, START, REFUND, MAP_SIZE, WEATHER, WeatherId,
 } from './data';
 
 export interface Bld {
@@ -63,6 +63,8 @@ export class Game {
   // change counters for the renderer
   bVersion = 0; rVersion = 0; tVersion = 0;
   events: ProdEvent[] = [];
+  sfx: string[] = [];
+  weather = { cur: 'sunny' as WeatherId, prev: 'sunny' as WeatherId, blend: 1, left: 120 };
   toasts: Toast[] = [];
   private acc = 0;
   private questT = 0;
@@ -138,6 +140,7 @@ export class Game {
     this.storage.planks -= def.cost.planks ?? 0;
     this.addBuilding(type, x, z);
     this.refresh();
+    this.sfx.push('place');
     return true;
   }
 
@@ -189,14 +192,14 @@ export class Game {
       if (this.world.trees[k]) { this.world.trees[k] = 0; this.tVersion++; }
       n++;
     }
-    if (n) { this.rVersion++; this.refresh(); }
+    if (n) { this.rVersion++; this.refresh(); this.sfx.push('road'); }
     return n;
   }
 
   demolish(x: number, z: number) {
     if (!this.world.inside(x, z)) return false;
     const k = z * this.W + x, o = this.occ[k];
-    if (o === -1) { this.occ[k] = 0; this.rVersion++; this.refresh(); return true; }
+    if (o === -1) { this.occ[k] = 0; this.rVersion++; this.refresh(); this.sfx.push('demolish'); return true; }
     if (o > 0) {
       const b = this.buildings.get(o)!;
       if (b.type === 'depot') { this.notify('港口不能拆除', 'warn'); return false; }
@@ -206,6 +209,7 @@ export class Game {
       for (let j = 0; j < b.h; j++) for (let i = 0; i < b.w; i++) this.occ[(b.z + j) * this.W + b.x + i] = 0;
       this.buildings.delete(o);
       this.bVersion++;
+      this.sfx.push('demolish');
       this.refresh();
       return true;
     }
@@ -227,6 +231,7 @@ export class Game {
     this.storage.planks -= UPGRADE_COST.planks;
     b.tier = 'worker';
     this.bVersion++;
+    this.sfx.push('upgrade');
     if (!quiet) this.notify('一户人家搬进了工人住宅', 'good');
     return true;
   }
@@ -237,7 +242,10 @@ export class Game {
     return n;
   }
 
-  notify(text: string, kind: Toast['kind'] = 'info') { this.toasts.push({ text, kind }); }
+  notify(text: string, kind: Toast['kind'] = 'info') {
+    this.toasts.push({ text, kind });
+    if (kind === 'warn') this.sfx.push('error');
+  }
 
   // ---------- network & storage ----------
   refresh() {
@@ -291,6 +299,7 @@ export class Game {
 
   private step(dt: number) {
     this.time += dt;
+    this.stepWeather(dt);
     // population & workforce
     this.pop.peasant = 0; this.pop.worker = 0;
     this.buildings.forEach(b => { if (b.type === 'house') this.pop[b.tier] += b.residents; });
@@ -315,6 +324,8 @@ export class Game {
         if (b.env === 0) { b.status = '附近树木太少'; b.working = false; continue; }
       }
       if (b.staff === 0) { b.status = `缺少${TIERS[wk.tier].name}`; b.working = false; continue; }
+      const wf = WEATHER[this.weather.cur].prod[b.type] ?? 1;
+      if (wf === 0) { b.status = `${WEATHER[this.weather.cur].name}，暂停作业`; b.working = false; continue; }
       const out = def.output;
       if (b.progress >= 1) {
         if (def.input && this.storage[def.input] < 1) { b.status = `缺少${GOODS[def.input].name}`; b.working = false; continue; }
@@ -324,9 +335,9 @@ export class Game {
         b.progress -= 1;
         this.events.push({ id: b.id, good: out, n: 1 });
       }
-      b.progress = Math.min(1, b.progress + (dt / def.cycle!) * b.staff * b.env);
+      b.progress = Math.min(1, b.progress + (dt / def.cycle!) * b.staff * b.env * wf);
       b.working = true;
-      b.status = b.staff < 1 ? `工人不足 (${Math.round(b.staff * wk.n)}/${wk.n})` : (def.input && this.storage[def.input] < 1 && b.progress > 0.9 ? `缺少${GOODS[def.input].name}` : '运转中');
+      b.status = wf !== 1 && b.staff >= 1 ? `运转中（${WEATHER[this.weather.cur].name} ${wf > 1 ? '+' : ''}${Math.round((wf - 1) * 100)}%）` : b.staff < 1 ? `工人不足 (${Math.round(b.staff * wk.n)}/${wk.n})` : (def.input && this.storage[def.input] < 1 && b.progress > 0.9 ? `缺少${GOODS[def.input].name}` : '运转中');
     }
     // consumption
     const demand: Partial<Record<GoodId, number>> = {};
@@ -370,6 +381,7 @@ export class Game {
         this.gold += q.reward;
         if (q.planks) this.storage.planks = Math.min(this.cap, this.storage.planks + q.planks);
         this.questIndex++;
+        this.sfx.push('quest');
         const reward = [q.reward ? `${q.reward} 金币` : '', q.planks ? `${q.planks} 木板` : ''].filter(Boolean).join('、');
         this.notify(reward ? `目标完成：${q.text}　奖励 ${reward}` : `目标完成：${q.text}`, 'good');
         if (this.questIndex >= QUESTS.length) this.notify('小镇已经成长为热闹的港口城市了！', 'good');
@@ -377,12 +389,33 @@ export class Game {
     }
   }
 
+  private stepWeather(dt: number) {
+    const w = this.weather;
+    w.blend = Math.min(1, w.blend + dt / 10);
+    w.left -= dt;
+    if (w.left > 0) return;
+    const opts = Object.entries(WEATHER[w.cur].next) as [WeatherId, number][];
+    let r = Math.random() * opts.reduce((a, [, v]) => a + v, 0);
+    let next = opts[0][0];
+    for (const [k, v] of opts) { r -= v; if (r <= 0) { next = k; break; } }
+    this.setWeather(next);
+  }
+  setWeather(next: WeatherId) {
+    const w = this.weather;
+    const [a, b] = WEATHER[next].duration;
+    w.left = a + Math.random() * (b - a);
+    if (next === w.cur) return;
+    w.prev = w.cur; w.cur = next; w.blend = 0;
+    const d = WEATHER[next];
+    this.notify(`天气转为${d.name}${d.effect !== '一切正常' ? `：${d.effect}` : ''}`, 'info');
+  }
+
   // ---------- save ----------
   serialize() {
     const roads: number[] = [];
     this.occ.forEach((o, i) => { if (o === -1) roads.push(i); });
     return JSON.stringify({
-      v: 1, seed: this.world.seed, gold: this.gold, time: this.time, quest: this.questIndex, storage: this.storage, roads,
+      v: 1, seed: this.world.seed, weather: this.weather.cur, gold: this.gold, time: this.time, quest: this.questIndex, storage: this.storage, roads,
       b: [...this.buildings.values()].filter(b => b.type !== 'depot').map(b => [b.type, b.x, b.z, b.tier, b.residents, b.progress]),
     });
   }
@@ -392,6 +425,7 @@ export class Game {
       if (s.v !== 1) return null;
       const g = new Game(s.seed);
       g.gold = s.gold; g.time = s.time; g.questIndex = s.quest;
+      if (s.weather && s.weather in WEATHER) { g.weather.cur = g.weather.prev = s.weather; }
       GOOD_IDS.forEach(k => { g.storage[k] = s.storage[k] ?? 0; });
       for (const i of s.roads) { g.occ[i] = -1; g.world.trees[i] = 0; }
       for (const [type, x, z, tier, res, prog] of s.b) {

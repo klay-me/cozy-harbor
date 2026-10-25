@@ -80,3 +80,20 @@ export const BUILD_MENU: { cat: Category; name: string; items: BuildingId[] }[] 
 export const START = { gold: 1500, goods: { planks: 30, wood: 6, fish: 16 } as Partial<Record<GoodId, number>> };
 export const REFUND = 0.5;
 export const MAP_SIZE = 56;
+
+// ---------- weather ----------
+export type WeatherId = 'sunny' | 'cloudy' | 'rain' | 'storm' | 'fog';
+export interface WeatherDef {
+  name: string;
+  effect: string;                 // shown to the player
+  duration: [number, number];     // game seconds
+  next: Partial<Record<WeatherId, number>>; // transition weights
+  prod: Partial<Record<BuildingId, number>>; // production multipliers
+}
+export const WEATHER: Record<WeatherId, WeatherDef> = {
+  sunny: { name: '晴', effect: '一切正常', duration: [90, 150], next: { cloudy: 5, fog: 1, rain: 2, sunny: 2 }, prod: {} },
+  cloudy: { name: '多云', effect: '一切正常', duration: [60, 100], next: { sunny: 3.5, rain: 4, storm: 1, fog: 1.5 }, prod: {} },
+  rain: { name: '下雨', effect: '麦田产量 +25%', duration: [50, 90], next: { cloudy: 4, storm: 2.5, sunny: 2, rain: 1.5 }, prod: { farm: 1.25 } },
+  storm: { name: '雷雨', effect: '麦田产量 +25%，渔船停航', duration: [30, 50], next: { rain: 6, cloudy: 4 }, prod: { farm: 1.25, fishery: 0 } },
+  fog: { name: '起雾', effect: '渔场产量 -40%', duration: [40, 70], next: { sunny: 5, cloudy: 5 }, prod: { fishery: 0.6 } },
+};

@@ -2,10 +2,22 @@
 import * as THREE from 'three';
 import { Game, Bld } from '../sim/game';
 import { Tile } from '../sim/world';
-import { BUILDINGS, BuildingId, GOODS } from '../sim/data';
+import { BUILDINGS, BuildingId, GOODS, WeatherId } from '../sim/data';
 import { toon, outlineMat, P, merge, Box } from './toon';
 import { model, TREE_ROUND, TREE_PINE, ROCK, ModelGeo } from './models';
 import { CameraRig } from './camera';
+
+interface WParams { top: string; hor: string; fog: string; near: number; far: number; sun: number; hemi: number; cloud: string; cover: number; rain: number; wet: number; storm: number }
+const WEATHER_LOOK: Record<WeatherId, WParams> = {
+  sunny: { top: '#6cb4ec', hor: '#d6eef7', fog: '#d6eef7', near: 45, far: 120, sun: 2.3, hemi: 1.25, cloud: '#ffffff', cover: 0.4, rain: 0, wet: 0, storm: 0 },
+  cloudy: { top: '#8fb2cf', hor: '#dfe7eb', fog: '#d5dee3', near: 40, far: 110, sun: 1.0, hemi: 1.5, cloud: '#f3f5f7', cover: 1, rain: 0, wet: 0, storm: 0 },
+  rain: { top: '#6e8398', hor: '#adbac4', fog: '#a8b5be', near: 24, far: 85, sun: 0.45, hemi: 1.35, cloud: '#c3cbd4', cover: 1, rain: 0.55, wet: 0.7, storm: 0 },
+  storm: { top: '#3b4759', hor: '#7a8693', fog: '#6e7a87', near: 16, far: 68, sun: 0.22, hemi: 1.05, cloud: '#8c95a3', cover: 1, rain: 1, wet: 1, storm: 1 },
+  fog: { top: '#c6d1d8', hor: '#e8edf0', fog: '#e3e9ec', near: 4, far: 38, sun: 0.9, hemi: 1.55, cloud: '#ffffff', cover: 0.3, rain: 0, wet: 0.25, storm: 0 },
+};
+const NUM_KEYS = ['near', 'far', 'sun', 'hemi', 'cover', 'rain', 'wet', 'storm'] as const;
+const COL_KEYS = ['top', 'hor', 'fog', 'cloud'] as const;
+const RAIN_N = 3000;
 
 interface BView { group: THREE.Group; tier: string; spin?: THREE.Object3D; bob?: THREE.Object3D; born: number; b: Bld }
 
@@ -22,7 +34,18 @@ export class View {
     uGrid: { value: 0 }, uW: { value: 0 },
     uRange: { value: new THREE.Vector3(0, 0, 0) }, uRangeOn: { value: 0 },
     uSel: { value: new THREE.Vector4(0, 0, 0, 0) },
+    uWet: { value: 0 },
   };
+  private skyTop = new THREE.Color(); private skyHor = new THREE.Color();
+  private hemi!: THREE.HemisphereLight;
+  private cloudMat!: THREE.MeshToonMaterial;
+  private wv = { top: new THREE.Color('#6cb4ec'), hor: new THREE.Color('#d6eef7'), fog: new THREE.Color('#d6eef7'), cloud: new THREE.Color('#ffffff'), near: 45, far: 120, sun: 2.3, hemi: 1.25, cover: 0.4, rain: 0, wet: 0, storm: 0 };
+  private rain!: THREE.LineSegments;
+  private drops = new Float32Array(RAIN_N * 3);
+  private flash = 0; private boltT = 6;
+  private flashEl: HTMLElement;
+  /** called when lightning strikes; the argument is the delay before thunder in seconds */
+  onThunder: (delay: number) => void = () => {};
   private waterU: Record<string, THREE.IUniform> = {};
   private trees: THREE.InstancedMesh[] = [];
   private treeLines: THREE.InstancedMesh[] = [];
@@ -47,6 +70,9 @@ export class View {
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     container.appendChild(this.renderer.domElement);
     this.floatLayer = floatLayer;
+    this.flashEl = document.createElement('div');
+    this.flashEl.className = 'flash';
+    document.body.appendChild(this.flashEl);
     this.rig = new CameraRig(innerWidth / innerHeight);
     this.scene.fog = new THREE.Fog(0xd6eef7, 45, 120);
     addEventListener('resize', () => {
@@ -82,7 +108,7 @@ export class View {
   tileToWorld(x: number, z: number) { return new THREE.Vector3(x + 0.5 - this.half, 0, z + 0.5 - this.half); }
 
   private buildSky() {
-    const top = new THREE.Color('#6cb4ec'), hor = new THREE.Color('#d6eef7');
+    const top = this.skyTop.set('#6cb4ec'), hor = this.skyHor.set('#d6eef7');
     const sky = new THREE.Mesh(new THREE.SphereGeometry(300, 32, 16), new THREE.ShaderMaterial({
       uniforms: { uTop: { value: top }, uHor: { value: hor } }, side: THREE.BackSide, depthWrite: false,
       vertexShader: 'varying vec3 vD;void main(){vD=normalize(position);gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
@@ -90,7 +116,8 @@ export class View {
     }));
     sky.frustumCulled = false;
     this.scene.add(sky);
-    this.scene.add(new THREE.HemisphereLight(0xdcefff, 0x8c9a6a, 1.25));
+    this.hemi = new THREE.HemisphereLight(0xdcefff, 0x8c9a6a, 1.25);
+    this.scene.add(this.hemi);
     const sun = new THREE.DirectionalLight(0xfff2dc, 2.3);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
@@ -101,7 +128,8 @@ export class View {
     this.sun = sun;
     // clouds
     const cmat = toon('#ffffff', { emissive: new THREE.Color('#ffffff'), emissiveIntensity: 0.3 });
-    for (let i = 0; i < 8; i++) {
+    this.cloudMat = cmat;
+    for (let i = 0; i < 16; i++) {
       const g = new THREE.Group();
       const k = 3 + (i % 3);
       for (let j = 0; j < k; j++) {
@@ -117,6 +145,72 @@ export class View {
       g.userData.v = 0.4 + Math.random() * 0.5;
       this.scene.add(g);
       this.clouds.push(g);
+    }
+    // rain streaks live in a box that follows the camera target
+    for (let i = 0; i < RAIN_N; i++) {
+      this.drops[i * 3] = (Math.random() - 0.5) * 56;
+      this.drops[i * 3 + 1] = Math.random() * 24;
+      this.drops[i * 3 + 2] = (Math.random() - 0.5) * 56;
+    }
+    const rg = new THREE.BufferGeometry();
+    rg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(RAIN_N * 6), 3));
+    this.rain = new THREE.LineSegments(rg, new THREE.LineBasicMaterial({ color: '#f1f7fc', transparent: true, opacity: 0.75, depthWrite: false }));
+    this.rain.frustumCulled = false;
+    this.rain.geometry.setDrawRange(0, 0);
+    this.scene.add(this.rain);
+  }
+
+  weatherMix() { const v = this.wv; return { rain: v.rain, storm: v.storm, sunny: Math.min(1, v.sun / 2.3) }; }
+
+  private updateWeather(dt: number) {
+    const w = this.game.weather;
+    const a = WEATHER_LOOK[w.prev], b = WEATHER_LOOK[w.cur];
+    const k = w.blend * w.blend * (3 - 2 * w.blend);
+    const ease = 1 - Math.exp(-dt * 1.5);
+    const v = this.wv;
+    for (const key of NUM_KEYS) v[key] += ((a[key] + (b[key] - a[key]) * k) - v[key]) * ease;
+    const tmp = new THREE.Color();
+    for (const key of COL_KEYS) v[key].lerp(tmp.set(a[key]).lerp(new THREE.Color(b[key]), k), ease);
+    this.skyTop.copy(v.top); this.skyHor.copy(v.hor);
+    const fog = this.scene.fog as THREE.Fog;
+    fog.color.copy(v.fog); fog.near = v.near; fog.far = v.far;
+    // lightning
+    if (v.storm > 0.6 && this.game.speed > 0) {
+      this.boltT -= dt;
+      if (this.boltT <= 0) {
+        this.boltT = 5 + Math.random() * 9;
+        this.flash = 1;
+        this.onThunder(0.3 + Math.random() * 1.4);
+      }
+    }
+    this.flash *= Math.exp(-dt * 7);
+    const flicker = this.flash > 0.05 ? (Math.sin(this.time * 60) > 0 ? 1 : 0.5) : 0;
+    this.flashEl.style.opacity = String(this.flash * flicker * 0.45);
+    this.sun.intensity = v.sun;
+    this.hemi.intensity = v.hemi + this.flash * flicker * 2.5;
+    this.cloudMat.color.copy(v.cloud); this.cloudMat.emissive.copy(v.cloud);
+    this.clouds.forEach((c, i) => { c.visible = i < Math.round(v.cover * this.clouds.length); });
+    this.terrainU.uWet.value = v.wet;
+    if (this.waterU.uRain) this.waterU.uRain.value = v.wet;
+    // rain
+    const n = Math.floor(RAIN_N * v.rain);
+    this.rain.geometry.setDrawRange(0, n * 2);
+    if (n > 0) {
+      const wind = 3 + v.storm * 6, fall = 26 + v.storm * 10;
+      const d = this.drops, pos = this.rain.geometry.getAttribute('position') as THREE.BufferAttribute;
+      const arr = pos.array as Float32Array;
+      for (let i = 0; i < n; i++) {
+        const j = i * 3;
+        d[j + 1] -= fall * dt;
+        d[j] += wind * dt;
+        if (d[j + 1] < 0) { d[j + 1] += 24; d[j] = (Math.random() - 0.5) * 56; d[j + 2] = (Math.random() - 0.5) * 56; }
+        if (d[j] > 28) d[j] -= 56;
+        const o = i * 6;
+        arr[o] = d[j]; arr[o + 1] = d[j + 1]; arr[o + 2] = d[j + 2];
+        arr[o + 3] = d[j] - wind * 0.05; arr[o + 4] = d[j + 1] + 0.85; arr[o + 5] = d[j + 2];
+      }
+      pos.needsUpdate = true;
+      this.rain.position.set(this.rig.target.x, 0, this.rig.target.z);
     }
   }
 
@@ -162,9 +256,11 @@ export class View {
     mat.onBeforeCompile = sh => {
       Object.assign(sh.uniforms, U);
       sh.vertexShader = 'varying vec3 vWP;\n' + sh.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>\nvWP=(modelMatrix*vec4(transformed,1.0)).xyz;');
-      sh.fragmentShader = 'uniform float uGrid,uW,uRangeOn;uniform vec3 uRange;uniform vec4 uSel;varying vec3 vWP;\n' + sh.fragmentShader.replace(
+      sh.fragmentShader = 'uniform float uGrid,uW,uRangeOn,uWet;uniform vec3 uRange;uniform vec4 uSel;varying vec3 vWP;\n' + sh.fragmentShader.replace(
         '#include <dithering_fragment>',
         `#include <dithering_fragment>
+        gl_FragColor.rgb *= 1.0 - uWet * 0.17;
+        gl_FragColor.rgb = mix(gl_FragColor.rgb, gl_FragColor.rgb * vec3(0.9, 0.97, 1.06), uWet * 0.6);
         vec2 gp=vWP.xz+uW*0.5;
         vec2 f=abs(fract(gp)-0.5);
         float inMap=step(0.0,gp.x)*step(0.0,gp.y)*step(gp.x,uW)*step(gp.y,uW);
@@ -204,7 +300,7 @@ export class View {
     tex.magFilter = tex.minFilter = THREE.LinearFilter;
     tex.needsUpdate = true;
     this.waterU = THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
-      uDist: { value: null }, uTime: { value: 0 }, uW: { value: W },
+      uDist: { value: null }, uTime: { value: 0 }, uW: { value: W }, uRain: { value: 0 },
       uDeep: { value: new THREE.Color('#3f9fd8') }, uShallow: { value: new THREE.Color('#7fd6ef') }, uFoam: { value: new THREE.Color('#ffffff') },
     }]);
     this.waterU.uDist.value = tex;
@@ -216,7 +312,7 @@ export class View {
 void main(){vec4 wp=modelMatrix*vec4(position,1.0);vXZ=wp.xz;vec4 mvPosition=viewMatrix*wp;gl_Position=projectionMatrix*mvPosition;
 #include <fog_vertex>
 }`,
-      fragmentShader: `uniform sampler2D uDist;uniform float uTime,uW;uniform vec3 uDeep,uShallow,uFoam;varying vec2 vXZ;
+      fragmentShader: `uniform sampler2D uDist;uniform float uTime,uW,uRain;uniform vec3 uDeep,uShallow,uFoam;varying vec2 vXZ;
 #include <common>
 #include <fog_pars_fragment>
 void main(){
@@ -228,7 +324,13 @@ void main(){
   float foam=1.0-step(0.15+0.03*sin(uTime*1.6),d+wob);
   float band=step(0.88,sin(d*30.0-uTime*1.8))*step(d,0.4)*step(0.18,d);
   float rip=step(0.93,sin(vXZ.x*0.9+sin(vXZ.y*0.6+uTime*0.5)*2.2+uTime*0.6)*sin(vXZ.y*1.3-uTime*0.4))*smoothstep(0.3,0.7,d);
-  c=mix(c,uFoam,max(foam,max(band*0.55,rip*0.6)));
+  c*=1.0-uRain*0.18;
+  vec2 cell=floor(vXZ*2.5);
+  float h=fract(sin(dot(cell,vec2(12.9898,78.233)))*43758.5453);
+  float ring=fract(uTime*0.9+h);
+  float rd=length(fract(vXZ*2.5)-0.5);
+  float drop=step(abs(rd-ring*0.45),0.035)*(1.0-ring)*step(h,max(uRain-0.1,0.0)*0.7);
+  c=mix(c,uFoam,max(foam,max(band*0.55,max(rip*0.6,drop*0.7))));
   gl_FragColor=vec4(c,1.0);
   #include <colorspace_fragment>
   #include <fog_fragment>
@@ -480,6 +582,7 @@ void main(){
       if (v.bob) { v.bob.position.y = -0.05 + Math.sin(this.time * 1.8 + v.b.id) * 0.04; v.bob.rotation.z = Math.sin(this.time * 1.3 + v.b.id) * 0.06; }
     }
     this.waterU.uTime.value = this.time;
+    this.updateWeather(dt);
     for (const c of this.clouds) { c.position.x += dt * c.userData.v; if (c.position.x > 90) c.position.x = -90; }
     this.rig.update(dt);
     // shadow follows the camera target

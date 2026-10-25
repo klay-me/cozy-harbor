@@ -143,6 +143,13 @@ svg { flex: none; }
 .menu h3 { margin: 0 0 4px; font-family: var(--display); font-weight: 400; font-size: 26px; }
 .menu button { border: 2px solid #e6d8bd; background: #fff; border-radius: 12px; padding: 9px; font-weight: 700; text-align: left; }
 .menu button:hover { border-color: var(--ink); }
+.icon-btn { display: grid; place-items: center; padding: 8px 10px !important; }
+.icon-btn svg { width: 22px; height: 22px; }
+.chip.weather i { color: var(--ink-soft); font-weight: 500; }
+.settings { display: grid; grid-template-columns: auto 1fr; gap: 8px 10px; align-items: center; padding: 6px 2px 8px; font-size: 13px; font-weight: 600; }
+.settings input[type=range] { width: 100%; accent-color: var(--coral); }
+.settings select { grid-column: 1 / -1; font: inherit; font-weight: 500; padding: 7px; border-radius: 10px; border: 2px solid #e6d8bd; background: #fff; color: var(--ink); }
+.settings label[for=rotMode] { grid-column: 1 / -1; margin-top: 2px; }
 .menu .help p { margin: 4px 0; font-size: 13px; line-height: 1.5; }
 .fail { position: fixed; inset: 0; display: grid; place-items: center; padding: 16px; text-align: center; font-size: 16px; }
 
@@ -166,4 +173,8 @@ svg { flex: none; }
   .info { left: max(10px, env(safe-area-inset-left, 0px)); right: max(10px, env(safe-area-inset-right, 0px)); width: auto; top: auto; bottom: calc(env(safe-area-inset-bottom, 0px) + 190px); max-height: 44vh; z-index: 4; }
   .speed button { padding: 6px 7px; font-size: 12px; }
   .menu-btn { padding: 9px 10px; font-size: 12px; }
+  .chip.weather i { display: none; }
 }
+
+#hud { position: relative; z-index: 2; }
+.flash { position: fixed; inset: 0; background: #f4f8ff; opacity: 0; pointer-events: none; z-index: 1; }
