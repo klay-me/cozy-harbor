@@ -98,19 +98,45 @@ export class World {
 
   /** flood fill from the southern sea edge so rivers and lakes count as inland water */
   private markOcean() {
-    const W = this.W, q: number[] = [];
-    for (let x = 0; x < W; x++) { const i = (W - 1) * W + x; if (this.tiles[i] === Tile.Water) { this.ocean[i] = 1; q.push(i); } }
-    while (q.length) {
-      const i = q.pop()!, x = i % W, z = (i / W) | 0;
-      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    const W = this.W, N = W * W;
+    const nb = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    // distance (in tiles) from each water tile to the nearest land
+    const dist = new Int32Array(N).fill(1 << 20);
+    const q: number[] = [];
+    for (let i = 0; i < N; i++) if (this.tiles[i] !== Tile.Water) { dist[i] = 0; q.push(i); }
+    for (let h = 0; h < q.length; h++) {
+      const i = q[h], x = i % W, z = (i / W) | 0;
+      for (const [dx, dz] of nb) {
         const nx = x + dx, nz = z + dz;
         if (!this.inside(nx, nz)) continue;
         const k = nz * W + nx;
-        // the river mouth: only wide water counts as sea, so stop where the channel narrows
-        if (this.ocean[k] || this.tiles[k] !== Tile.Water) continue;
-        if (nz < W * 0.55) continue;
-        this.ocean[k] = 1; q.push(k);
+        if (dist[k] > dist[i] + 1) { dist[k] = dist[i] + 1; q.push(k); }
       }
+    }
+    // the sea: open water reachable from the southern edge without squeezing through a narrow channel
+    const open: number[] = [];
+    for (let x = 0; x < W; x++) { const i = (W - 1) * W + x; if (this.tiles[i] === Tile.Water) { this.ocean[i] = 1; open.push(i); } }
+    for (let h = 0; h < open.length; h++) {
+      const i = open[h], x = i % W, z = (i / W) | 0;
+      for (const [dx, dz] of nb) {
+        const nx = x + dx, nz = z + dz;
+        if (!this.inside(nx, nz)) continue;
+        const k = nz * W + nx;
+        if (this.ocean[k] || dist[k] < 3) continue;
+        this.ocean[k] = 1; open.push(k);
+      }
+    }
+    // then the shallow band along the coast (not into rivers: only tiles touching the open sea twice over)
+    for (let pass = 0; pass < 2; pass++) {
+      const add: number[] = [];
+      for (let i = 0; i < N; i++) {
+        if (this.ocean[i] || this.tiles[i] !== Tile.Water) continue;
+        const x = i % W, z = (i / W) | 0;
+        let n = 0;
+        for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) if (this.inside(x + dx, z + dz) && this.ocean[(z + dz) * W + x + dx]) n++;
+        if (n >= 3) add.push(i);
+      }
+      for (const i of add) this.ocean[i] = 1;
     }
   }
 
