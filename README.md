@@ -157,6 +157,17 @@ uv venv --python 3.11 .blender && uv pip install --python .blender/bin/python bp
 
 开发时打开 `#gallery`（比如 `http://localhost:5173/#gallery`）可以把所有模型排在一起看，`#gallery-snow`、`#gallery-night` 看积雪和夜景。
 
+`#gallery-lines` 按升级线逐行比较模型，每行左侧有农舍和居民作尺度参照；半透明格子按 `data.ts` 的当前占地绘制，每格 1 单位。拖动旋转、右键平移、滚轮缩放，空格暂停动画，`R` 重置全景。画廊与游戏共用动画规则，`-pose` 保留静态摆动姿态检查。
+
+```bash
+node tools/check-models.mjs                           # 尺寸、门高、动画与烟囱基准
+node tools/test/check-models.mjs                      # 检查测量与警告阈值
+npm run build
+python3 tools/test/gallery-shot.py fishery hospital   # 3 个全景 + 指定模型截图
+```
+
+截图保存在已忽略的 `tools/test/shots/`。截图脚本需要 Python Playwright 和 Chromium，可用 `pip install playwright && python3 -m playwright install chromium` 安装。检查脚本默认报告既有尺寸警告；加 `--strict` 会在有警告时返回失败。`XZ` 包围盒包含动画部件的静止姿态，不含描边和运动扫掠；模型名 `house` 会展开为各阶层的四种住宅。
+
 ## 后续可以做的
 
 - 换成 Blender 做的 glTF 模型
