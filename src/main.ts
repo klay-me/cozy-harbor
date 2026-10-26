@@ -1,5 +1,6 @@
 import './style.css';
 import { Game } from './sim/game';
+import { DEFAULT_MAP } from './sim/maps';
 import { BUILDINGS, BuildingId } from './sim/data';
 import { View } from './render/view';
 import { Hud, Tool } from './ui/hud';
@@ -10,8 +11,6 @@ import type { RotateMode } from './render/camera';
 
 const SAVE_KEY = 'cozy-harbor-save-v2';
 
-/** the hand-picked harbour map (fixed maps are designed per seed) */
-const MAP_SEED = 11;
 
 async function boot() {
   const stage = document.getElementById('stage')!;
@@ -58,7 +57,7 @@ async function boot() {
     tool: t => setTool(t),
     speed: s => { game.speed = s; },
     save: () => save(true),
-    newGame: () => start(new Game(MAP_SEED)),
+    newGame: () => start(new Game(DEFAULT_MAP)),
     upgrade: b => game.upgrade(b),
     upgradeAll: b => game.upgradeAll(b.tier),
     demolish: b => { game.demolish(b.x, b.z); select(null); },
@@ -120,7 +119,7 @@ async function boot() {
   // ---------- load ----------
   let saved: string | null = null;
   try { saved = localStorage.getItem(SAVE_KEY); } catch { /* storage blocked */ }
-  start((saved && Game.load(saved)) || new Game(MAP_SEED));
+  start((saved && Game.load(saved)) || new Game(DEFAULT_MAP));
   setInterval(() => save(false), 30000);
 
   // ---------- input ----------

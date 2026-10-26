@@ -1,4 +1,5 @@
-// Tile map: terrain types, trees, and procedural generation from a seed.
+// Tile map: terrain types, trees, ore. Either read from a fixed map (sim/maps) or generated from a seed.
+import { MAPS, MapId } from './maps';
 
 export enum Tile { Grass = 0, Sand = 1, Water = 2, Rock = 3 }
 
@@ -39,12 +40,16 @@ export class World {
   /** 2x2 mineral patches (top-left corner) */
   readonly patches: { x: number; z: number; kind: number }[] = [];
 
-  constructor(W: number, readonly seed: number) {
+  /** a fixed map by id, or a random map of size W from a seed */
+  constructor(W: number, readonly seed: number, readonly mapId?: MapId) {
+    const rows = mapId ? MAPS[mapId].rows : null;
+    if (rows) W = rows.length;
     this.W = W;
     this.tiles = new Uint8Array(W * W);
     this.trees = new Uint8Array(W * W);
     this.deposits = new Uint8Array(W * W);
     this.ocean = new Uint8Array(W * W);
+    if (rows) { this.depot = this.readRows(rows); return; }
     const r = rng(seed);
     const coastBase = W * 0.7;
     const riverX0 = W * (0.55 + r() * 0.12);
@@ -96,6 +101,33 @@ export class World {
     }
     this.markOcean();
     this.placeDeposits(r);
+  }
+
+  /** parse a fixed map (legend in sim/maps/index.ts); returns the harbour's top-left corner */
+  private readRows(rows: string[]) {
+    const W = this.W;
+    let depot: { x: number; z: number } | null = null;
+    rows.forEach((row, z) => {
+      if (row.length !== W) throw new Error(`map row ${z} has ${row.length} tiles, expected ${W}`);
+      for (let x = 0; x < W; x++) {
+        const ch = row[x], i = z * W + x;
+        this.tiles[i] = ch === '~' || ch === '=' ? Tile.Water : ch === '^' ? Tile.Rock : ch === ':' ? Tile.Sand : Tile.Grass;
+        if (ch === '~') this.ocean[i] = 1;
+        if (ch === 't') this.trees[i] = 1; else if (ch === 'p') this.trees[i] = 2;
+        if (ch === 'i') this.deposits[i] = 1; else if (ch === 'c') this.deposits[i] = 2;
+        if (ch === 'H' && !depot) depot = { x, z };
+      }
+    });
+    // ore patches: 2x2 blocks, read left to right, top to bottom
+    const used = new Uint8Array(W * W);
+    for (let z = 0; z < W - 1; z++) for (let x = 0; x < W - 1; x++) {
+      const kind = this.deposits[z * W + x];
+      if (!kind || used[z * W + x]) continue;
+      for (let j = 0; j < 2; j++) for (let i = 0; i < 2; i++) used[(z + j) * W + x + i] = 1;
+      this.patches.push({ x, z, kind });
+    }
+    if (!depot) throw new Error('map has no harbour (H)');
+    return depot;
   }
 
   /** flood fill from the southern sea edge so rivers and lakes count as inland water */

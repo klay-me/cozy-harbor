@@ -2,7 +2,9 @@ import { Game } from '../../src/sim/game';
 import { BUILDINGS, BuildingId, TECH_IDS, TECHS, GOOD_IDS, TierId } from '../../src/sim/data';
 import { Tile } from '../../src/sim/world';
 
-const g = new Game(Number(process.argv[2] ?? 7));
+// map id (default: the fixed map) or a numeric seed for a random map
+const arg = process.argv[2] ?? 'harbor';
+const g = new Game(isNaN(Number(arg)) ? arg as any : Number(arg));
 const W = g.W, d = g.world.depot;
 const L = (...a: any[]) => console.log(...a);
 // grid roads every 5 tiles around the depot

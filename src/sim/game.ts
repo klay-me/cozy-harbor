@@ -1,4 +1,5 @@
 import { World, Tile } from './world';
+import { MapId, isMapId } from './maps';
 import {
   BUILDINGS, BuildingId, BuildingDef, GOOD_IDS, GoodId, GOODS, TIERS, TIER_IDS, TierId, ServiceId, SERVICES, Cost,
   START, REFUND, BUY_MARKUP, BRIDGE_COST, MAP_SIZE, WEATHER, WeatherId, Era, ERAS, TECHS, TECH_IDS, TechId, TechEffect,
@@ -174,9 +175,10 @@ export class Game {
   private slowT = 0;
   private flags = new Set<string>();
 
-  constructor(seed: number) {
-    this.world = new World(MAP_SIZE, seed);
-    this.W = MAP_SIZE;
+  /** a fixed map by id, or a random map from a numeric seed (old saves) */
+  constructor(map: MapId | number) {
+    this.world = typeof map === 'number' ? new World(MAP_SIZE, map) : new World(0, 0, map);
+    this.W = this.world.W;
     this.occ = new Int32Array(this.W * this.W);
     this.pollution = new Float32Array(this.W * this.W);
     this.storage = {} as any; this.supply = {} as any;
@@ -1278,7 +1280,7 @@ export class Game {
     const roads: number[] = [];
     this.occ.forEach((o, i) => { if (o === -1) roads.push(i); });
     return JSON.stringify({
-      v: 2, seasonDays: this.seasonDays, seed: this.world.seed, weather: this.weather.cur, gold: this.gold, time: this.time, quest: this.questIndex, era: this.era,
+      v: 2, seasonDays: this.seasonDays, seed: this.world.seed, map: this.world.mapId, weather: this.weather.cur, gold: this.gold, time: this.time, quest: this.questIndex, era: this.era,
       research: { current: this.research.current, points: this.research.points, levels: this.research.levels, saved: this.research.saved },
       storage: this.storage, roads,
       b: [...this.buildings.values()].filter(b => b.type !== 'depot').map(b => [b.type, b.x, b.z, b.tier, b.residents, b.progress, b.paused ? 1 : 0, b.rot]),
@@ -1288,7 +1290,7 @@ export class Game {
     try {
       const s = JSON.parse(json);
       if (s.v !== 2) return null;
-      const g = new Game(s.seed);
+      const g = new Game(isMapId(s.map) ? s.map : s.seed);
       g.gold = s.gold; g.time = s.time; if (s.seasonDays) g.seasonDays = s.seasonDays; g.questIndex = s.quest; g.era = s.era ?? 1;
       if (s.research) { g.research.current = s.research.current; g.research.points = s.research.points; g.research.levels = s.research.levels ?? {}; g.research.saved = s.research.saved ?? {}; }
       if (s.weather && s.weather in WEATHER) { g.weather.cur = g.weather.prev = s.weather; }
