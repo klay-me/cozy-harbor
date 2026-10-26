@@ -1,10 +1,11 @@
 import { Game } from '../../src/sim/game';
-import { BUILDINGS, BuildingId, TECH_IDS, TECHS, GOOD_IDS, TierId } from '../../src/sim/data';
+import { BUILDINGS, BuildingId, TECH_IDS, TECHS, GOOD_IDS, GOODS, TierId } from '../../src/sim/data';
 import { Tile } from '../../src/sim/world';
 
 // map id (default: the fixed map) or a numeric seed for a random map
 const arg = process.argv[2] ?? 'haven';
-const g = new Game(isNaN(Number(arg)) ? arg as any : Number(arg));
+// BOT_MODE=sandbox for the old endless game
+const g = new Game(isNaN(Number(arg)) ? arg as any : Number(arg), (process.env.BOT_MODE as any) ?? 'survival');
 const W = g.W, d = g.world.depot;
 const L = (...a: any[]) => console.log(...a);
 // grid roads every 5 tiles around the depot
@@ -147,7 +148,7 @@ const plain: [BuildingId, () => number][] = [
   ['firestation', () => houses().length >= 6 ? 1 + Math.floor(houses().length / 16) : 0],
   ['herbalist', () => houses().length >= 8 && g.era < 3 ? 1 + Math.floor(houses().length / 18) : 0],
   ['police', () => g.era >= 2 ? Math.floor(houses().length / 20) : 0],
-  ['church', () => g.pop.peasant >= 50 && g.gold > 700 ? 1 : 0],
+  ['church', () => g.pop.peasant >= 50 ? 1 : 0],
   ['market', () => 1 + Math.floor(houses().length / 14)],
   ['warehouse', () => Math.floor(houses().length / 18)],
   ['tavern', () => g.era >= 2 && g.pop.worker > 0 ? 1 + Math.floor(houses().length / 16) : 0],
@@ -178,7 +179,7 @@ function demandRates() {
     const foods = T.foods.filter(f => g.unlocked(producerOf[f] as any));
     for (const f of foods) dem[f] = (dem[f] ?? 0) + n * T.hunger / 4 / foods.length / FOODS[f].fill * (g.season === 'summer' || g.season === 'autumn' ? 2.2 : 1.4) * (f === 'fish' ? 1.4 : 1);
   }
-  for (const [f, r] of Object.entries(g.heatBase)) if (f !== 'power') dem[f] = (dem[f] ?? 0) + (r as number) * 0.5;
+  for (const [f, r] of Object.entries(g.heatBase)) if (f !== 'power') dem[f] = (dem[f] ?? 0) + (r as number) * (g.mode === 'survival' ? 0.5 + g.chill(g.dayF) * 1.2 : 0.5);
   if (!(g.heatNeed as any).firewood) dem.firewood = (dem.firewood ?? 0) + 1;
   // building materials: a steady trickle
   dem.planks = (dem.planks ?? 0) + 3;
@@ -192,6 +193,10 @@ const minutes = Number(process.argv[3] ?? 120);
 let lastEra = 1;
 for (let t = 0; t < minutes * 60; t += 10) {
   g.advance(10);
+  // BOT_RICH=1: a player who never runs out of money (to test the late climate past the bot's weak economy)
+  if (process.env.BOT_RICH && g.gold < 5000) g.gold = 5000;
+  if (g.over && !g.won) { L(`GAME OVER day ${g.day + 1}: ${g.over.reason} hope=${g.hope.toFixed(0)} disc=${g.discontent.toFixed(0)} deaths=${g.deaths}`); break; }
+  if (g.over?.won) { L(`WON day ${g.day + 1}: ${g.over.reason}`); g.continueEndless(); }
   // research cheapest available
   if (!g.research.current) {
     const opts = TECH_IDS.filter(x => g.canResearch(x)).sort((a, b) => (g.techCost(a) - g.techCost(b)) || (TECHS[a].era - TECHS[b].era));
@@ -229,8 +234,15 @@ for (let t = 0; t < minutes * 60; t += 10) {
     if ((hs.length < 6 || short || (full && g.happyAvg > 55)) && g.storage.planks >= (short || hs.length < 6 ? 2 : 6) && (g.era < 2 || g.storage.bricks > 6 || hs.length < 20) && g.gold > 60) build('house');
   }
   // trade: sell surplus when short of gold, buy building materials when stuck
+  if (!g.harbourFrozen) {
   if (g.gold < 300) for (const k of GOOD_IDS) if (g.storage[k] > g.cap * 0.6) g.sell(k, Math.floor(g.storage[k] - g.cap * 0.4));
-  for (const k of ['planks', 'bricks', 'steel', 'tools', 'cement'] as const) if (g.storage[k] < 6 && g.gold > 1500) g.buy(k, 10);
+  // deep in debt: sell down to a quarter of storage, and stop building houses below
+  if (g.gold < 0) for (const k of GOOD_IDS) if (g.storage[k] > g.cap * 0.25) g.sell(k, Math.floor(g.storage[k] - g.cap * 0.25));
+  if (g.heatingOn) for (const k of ['firewood', 'coal'] as const) if (g.heatNeed[k] && g.storage[k] < 10 && g.gold > 200) g.buy(k, 20);
+  for (const k of ['planks', 'bricks', 'steel', 'tools', 'cement'] as const) if (GOODS[k].era <= g.era && g.storage[k] < 6 && g.gold > 1500) g.buy(k, 10);
+  // hungry: buy what each tier eats
+  if (g.foodDays() < 1.5 && g.gold > 300) for (const t of TIER_IDS_) if (g.pop[t]) for (const f of TIERS[t].foods) if (GOODS[f].era <= g.era && g.storage[f] < 15) g.buy(f, 15);
+  }
   // upgrades: keep some lower tier as workforce
   const maxShare: Record<TierId, number> = { peasant: g.era >= 2 ? 0.5 : 0, worker: g.era >= 3 ? 0.55 : 0, technician: g.era >= 4 ? 0.5 : 0, citizen: 0 };
   for (const b of houses()) {
@@ -247,6 +259,16 @@ for (let t = 0; t < minutes * 60; t += 10) {
     if (wk && g.workforce[wk.tier].have - g.workforce[wk.tier].need < wk.n) continue;
     if (g.upgrade(b, true)) { built[g.at(b.x, b.z)!.type] = 1; break; }
   }
+  // like a player who watches the coverage overlay: put a herbalist or fire station next to uncovered homes
+  if (t % 20 === 0) for (const [prot, type] of [['health', 'herbalist'], ['fire', 'firestation']] as const) {
+    const bare = houses().filter(h => h.connected && h.residents > 0 && !h.protect.has(prot));
+    if (!bare.length || !g.canAfford(BUILDINGS[type].cost) || g.gold < BUILDINGS[type].cost.gold + 60) continue;
+    // the spot that covers the most bare homes
+    const r = BUILDINGS[type].radius ?? 6;
+    const best = spots(type).slice(0, 400).map(([x, z]) => [x, z, bare.filter(h => Math.hypot(h.x - x, h.z - z) < r).length] as const).sort((a, b) => b[2] - a[2])[0];
+    if (process.env.BOT_DEBUG) L('cover', prot, bare.length, best);
+    if (best && best[2] >= 2 && g.place(type, best[0], best[1])) built[type] = (built[type] ?? 0) + 1;
+  }
   // expand roads when out of space
   if (spots('house').length < 3 && ringR < 6) { ringR++; gridRoads(ringR); }
   if (t % 60 === 0) for (const b of g.buildings.values()) if (!b.connected && b.type !== 'house') connect(b);
@@ -254,9 +276,10 @@ for (let t = 0; t < minutes * 60; t += 10) {
   if (t % 120 === 0 || g.era !== lastEra) {
     lastEra = g.era;
     const st = Object.fromEntries(GOOD_IDS.filter(k => g.storage[k] > 0.5).map(k => [k, Math.round(g.storage[k])]));
-    L(`t=${(g.time / 60).toFixed(0)}m y${g.year} ${g.season} era${g.era} gold=${Math.round(g.gold)} net=${Math.round(g.taxRate - g.upkeepRate)} pop=${JSON.stringify(g.pop)} happy=${g.happyAvg.toFixed(0)} pol=${g.pollutionAvg.toFixed(1)} power=${g.power.gen.toFixed(0)}/${g.power.must.toFixed(0)}+${g.power.boost.toFixed(0)}(${Math.round(g.power.boostRatio*100)}%) snap=${g.coldSnap?1:0} t=${g.temp.toFixed(0)} rp=${g.research.rate.toFixed(0)} cap=${g.cap} q=${g.questIndex}`);
+    L(`t=${(g.time / 60).toFixed(0)}m y${g.year} ${g.season} era${g.era} gold=${Math.round(g.gold)} net=${Math.round(g.taxRate - g.upkeepRate)} pop=${JSON.stringify(g.pop)} happy=${g.happyAvg.toFixed(0)} pol=${g.pollutionAvg.toFixed(1)} power=${g.power.gen.toFixed(0)}/${g.power.must.toFixed(0)}+${g.power.boost.toFixed(0)}(${Math.round(g.power.boostRatio*100)}%) day=${g.day + 1} ${g.seasonName()} blz=${g.blizzard?1:0} t=${g.temp.toFixed(0)} hope=${g.hope.toFixed(0)} disc=${g.discontent.toFixed(0)} deaths=${g.deaths} upk×${g.upkeepScale.toFixed(2)} rp=${g.research.rate.toFixed(0)} cap=${g.cap} q=${g.questIndex}`);
     L('   store', JSON.stringify(st));
     const wf = Object.fromEntries(Object.entries(g.workforce).map(([k, v]) => [k, `${v.have}/${v.need}`]));
+    L('   bare', 'health', houses().filter(h => h.residents && !h.protect.has('health')).length, 'fire', houses().filter(h => h.residents && !h.protect.has('fire')).length, 'plague', houses().filter(h => h.plague > 0).length);
     L('   workforce', JSON.stringify(wf), 'houses', houses().length, 'blds', JSON.stringify(Object.fromEntries(Object.keys(built).map(k => [k, n(k as BuildingId)]))));
     const bad = [...g.buildings.values()].filter(b => b.type !== 'house' && b.status && !b.status.startsWith('运转') && !b.status.startsWith('研究') && !b.status.startsWith('发电') && b.status !== '').map(b => b.type + ':' + b.status);
     if (bad.length) L('   issues', [...new Set(bad)].join(' | '));

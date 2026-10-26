@@ -245,7 +245,9 @@ export class Env {
     });
     // ---- seasons ----
     const sp = game.seasonPos;
-    const s0 = SEASON_IDS[Math.floor(sp) % 4], s1 = SEASON_IDS[(Math.floor(sp) + 1) % 4];
+    // the season as the town lives it (in survival a cold spring stays winter, a cold summer is only a spring-like thaw)
+    const look = (p: number) => { const id = game.seasonAt(p); return id === 'summer' && game.seasonName(p) === '回暖' ? 'spring' : id; };
+    const s0 = look(sp), s1 = look(Math.floor(sp) + 1.5);
     const sk = THREE.MathUtils.smoothstep(sp - Math.floor(sp), 0.8, 1);
     const L0 = SEASON_LOOK[s0], L1 = SEASON_LOOK[s1];
     const lc = (a: string, b: string) => new THREE.Color(a).lerp(new THREE.Color(b), sk);
@@ -255,7 +257,9 @@ export class Env {
     ENV.uLeafC.value.copy(lc(L0.c, L1.c));
     ENV.uLeafCMix.value = L0.cmix + (L1.cmix - L0.cmix) * sk;
     const winter = (s0 === 'winter' ? 1 - sk : 0) + (s1 === 'winter' ? sk : 0);
-    const snowTarget = winter * (0.5 + this.w.snow * 0.45);
+    // frost also settles on any day cold enough, whatever the season
+    const frost = THREE.MathUtils.clamp((1 - game.temp) / 12, 0, 1) * 0.55;
+    const snowTarget = Math.max(winter * (0.5 + this.w.snow * 0.45), frost);
     this.snowCover += (snowTarget - this.snowCover) * (1 - Math.exp(-dt * 0.25));
     ENV.uSnow.value = this.snowCover;
     ENV.uWet.value = this.w.wet;

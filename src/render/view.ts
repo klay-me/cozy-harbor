@@ -677,7 +677,7 @@ export class View {
       }
     }
     this.rig.update(dt);
-    this.decor?.setSeason(g.seasonPos);
+    this.decor?.setSeason(g.season === 'winter' && g.calSeason !== 'winter' ? 3.5 : g.seasonPos);
     this.landmarks?.update(dt);
     this.env.update(dt, g, this.rig.target, this.terrain, this.scene.fog as THREE.Fog, this.rig.dist, this.rig.camera);
     const fogFar = (this.scene.fog as THREE.Fog).far, cam = this.rig.camera.position;

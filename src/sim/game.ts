@@ -7,6 +7,7 @@ import {
   DAY_LENGTH, SEASON_DAYS, START_HOUR, SEASONS, SEASON_IDS, SeasonId,
   SERVICE_ALSO, familyOf, FOODS, FoodId, ProtectId, FIRE, PLAGUE, CRIME, STRIKE, HUNGER, PER_DAY, DEBT,
   ELEC_BOOST, LIGHT, COLD_STORE, SPOIL, SPOIL_SUMMER, COLD_SNAP, DIFFICULTY, DifficultyId,
+  ModeId, MODES, SURVIVAL, FREEZE, BLIZZARD_OUTDOOR, OUTDOOR, CROP_TEMP, CROPS, SEA_ICE, MOOD, SCALE_UPKEEP, GLUT,
 } from './data';
 
 export interface Bld {
@@ -147,6 +148,25 @@ export class Game {
    */
   power = { gen: 0, use: 0, ratio: 1, must: 0, boost: 0, boostRatio: 1, light: 0, cold: 0 };
   difficulty: DifficultyId = 'normal';
+  /** 百日求生 (colder every day, a goal, can be lost) or the old endless sandbox */
+  mode: ModeId = 'survival';
+  /** 希望 and 不满, 0..100 (after 冰汽时代) */
+  hope = MOOD.hope0;
+  discontent = MOOD.disc0;
+  /** the game ended: lost, or won (then it carries on as endless once the player closes the card) */
+  over: { won: boolean; reason: string } | null = null;
+  /** the 100 days were survived; the town is now in endless mode */
+  won = false;
+  /** people who froze, starved or died of plague (survival) */
+  deaths = 0;
+  /** the most people the town ever had */
+  peakPop = 0;
+  /** what the town lost over the current winter, for the spring report */
+  winterLog = { deaths: 0, minTemp: 99, left: 0 };
+  /** how much of each good was sold lately: the trade ship pays less for a glut */
+  glut: Partial<Record<GoodId, number>> = {};
+  /** buildings that cost upkeep, and what the town's size adds to it */
+  upkeepScale = 1;
   research = { current: null as TechId | null, points: 0, rate: 0, levels: {} as Partial<Record<TechId, number>>, saved: {} as Partial<Record<TechId, number>> };
   mods = emptyMods();
   pollution: Float32Array;
@@ -187,7 +207,8 @@ export class Game {
   private flags = new Set<string>();
 
   /** a fixed map by id, or a random map from a numeric seed (old saves) */
-  constructor(map: MapId | number) {
+  constructor(map: MapId | number, mode: ModeId = 'survival') {
+    this.mode = mode;
     this.world = typeof map === 'number' ? new World(MAP_SIZE, map) : new World(0, 0, map);
     this.W = this.world.W;
     this.occ = new Int32Array(this.W * this.W);
@@ -198,6 +219,7 @@ export class Game {
     const d = this.world.depot;
     this.addBuilding('depot', d.x, d.z, this.bestRot('depot', d.x, d.z));
     this.refresh();
+    if (mode === 'survival') this.notify(`百日求生：撑过 ${SURVIVAL.days} 天。开头四季还正常，之后一年比一年冷，后来就没有夏天了，只剩短暂的回暖；暴风雪会越来越长，第 ${SURVIVAL.greatFrom} 天起还有一场大寒潮。顶栏的希望归零或不满到 100 就会失败`, 'info', { cat: 'milestone', icon: 'cold' });
   }
 
   // ---------- calendar ----------
@@ -212,7 +234,33 @@ export class Game {
     this.lastDay = this.day; this.lastSeason = this.season;
   }
   get seasonPos() { return (this.totalHours / 24) / this.seasonDays; }
-  get season(): SeasonId { return SEASON_IDS[Math.floor(this.seasonPos) % 4]; }
+  /** days since the start, with the fraction */
+  get dayF() { return this.totalHours / 24; }
+  /** the season the calendar says */
+  get calSeason(): SeasonId { return SEASON_IDS[Math.floor(this.seasonPos) % 4]; }
+  /**
+   * The season the town lives in. In survival the cold eats the calendar: a spring or autumn that is too cold
+   * stays winter, and during the great cold everything is winter.
+   */
+  get season(): SeasonId { return this.seasonAt(this.seasonPos); }
+  seasonAt(seasonPos: number): SeasonId {
+    const i = Math.floor(seasonPos) % 4, cal = SEASON_IDS[i];
+    if (this.mode !== 'survival') return cal;
+    if (this.greatK(seasonPos * this.seasonDays) > 0.2) return 'winter';
+    if ((cal === 'spring' || cal === 'autumn') && this.seasonMean(seasonPos) < SURVIVAL.winterBelow) return 'winter';
+    return cal;
+  }
+  /** mid temperature of the season seasonPos falls in, without weather, day and night or cold snaps */
+  seasonMean(seasonPos: number) {
+    const mid = Math.floor(seasonPos) + 0.5;
+    return SEASON_TEMP[Math.floor(mid) % 4] - (this.mode === 'survival' ? SURVIVAL.cool * this.chill(mid * this.seasonDays) : 0);
+  }
+  /** the season's name as players see it: a summer that never warms up is only a thaw */
+  seasonName(seasonPos = this.seasonPos) {
+    const s = this.seasonAt(seasonPos);
+    if (this.mode === 'survival' && s === 'summer' && this.seasonMean(seasonPos) < SURVIVAL.thawBelow) return '回暖';
+    return SEASONS[s].name;
+  }
   get year() { return Math.floor(this.seasonPos / 4) + 1; }
   get night() {
     const h = this.hour;
@@ -232,40 +280,86 @@ export class Game {
   get seasonLeft() { return (1 - this.seasonFrac) * this.seasonDays * DAY_LENGTH; }
   /** day of the current season, 1-based */
   get seasonDay() { return Math.floor(this.seasonFrac * this.seasonDays) + 1; }
-  /** temperature in °C: season curve, day and night, weather, and colder winters each year */
+  /** 0..1 how far the survival climate has cooled (all the way by the last day) */
+  chill(dayF: number) { return Math.max(0, Math.min(1, dayF / SURVIVAL.days)); }
+  /** 0..1 how deep into the great cold (大寒潮) this moment is */
+  greatK(dayF: number) {
+    if (this.mode !== 'survival') return 0;
+    const a = SURVIVAL.greatFrom - 1, e = SURVIVAL.days;
+    if (dayF < a) return 0;
+    if (dayF < e) return Math.min(1, (dayF - a) / 0.6);
+    return Math.max(0, 1 - (dayF - e) / SURVIVAL.greatEase);
+  }
+  get greatCold() { return this.greatK(this.dayF); }
+  get greatTemp() { return SURVIVAL.greatTemp * (0.5 + 0.5 * DIFFICULTY[this.difficulty].snap); }
+  /** temperature in °C: season curve, day and night, a climate that keeps cooling, cold snaps and the great cold */
   tempAt(seasonPos: number, hour: number) {
     const s = seasonPos - 0.5, i = Math.floor(s), f = s - i;
     const k = f * f * (3 - 2 * f);
     const a = SEASON_TEMP[((i % 4) + 4) % 4], b = SEASON_TEMP[(((i + 1) % 4) + 4) % 4];
     let t = a + (b - a) * k;
-    const year = Math.floor(seasonPos / 4);
-    t -= Math.min(COLDER_MAX, year * COLDER_PER_YEAR) * Math.max(0, Math.min(1, (12 - t) / 18));
-    t += 4 * Math.cos(((hour - 15) / 24) * Math.PI * 2);
+    const dayF = seasonPos * this.seasonDays;
+    if (this.mode === 'survival') t -= SURVIVAL.cool * this.chill(dayF);
+    else {
+      const year = Math.floor(seasonPos / 4);
+      t -= Math.min(COLDER_MAX, year * COLDER_PER_YEAR) * Math.max(0, Math.min(1, (12 - t) / 18));
+    }
+    const dn = Math.cos(((hour - 15) / 24) * Math.PI * 2);
+    t += 4 * dn;
     t -= this.snapDrop(seasonPos);
+    const g = this.greatK(dayF);
+    if (g > 0) t += (this.greatTemp + 1.5 * dn - t) * g;
     return t;
   }
-  /** the winter day (1-based) the cold snap falls on in a given year, or 0 for none */
-  snapDay(year: number) { return year < COLD_SNAP.fromYear ? 0 : 2 + (year * 5) % Math.max(1, this.seasonDays - 1); }
+  /** how many winter days the cold snap (暴风雪) lasts in a given year: longer as the survival climate cools */
+  snapLen(year: number) {
+    if (this.mode !== 'survival') return 1;
+    const winter = ((year - 1) * 4 + 3) * this.seasonDays;
+    return Math.max(1, Math.min(SURVIVAL.blizzardMax, this.seasonDays - 1, 1 + Math.floor(this.chill(winter) * 3.2)));
+  }
+  /** the winter day (1-based) the cold snap starts on in a given year, or 0 for none */
+  snapDay(year: number) {
+    if (year < COLD_SNAP.fromYear) return 0;
+    const len = this.snapLen(year);
+    return Math.min(2 + (year * 5) % Math.max(1, this.seasonDays - 1), this.seasonDays - len + 1);
+  }
   /** how many degrees the cold snap takes off at this point of the calendar (eases in and out over a few hours) */
   snapDrop(seasonPos: number) {
     if (Math.floor(seasonPos) % 4 !== 3) return 0;
+    if (this.greatK(seasonPos * this.seasonDays) > 0) return 0;
     const year = Math.floor(seasonPos / 4) + 1, sd = this.snapDay(year);
     if (!sd) return 0;
+    const len = this.snapLen(year);
     const d = (seasonPos % 1) * this.seasonDays - (sd - 1);
-    if (d < 0 || d >= 1) return 0;
-    const k = Math.min(1, d / 0.15, (1 - d) / 0.15);
+    if (d < 0 || d >= len) return 0;
+    const k = Math.min(1, d / 0.15, (len - d) / 0.15);
     return k * Math.min(COLD_SNAP.maxDrop, COLD_SNAP.drop + (year - COLD_SNAP.fromYear) * COLD_SNAP.perYear) * DIFFICULTY[this.difficulty].snap;
   }
   get coldSnap() { return this.snapDrop(this.seasonPos) > 0; }
+  /** a blizzard is raging: a cold snap or the great cold */
+  get blizzard() { return this.coldSnap || this.greatCold > 0.5; }
   private calcTemp() {
     const w = this.weather;
     const wt = WEATHER_TEMP[w.prev] + (WEATHER_TEMP[w.cur] - WEATHER_TEMP[w.prev]) * w.blend;
     return this.tempAt(this.seasonPos, this.hour) + wt;
   }
+  /** 0..1 how well crops grow at the current temperature (survival only) */
+  cropFactor() {
+    if (this.mode !== 'survival') return 1;
+    return Math.max(0, Math.min(1, (this.temp - CROP_TEMP.zero) / (CROP_TEMP.full - CROP_TEMP.zero)));
+  }
+  /** 0..1 how much of the harbour is still open water (survival only) */
+  seaOpen() {
+    if (this.mode !== 'survival' || this.temp >= SEA_ICE.from) return 1;
+    return Math.max(SEA_ICE.min, 1 - (1 - SEA_ICE.min) * (SEA_ICE.from - this.temp) / (SEA_ICE.from - SEA_ICE.iceAt));
+  }
   prodFactor(type: BuildingId) {
     const f = familyOf(type), w = WEATHER[this.weather.cur].prod, s = SEASONS[this.season].prod;
-    const ice = this.coldSnap ? COLD_SNAP.fishing[type] ?? 1 : 1;
-    return (w[type] ?? w[f] ?? 1) * (s[type] ?? s[f] ?? 1) * ice;
+    const ice = this.coldSnap ? COLD_SNAP.fishing[type] ?? 1 : f === 'fishery' ? this.seaOpen() : 1;
+    let k = (w[type] ?? w[f] ?? 1) * (s[type] ?? s[f] ?? 1) * ice;
+    if (this.blizzard && (OUTDOOR.has(type) || OUTDOOR.has(f))) k *= BLIZZARD_OUTDOOR;
+    if (CROPS.has(f)) k *= this.cropFactor();
+    return k;
   }
   /** the grid has a power station: optional draws (ELEC_BOOST, cold stores) switch on */
   get gridUp() { return this.era >= 3 && this.plants > 0; }
@@ -683,16 +777,26 @@ export class Game {
 
   // ---------- harbour trade ----------
   buyPrice(g: GoodId) { return Math.ceil(GOODS[g].price * BUY_MARKUP); }
+  /** what the trade ship pays for one more unit: less the more was sold lately */
+  sellPrice(g: GoodId) { return GOODS[g].price * Math.max(GLUT.floor, 1 - (this.glut[g] ?? 0) / GLUT.per); }
+  /** in survival the harbour freezes over in a blizzard: no trade ship comes until it passes */
+  get harbourFrozen() { return this.mode === 'survival' && this.blizzard; }
   sell(g: GoodId, n: number) {
+    if (this.harbourFrozen) { this.notify('暴风雪里港口封冻了，商船进不来，等风雪过去吧', 'warn'); return 0; }
     n = Math.min(n, Math.floor(this.storage[g]));
     if (n <= 0) { this.notify(`仓库里没有${GOODS[g].name}`, 'warn'); return 0; }
     this.storage[g] -= n;
-    this.gold += n * GOODS[g].price;
-    this.ledger.add(g, 'out', '卖给商船', n); this.ledger.add('gold', 'in', '卖给商船', n * GOODS[g].price);
+    // each unit sold lowers the price of the next a little
+    let pay = 0;
+    for (let i = 0; i < n; i++) { pay += this.sellPrice(g); this.glut[g] = (this.glut[g] ?? 0) + 1; }
+    pay = Math.round(pay);
+    this.gold += pay;
+    this.ledger.add(g, 'out', '卖给商船', n); this.ledger.add('gold', 'in', '卖给商船', pay);
     this.sfx.push('coin');
     return n;
   }
   buy(g: GoodId, n: number) {
+    if (this.harbourFrozen) { this.notify('暴风雪里港口封冻了，商船进不来，等风雪过去吧。所以风雪前要囤够燃料和食物', 'warn'); return 0; }
     if (GOODS[g].era > this.era) { this.notify(`${ERAS[GOODS[g].era].name}才有商船运${GOODS[g].name}`, 'warn'); return 0; }
     n = Math.min(n, Math.floor(this.cap - this.storage[g]), Math.floor(this.gold / this.buyPrice(g)));
     if (n <= 0) { this.notify(this.storage[g] >= this.cap - 1 ? '仓库已满' : '金币不够', 'warn'); return 0; }
@@ -874,12 +978,13 @@ export class Game {
   advance(seconds: number) { for (let t = 0; t < seconds; t += STEP) this.step(STEP); }
 
   private step(dt: number) {
+    if (this.over && !this.over.won) return;
     this.time += dt;
     this.stepWeather(dt);
     this.temp = this.calcTemp();
     this.ledger.tick(dt);
     this.slowT += dt;
-    if (this.slowT >= 1) { this.slowT = 0; this.replant(); this.computePollution(); this.checkEra(); this.checkQuest(); }
+    if (this.slowT >= 1) { this.slowT = 0; this.replant(); this.computePollution(); this.checkEra(); this.checkQuest(); this.upkeepScale = this.calcUpkeepScale(); }
 
     // ---- population & workforce (sick people stay home)
     TIER_IDS.forEach(t => { this.pop[t] = 0; });
@@ -905,7 +1010,7 @@ export class Game {
       const def = BUILDINGS[b.type];
       if (def.powerGen && b.connected && !b.paused) plants++;
       // idle workshops (no staff, no input, strike, fire) only cost a quarter
-      const fee = (def.workers && (!b.working || b.paused) ? def.upkeep * 0.25 : def.upkeep) * diff.upkeep;
+      const fee = (def.workers && (!b.working || b.paused) ? def.upkeep * 0.25 : def.upkeep) * diff.upkeep * this.upkeepScale;
       upkeep += fee;
       this.ledger.add('gold', 'out', `维护·${def.name}`, fee / 60 * dt);
       b.gen = 0;
@@ -965,7 +1070,7 @@ export class Game {
       const wf = this.prodFactor(b.type);
       if (wf === 0) {
         const sp = SEASONS[this.season].prod;
-        b.status = ((sp[b.type] ?? sp[familyOf(b.type)]) === 0) ? `${SEASONS[this.season].name}季休耕` : `${W.name}，暂停作业`;
+        b.status = ((sp[b.type] ?? sp[familyOf(b.type)]) === 0) ? `${SEASONS[this.season].name}季休耕` : CROPS.has(familyOf(b.type)) && this.cropFactor() === 0 ? '太冷了，庄稼不长' : `${W.name}，暂停作业`;
         b.working = false; continue;
       }
       if (def.needs === 'forest') {
@@ -1101,7 +1206,7 @@ export class Game {
     }
 
     // ---- houses: happiness, growth, sickness, tax
-    let tax = 0, happySum = 0, houses = 0, coldHouses = 0;
+    let tax = 0, happySum = 0, houses = 0, coldHouses = 0, hungryHouses = 0;
     const comfortSupply = (gs: GoodId[]) => gs.length ? gs.reduce((a, g) => a + (this.storage[g] >= 1 ? 1 : this.supply[g]), 0) / gs.length : 1;
     for (const b of this.buildings.values()) {
       if (b.type !== 'house') continue;
@@ -1160,7 +1265,7 @@ export class Game {
       // growth
       const hp = b.happy * 100;
       let target = !b.connected ? 0 : hp >= 60 ? T.cap : Math.max(1, Math.round(T.cap * Math.max(0.25, (hp - 10) / 50)));
-            if (b.coldT > 90) target = Math.min(target, Math.max(0, b.residents - 1));
+            if (b.coldT > (this.mode === 'survival' ? FREEZE.after : 90)) target = Math.min(target, Math.max(0, b.residents - 1));
       // long hunger: the household shrinks to what the food can feed
       if (b.hungerT > HUNGER.leaveSecs) target = Math.min(target, b.fed < 0.05 ? 0 : Math.ceil(T.cap * Math.min(1, b.fed / 0.8)));
       if (hp < 20 && b.connected) target = Math.min(target, Math.max(1, b.residents - 1));
@@ -1168,21 +1273,23 @@ export class Game {
       b.growT += dt;
       // nobody moves into a hungry, burning or sick street
       const pantry = T.foods.reduce((a, f) => a + this.storage[f] * FOODS[f].fill, 0);
-      const welcoming = (b.fed >= 0.9 && pantry >= T.hunger * 2 || this.pop[b.tier] < 12) && b.fire === 0 && b.plague === 0 && b.coldT < 30;
+      const welcoming = (b.fed >= 0.9 && pantry >= T.hunger * 2 || this.pop[b.tier] < 12 && b.hungerT < HUNGER.hungrySecs) && b.fire === 0 && b.plague === 0 && b.coldT < 30 && this.hope >= MOOD.noArrivals;
       if (b.residents < target && b.growT >= 4 && welcoming) { b.residents++; b.growT = 0; }
-      else if (b.residents > target && b.growT >= (b.hungerT > HUNGER.leaveSecs ? 12 : 6)) { b.residents--; b.growT = 0; if (b.hungerT > HUNGER.leaveSecs) this.flowLeft.hunger++; else if (b.coldT > 90) this.flowLeft.cold++; }
+      else if (b.residents > target && b.growT >= (b.hungerT > HUNGER.leaveSecs ? (this.mode === 'survival' ? FREEZE.starveSecs : 12) : b.coldT > 90 && this.mode === 'survival' ? FREEZE.secs : 6)) { b.residents--; b.growT = 0; if (b.hungerT > HUNGER.leaveSecs) { this.flowLeft.hunger++; this.lost(); } else if (b.coldT > 90) { this.flowLeft.cold++; this.lost(); } }
       if (b.residents < 0) b.residents = 0;
       if (b.residents === target) b.growT = Math.min(b.growT, 4);
       b.status = !b.connected ? '没有连上道路' : b.fire > 0 ? '着火了！' : b.plague > 0 ? '闹瘟疫，有人病倒了' : b.hungerT > HUNGER.leaveSecs ? '饿得受不了，有人要搬走' : b.hungerT > HUNGER.hungrySecs ? '吃不饱，干活没力气' : b.coldT > 30 ? '天太冷，有人生病了' : b.warm < 0.5 && heat ? '家里没有燃料取暖' : this.gold < 0 ? '领不到工钱' : hp >= 80 ? '生活美满' : hp >= 50 ? '还算满意' : '日子不好过';
-      const t1 = b.fire > 0 || b.hungerT > HUNGER.hungrySecs ? 0 : (b.residents - b.sick) * T.tax * diff.tax * (hp / 100) * (hp > 80 ? 1.2 : 1);
+      const t1 = b.fire > 0 || b.hungerT > HUNGER.hungrySecs ? 0 : (b.residents - b.sick) * T.tax * diff.tax * (hp / 100) * (hp > 80 ? 1.2 : 1) * this.taxMood;
       tax += t1;
       this.ledger.add('gold', 'in', `${T.name}税收`, t1 / 60 * dt);
       happySum += hp; houses++;
+      if (b.residents && b.hungerT > HUNGER.hungrySecs) hungryHouses++;
     }
     this.happyAvg = houses ? happySum / houses : 0;
+    this.stepMood(dt, houses ? coldHouses / houses : 0, houses ? hungryHouses / houses : 0);
     this.stepDisasters(dt);
     this.stepDay();
-    if (coldHouses > 0) this.once('cold' + this.year, `有 ${coldHouses} 户人家没有燃料取暖！快补充${this.era >= 3 ? '柴火或煤' : '柴火'}`, 'warn', 'cold');
+    if (coldHouses > 0) { if (this.mode === 'survival') this.throttle('coldHouses', 60, `有 ${coldHouses} 户人家没有燃料取暖，再冻下去会死人！快补充${this.era >= 3 ? '柴火或煤' : '柴火'}，或向商船买`, 'warn', undefined, 'cold'); else this.once('cold' + this.year, `有 ${coldHouses} 户人家没有燃料取暖！快补充${this.era >= 3 ? '柴火或煤' : '柴火'}`, 'warn', 'cold'); }
 
     // ---- research
     this.research.rate = rp;
@@ -1242,6 +1349,59 @@ export class Game {
     return out;
   }
 
+  // ---------- hope, discontent, and how the game ends ----------
+  /** tax share left after discontent */
+  get taxMood() { return 1 - MOOD.taxLoss * this.discontent / 100; }
+  private calcUpkeepScale() {
+    let n = 0;
+    for (const b of this.buildings.values()) if (BUILDINGS[b.type].upkeep > 0) n++;
+    return Math.min(SCALE_UPKEEP.max, 1 + Math.max(0, n - SCALE_UPKEEP.free) * SCALE_UPKEEP.per);
+  }
+  /** someone froze, starved or died of plague */
+  private lost() {
+    this.winterLog.left++;
+    if (this.mode !== 'survival') return;
+    this.deaths++; this.winterLog.deaths++;
+    const share = MOOD.deathPop / Math.max(MOOD.deathPop, TIER_IDS.reduce((a, t) => a + this.pop[t], 0));
+    this.hope = Math.max(0, this.hope - MOOD.deathHope * share);
+    this.discontent = Math.min(100, this.discontent + MOOD.deathDisc * share);
+  }
+  private lift(hope: number) { this.hope = Math.min(100, this.hope + hope); }
+  private wasBlizzard = false;
+  /** where hope and discontent are heading, for the UI */
+  moodTarget = { hope: MOOD.hope0, disc: MOOD.disc0 };
+  private stepMood(dt: number, coldShare: number, hungryShare: number) {
+    const pop = TIER_IDS.reduce((a, t) => a + this.pop[t], 0);
+    this.peakPop = Math.max(this.peakPop, pop);
+    this.winterLog.minTemp = Math.min(this.winterLog.minTemp, this.temp);
+    const blz = this.blizzard;
+    if (this.wasBlizzard && !blz && this.greatCold === 0) {
+      this.lift(MOOD.stormHope);
+      this.notify('暴风雪过去了！大家松了一口气（希望 +' + MOOD.stormHope + '）', 'good', { cat: 'milestone', icon: 'warm' });
+    }
+    this.wasBlizzard = blz;
+    if (this.peakPop < 8) return;           // nobody to hope or complain yet
+    const per = dt / DAY_LENGTH, M = MOOD;
+    const dT = this.moodTarget.disc = Math.max(0, Math.min(100, Math.max(0, (M.calm - this.happyAvg) * M.discHappy) + coldShare * M.coldDisc + hungryShare * M.hungerDisc + (this.gold < 0 ? M.debtDisc : 0)));
+    this.discontent += (dT - this.discontent) * Math.min(1, (dT > this.discontent ? M.discUp : M.discDown) * per);
+    const hT = this.moodTarget.hope = Math.max(0, Math.min(100, M.hopeBase + (this.happyAvg - 50) * M.hopeHappy - (this.coldSnap ? M.blizzardHope : 0) - this.greatCold * M.greatHope));
+    this.hope += (hT - this.hope) * Math.min(1, M.hopeRate * per);
+    if (this.mode !== 'survival' || this.over) return;
+    if (this.discontent >= M.warnDisc) this.throttle('disc', 120, `不满已经到 ${Math.round(this.discontent)}：到 100 居民就会造反。让大家吃饱穿暖，别欠薪`, 'warn', undefined, 'strike');
+    if (this.hope <= M.warnHope) this.throttle('hope', 120, `希望只剩 ${Math.round(this.hope)}：归零大家就会弃城出海。让日子好过些，撑过暴风雪会好起来`, 'warn', undefined, 'sick');
+    const end = (won: boolean, reason: string) => { this.over = { won, reason }; this.speed = 0; this.sfx.push(won ? 'era' : 'season'); };
+    if (this.discontent >= 100) end(false, '不满爆发了：居民涌上街头，把你赶下了台。');
+    else if (this.hope <= 0) end(false, '人们失去了希望，一家家坐船离开了暖港。');
+    else if (pop === 0) end(false, '暖港已经空无一人。');
+    else if (!this.won && this.dayF >= SURVIVAL.days) {
+      this.won = true;
+      end(true, `暖港撑过了 ${SURVIVAL.days} 天和大寒潮！现在有 ${pop} 位居民${this.deaths ? `，一路上失去了 ${this.deaths} 人` : '，一个人都没有失去'}。`);
+      this.notify(`撑过了 ${SURVIVAL.days} 天！之后是无尽模式：天不会再变暖，暴风雪每年都来`, 'good', { cat: 'milestone', icon: 'star' });
+    }
+  }
+  /** close the end card: after a win the town carries on (endless) */
+  continueEndless() { if (this.over?.won) { this.over = null; this.speed = 1; } }
+
   // ---------- fire, plague, crime and strikes ----------
   private stepDisasters(dt: number) {
     const day = dt / DAY_LENGTH * DIFFICULTY[this.difficulty].disaster;
@@ -1299,7 +1459,7 @@ export class Game {
       h.plague += dt;
       const cured = h.protect.has('health') ? PLAGUE.cureCovered : PLAGUE.cureBare;
       if (h.plague > cured) { h.plague = 0; continue; }
-      if (!h.protect.has('health') && Math.random() < PLAGUE.leavePerSec * dt && h.residents > 0) { h.residents--; this.flowLeft.plague++; }
+      if (!h.protect.has('health') && Math.random() < PLAGUE.leavePerSec * dt && h.residents > 0) { h.residents--; this.flowLeft.plague++; this.lost(); }
       for (const o of this.houseNear(h, 3.5)) {
         if (o.type !== 'house' || o.plague > 0 || !o.residents) continue;
         if (Math.random() < PLAGUE.spreadPerSec * dt * (o.protect.has('health') ? 0.2 : 1)) o.plague = 0.01;
@@ -1334,10 +1494,11 @@ export class Game {
       if (!wk || b.strike > 0 || !b.working) continue;
       const th = tierHappy[wk.tier];
       const avg = th && th[1] ? th[0] / th[1] : 100;
-      if (!unpaid && avg >= STRIKE.below) continue;
-      if (Math.random() < 0.6 * day) {
+      const angry = this.discontent >= MOOD.strikeAt;
+      if (!unpaid && avg >= STRIKE.below && !angry) continue;
+      if (Math.random() < (angry && !unpaid && avg >= STRIKE.below ? 0.3 : 0.6) * day) {
         b.strike = STRIKE.secs;
-        this.throttle('strike', 20, `${BUILDINGS[b.type].name}的${TIERS[wk.tier].name}罢工了：${unpaid ? '已经好几天领不到工钱' : '日子过得太苦'}`, 'warn', b, 'strike');
+        this.throttle('strike', 20, `${BUILDINGS[b.type].name}的${TIERS[wk.tier].name}罢工了：${unpaid ? '已经好几天领不到工钱' : avg < STRIKE.below ? '日子过得太苦' : '全城不满情绪高涨'}`, 'warn', b, 'strike');
       }
     }
     // full storage stops workshops
@@ -1359,17 +1520,27 @@ export class Game {
     this.days.push({ day: this.lastDay + 1, gold: dg, pop, food: this.foodDays() });
     if (this.days.length > 30) this.days.shift();
     const left = this.flowLeft, lost = left.hunger + left.cold + left.plague + left.fire;
-    const why = [left.hunger && `饿走 ${left.hunger}`, left.cold && `冻走 ${left.cold}`, left.plague && `病倒 ${left.plague}`, left.fire && `火灾 ${left.fire}`].filter(Boolean).join('，');
+    const sv = this.mode === 'survival';
+    const why = [left.hunger && `${sv ? '饿死' : '饿走'} ${left.hunger}`, left.cold && `${sv ? '冻死' : '冻走'} ${left.cold}`, left.plague && `${sv ? '病逝' : '病倒'} ${left.plague}`, left.fire && `火灾 ${left.fire}`].filter(Boolean).join('，');
     const fd = this.foodDays();
-    this.notify(`第 ${this.lastDay + 1} 天结束：金币 ${dg >= 0 ? '+' : ''}${dg}，人口 ${pop}（${dp >= 0 ? '+' : ''}${dp}）${lost ? `，离开 ${lost} 人（${why}）` : ''}。食物${fd === Infinity ? '充足' : `还够吃 ${fd.toFixed(1)} 天`}`, lost || dg < 0 ? 'warn' : 'info', { cat: 'report', icon: 'ledger' });
+    this.notify(`第 ${this.lastDay + 1} 天结束：金币 ${dg >= 0 ? '+' : ''}${dg}，人口 ${pop}（${dp >= 0 ? '+' : ''}${dp}）${lost ? `，${sv ? '失去' : '离开'} ${lost} 人（${why}）` : ''}。食物${fd === Infinity ? '充足' : `还够吃 ${fd.toFixed(1)} 天`}`, lost || dg < 0 ? 'warn' : 'info', { cat: 'report', icon: 'ledger' });
     this.debtDays = this.gold < 0 ? this.debtDays + 1 : 0;
     if (this.debtDays >= 1) this.notify(`金库已经亏空 ${this.debtDays} 天：大家越来越不满${this.debtDays >= STRIKE.debtDays ? '，工人开始罢工' : '，明天起工人会罢工'}`, 'warn', { cat: 'alert', icon: 'strike' });
     this.flowLeft = { hunger: 0, cold: 0, plague: 0, fire: 0 };
     this.dayStart = { gold: this.gold, pop };
-    // cold snap: warn the day before, announce it when it comes
+    for (const k of Object.keys(this.glut) as GoodId[]) this.glut[k]! *= 1 - GLUT.fade;
+    // blizzards: warn the day before, announce it when it comes
     const snapOn = (day: number) => this.snapDrop((day + 0.5) / this.seasonDays);
-    if (snapOn(d + 1) > 0) this.notify(`寒潮预警：明天气温会骤降约 ${Math.round(snapOn(d + 1))}°C，取暖燃料要多烧好几成，港口结冰渔船大多出不了海。今天多囤柴火、煤和食物`, 'warn', { cat: 'alert', icon: 'cold' });
-    if (snapOn(d) > 0) this.notify('寒潮来了！今天格外冷，撑过这一天', 'warn', { cat: 'milestone', icon: 'cold' });
+    const run = (from: number) => { let n = 0; while (n < 9 && snapOn(from + n) > 0) n++; return n; };
+    if (snapOn(d + 1) > 0 && !(snapOn(d) > 0)) this.notify(`暴风雪预警：明天起要刮 ${run(d + 1)} 天，气温骤降约 ${Math.round(snapOn(d + 1))}°C。取暖燃料要多烧好几成，田地、伐木场和黏土坑只能干两成半的活，港口结冰渔船大多出不了海${this.mode === 'survival' ? '，商船也进不来' : ''}。今天多囤柴火、煤和食物`, 'warn', { cat: 'alert', icon: 'cold' });
+    if (snapOn(d) > 0 && !(snapOn(d - 1) > 0)) this.notify(`暴风雪来了！要刮 ${run(d)} 天，撑过去`, 'warn', { cat: 'milestone', icon: 'cold' });
+    // the great cold
+    if (this.mode === 'survival') {
+      const shown = d + 1, G = SURVIVAL;
+      if (shown >= G.greatWarn && shown < G.greatFrom) this.notify(`大寒潮还有 ${G.greatFrom - shown} 天：第 ${G.greatFrom} 天起气温会跌到 ${Math.round(this.greatTemp)}°C 上下，一直冻到第 ${G.days} 天以后。户外几乎停工、港口封冻（商船也来不了），要囤够 ${G.days - G.greatFrom + 2} 天的食物和燃料（大约是平常冬天的两三倍）`, 'warn', { cat: shown === G.greatWarn ? 'milestone' : 'alert', icon: 'cold' });
+      if (shown === G.greatFrom) this.notify(`大寒潮来了！撑到第 ${G.days} 天`, 'warn', { cat: 'milestone', icon: 'cold' });
+      if (shown > G.greatFrom && shown <= G.days) this.notify(`大寒潮第 ${shown - G.greatFrom + 1} 天：离第 ${G.days} 天还有 ${G.days - shown + 1} 天`, 'info', { cat: 'alert', icon: 'cold' });
+    }
     this.lastDay = d;
   }
 
@@ -1418,6 +1589,7 @@ export class Game {
     const g = this.eraGoal();
     if (!g || !g.done) return;
     this.era = g.era;
+    this.lift(MOOD.eraHope);
     this.sfx.push('era');
     this.notify(`进入${ERAS[g.era].name}！${ERAS[g.era].desc}`, 'good', { cat: 'milestone', icon: 'star' });
     this.bVersion++;
@@ -1427,25 +1599,57 @@ export class Game {
     if (!q || !q.done(this)) return;
     this.gain(q.reward, 1, '目标奖励');
     this.questIndex++;
+    this.lift(MOOD.questHope);
     this.sfx.push('quest');
     const reward = [q.reward.gold ? `${q.reward.gold} 金币` : '', ...GOOD_IDS.filter(k => q.reward[k]).map(k => `${q.reward[k]} ${GOODS[k].name}`)].filter(Boolean).join('、');
     this.notify(reward ? `目标完成：${q.text}　奖励 ${reward}` : `目标完成：${q.text}`, 'good', { cat: 'milestone', icon: 'check' });
   }
 
   private lastSeason: SeasonId | null = null;
+  private lastCal: SeasonId | null = null;
+  /** the stretch of winter ahead (or the one we are in), in seasonPos: [start, end] */
+  winterSpan(): [number, number] {
+    const q = 1 / (this.seasonDays * 4);   // a quarter of a day
+    let p = this.seasonPos;
+    for (let i = 0; i < 4 * 4 * this.seasonDays && this.seasonAt(p) !== 'winter'; i++) p += q;
+    const start = p;
+    for (let i = 0; i < 12 * 4 * this.seasonDays && this.seasonAt(p) === 'winter'; i++) p += q;
+    return [start, p];
+  }
+  /** the autumn notice: how cold, how long, how many blizzard days, what to stock */
+  winterForecast() {
+    const [a, b] = this.winterSpan();
+    const days = (b - a) * this.seasonDays;
+    let min = 99, blz = 0;
+    for (let p = a; p < b; p += 0.25 / this.seasonDays) {
+      min = Math.min(min, this.tempAt(p, 5));
+      if (this.snapDrop(p) > 0 || this.greatK(p * this.seasonDays) > 0.5) blz += 0.25;
+    }
+    const food = this.foodNeed() * days;
+    return `冬天快到了：要冷 ${Math.round(days)} 天，最低约 ${Math.round(min)}°C${blz ? `，其中暴风雪 ${Math.round(blz)} 天` : ''}。田地会封冻，渔场减产。全城要吃约 ${Math.ceil(food)} 份饱食（现在库存 ${Math.floor(this.foodStock())}），还要烧约 ${Math.ceil(this.winterFuelEstimate())} 份燃料`;
+  }
+  private winterReport() {
+    const w = this.winterLog, sv = this.mode === 'survival';
+    const lost = sv ? w.deaths : w.left;
+    if (sv && !lost) this.lift(MOOD.winterHope);
+    this.notify(`熬过了这个冬天：最冷 ${Math.round(w.minTemp)}°C，${lost ? `${sv ? '失去了' : '走了'} ${lost} 人` : `${sv ? `一个人都没有失去（希望 +${MOOD.winterHope}）` : '一个人都没有走'}`}`, lost ? 'warn' : 'good', { cat: 'report', icon: 'warm' });
+  }
   private stepWeather(dt: number) {
-    const s = this.season;
+    const s = this.season, cal = this.calSeason;
     if (this.lastSeason && s !== this.lastSeason) {
-      this.notify(`${s === 'spring' ? `第 ${this.year} 年，` : ''}${SEASONS[s].name}天到了：${SEASONS[s].effect}`, 'good', { cat: 'milestone', icon: s });
-      if (s === 'autumn') {
-        const winterNeed = this.foodNeed() * this.seasonDays;
-        this.notify(`冬天快到了：菜园和麦田会停产，渔场减产。${this.seasonDays} 天冬天全城要吃约 ${Math.ceil(winterNeed)} 份饱食（现在库存 ${Math.floor(this.foodStock())}），还要烧约 ${Math.ceil(this.winterFuelEstimate())} 份燃料`, 'warn', { cat: 'alert', icon: 'cold' });
-      }
+      const thaw = this.seasonName() === '回暖';
+      this.notify(`${cal === 'spring' ? `第 ${this.year} 年，` : ''}${thaw ? '回暖期到了：难得暖和几天，田地能长一点庄稼，抓紧囤粮和燃料' : `${SEASONS[s].name}天到了：${SEASONS[s].effect}`}`, 'good', { cat: 'milestone', icon: s });
+      if (this.lastSeason === 'winter') this.winterReport();
+      if (s === 'winter') this.winterLog = { deaths: 0, minTemp: 99, left: 0 };
+      // the last mild season before a winter: what the winter will ask for
+      if (s !== 'winter' && this.seasonAt(Math.floor(this.seasonPos) + 1.5) === 'winter') this.notify(this.winterForecast(), 'warn', { cat: 'alert', icon: 'cold' });
       this.sfx.push('season');
       const mapped = SEASONS[s].weather[this.weather.cur];
       if (mapped) this.setWeather(mapped);
+    } else if (this.lastCal && cal !== this.lastCal && s === 'winter') {
+      this.notify(`${cal === 'spring' ? `第 ${this.year} 年，本该是春天了` : cal === 'autumn' ? '本该是秋天了' : `本该是${SEASONS[cal].name}天了`}，可天还是冷得像冬天：田地照旧封冻`, 'warn', { cat: 'milestone', icon: 'cold' });
     }
-    this.lastSeason = s;
+    this.lastSeason = s; this.lastCal = cal;
     const w = this.weather;
     w.blend = Math.min(1, w.blend + dt / 10);
     w.left -= dt;
@@ -1460,8 +1664,7 @@ export class Game {
   /** stored fuel units the whole winter will burn at the current population */
   winterFuelEstimate() {
     // average coldness over the coming winter, sampled through the days and nights
-    const start = Math.floor(this.seasonPos / 4) * 4 + (this.season === 'winter' && this.seasonFrac > 0 ? 3 + this.seasonFrac : 3);
-    const end = Math.floor(this.seasonPos / 4) * 4 + 4;
+    const [start, end] = this.winterSpan();
     let c = 0, n = 0;
     for (let p = start; p < end; p += 0.02) { c += coldness(this.tempAt(p, (p * this.seasonDays * 24) % 24)); n++; }
     const minutes = (end - start) * this.seasonDays * DAY_LENGTH / 60;
@@ -1484,7 +1687,8 @@ export class Game {
     const roads: number[] = [];
     this.occ.forEach((o, i) => { if (o === -1) roads.push(i); });
     return JSON.stringify({
-      v: 2, rf: 1, seasonDays: this.seasonDays, diff: this.difficulty, seed: this.world.seed, map: this.world.mapId, weather: this.weather.cur, gold: this.gold, time: this.time, quest: this.questIndex, era: this.era,
+      v: 2, rf: 1, seasonDays: this.seasonDays, diff: this.difficulty, mode: this.mode,
+      mood: { hope: this.hope, disc: this.discontent, deaths: this.deaths, peak: this.peakPop, won: this.won, over: this.over, glut: this.glut, winter: this.winterLog }, seed: this.world.seed, map: this.world.mapId, weather: this.weather.cur, gold: this.gold, time: this.time, quest: this.questIndex, era: this.era,
       research: { current: this.research.current, points: this.research.points, levels: this.research.levels, saved: this.research.saved },
       storage: this.storage, roads,
       b: [...this.buildings.values()].filter(b => b.type !== 'depot').map(b => [b.type, b.x, b.z, b.tier, b.residents, b.progress, b.paused ? 1 : 0, b.rot, b.elecOff ? 1 : 0]),
@@ -1494,7 +1698,13 @@ export class Game {
     try {
       const s = JSON.parse(json);
       if (s.v !== 2) return null;
-      const g = new Game(isMapId(s.map) ? s.map : s.seed);
+      // saves from before 百日求生 carry on as the sandbox they were
+      const g = new Game(isMapId(s.map) ? s.map : s.seed, s.mode in MODES ? s.mode : 'sandbox');
+      if (s.mood) {
+        const m = s.mood;
+        g.hope = m.hope ?? g.hope; g.discontent = m.disc ?? g.discontent; g.deaths = m.deaths ?? 0; g.peakPop = m.peak ?? 0;
+        g.won = !!m.won; g.over = m.over ?? null; g.glut = m.glut ?? {}; if (m.winter) g.winterLog = m.winter;
+      }
       g.gold = s.gold; g.time = s.time; if (s.seasonDays) g.seasonDays = s.seasonDays; if (s.diff in DIFFICULTY) g.difficulty = s.diff; g.questIndex = s.quest; g.era = s.era ?? 1;
       if (s.research) { g.research.current = s.research.current; g.research.points = s.research.points; g.research.levels = s.research.levels ?? {}; g.research.saved = s.research.saved ?? {}; }
       if (s.weather && s.weather in WEATHER) { g.weather.cur = g.weather.prev = s.weather; }
@@ -1514,11 +1724,13 @@ export class Game {
       }
       g.rVersion++; g.tVersion++;
       g.refresh();
-      g.lastSeason = g.season;
+      g.lastSeason = g.season; g.lastCal = g.calSeason;
       g.lastDay = g.day;
       g.dayStart = { gold: g.gold, pop: 0 };
       // settle the derived state (staffing, power, pollution) before the first frame
+      const over = g.over; g.over = null;
       for (let i = 0; i < 12; i++) { g.step(STEP); }
+      g.over = over; if (over) g.speed = 0;
       for (let i = 0; i < 8; i++) g.computePollution();
       g.toasts.length = 0; g.sfx.length = 0; g.events.length = 0;
       return g;

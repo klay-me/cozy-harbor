@@ -389,3 +389,17 @@ button.chip:hover { border-color: var(--ink); }
 .info .ghost.small { padding: 6px 10px; border-style: solid; border-color: #e6d8bd; }
 .settings label[for=seasonLen] { grid-column: 1 / -1; margin-top: 2px; }
 .settings label[for=quality] { grid-column: 1 / -1; margin-top: 2px; }
+
+/* ---------- 百日求生: hope / discontent and the end card ---------- */
+.chip.mood i { color: var(--ink-soft); font-size: 11px; }
+.chip.mood.disc .mini i { background: var(--coral); }
+.endcard { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(92vw, 420px); padding: 22px 22px 18px; z-index: 8; text-align: center; animation: drop .45s cubic-bezier(.2,1.6,.4,1); }
+.endcard .bi { width: 64px; height: 64px; margin: -54px auto 8px; border-radius: 50%; background: #fff3c4; border: 2.5px solid var(--ink); display: grid; place-items: center; }
+.endcard .bi.lost { background: #dff0fb; }
+.endcard .bi svg { width: 40px; height: 40px; }
+.endcard h3 { margin: 0 0 8px; font-family: var(--display); font-weight: 400; font-size: 28px; }
+.endcard p { margin: 6px 0; line-height: 1.55; }
+.endcard .sub { color: var(--ink-soft); font-size: 13px; }
+.endcard .row { display: flex; gap: 8px; justify-content: center; margin-top: 14px; }
+.endcard button { border: 2px solid var(--ink); background: #fff; border-radius: 12px; padding: 9px 16px; font-weight: 700; box-shadow: 0 3px 0 var(--ink); }
+.endcard button.primary { background: var(--coral); color: #fff; }

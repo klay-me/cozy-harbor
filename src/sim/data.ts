@@ -300,6 +300,53 @@ export const SPOIL_SUMMER = 1.5;
  */
 export const COLD_SNAP = { fromYear: 2, drop: 9, perYear: 2, maxDrop: 16, fishing: { fishery: 0.3, fishpier: 0.5, fishport: 0.7 } as Partial<Record<BuildingId, number>> };
 
+// ---------- 百日求生 (the survival scenario, after 冰汽时代's 最后的秋天) ----------
+export type ModeId = 'survival' | 'sandbox';
+export const MODES: Record<ModeId, { name: string; desc: string }> = {
+  survival: { name: '百日求生', desc: '开头四季正常，之后一年比一年冷：春秋渐渐变成冬天，夏天只剩短暂回暖，暴风雪越来越长，第 92 天起一场大寒潮。撑过第 100 天就赢，之后转为无尽模式。希望归零或不满爆表就会失败' },
+  sandbox: { name: '无尽沙盒', desc: '原来的玩法：冬天每年稍冷一点，不会失败，慢慢建' },
+};
+/**
+ * The climate of a survival game. `cool` degrees are lost by day `days` (linear, all seasons alike), so by
+ * the end even summer nights need heating and spring fields barely grow. From day `greatFrom` the great
+ * cold (大寒潮) sets in whatever the season says: the sky stays winter and the temperature sinks to
+ * `greatTemp`, easing back after day `days`. Blizzards (多天暴风雪) each winter grow from 1 to 3 days.
+ */
+export const SURVIVAL = { days: 100, cool: 18, greatFrom: 92, greatWarn: 84, greatTemp: -30, greatEase: 1.5, blizzardMax: 3, winterBelow: 1, thawBelow: 14 };
+/** outdoor work in a blizzard (fields, woods, pits): this share of normal output */
+export const BLIZZARD_OUTDOOR = 0.25;
+export const OUTDOOR = new Set<BuildingId>(['lumberjack', 'farm', 'garden', 'sheepfarm', 'claypit']);
+/** crops (fields, gardens, pastures) grow by temperature: 0 at `zero` °C, full at `full` °C */
+export const CROP_TEMP = { zero: -3, full: 9 };
+export const CROPS = new Set<BuildingId>(['farm', 'garden', 'sheepfarm']);
+/** below this the harbour starts to freeze: fishing slows towards `min` at `iceAt` °C */
+export const SEA_ICE = { from: -10, iceAt: -24, min: 0.15 };
+/**
+ * 希望 hope and 不满 discontent (after 冰汽时代), 0..100. Each drifts towards a target set by how people live,
+ * and every death knocks it straight away. Rates are shares of the gap closed per game day.
+ * hope target = hopeBase + (happiness − 50) × hopeHappy − blizzard / great cold;
+ * discontent target = (calm − happiness) × discHappy + share of freezing / hungry homes × coldDisc / hungerDisc + debt.
+ */
+export const MOOD = {
+  hope0: 60, disc0: 10,
+  hopeBase: 30, hopeHappy: 1.2, blizzardHope: 20, greatHope: 30, hopeRate: 0.3,
+  calm: 55, discHappy: 1.5, coldDisc: 70, hungerDisc: 70, debtDisc: 20, discUp: 0.5, discDown: 0.25,
+  /** a death costs deathHope / deathDisc in a town of `deathPop` people, proportionally less in a bigger one */
+  deathHope: 3, deathDisc: 2, deathPop: 40,
+  eraHope: 15, questHope: 3, stormHope: 8, winterHope: 6,
+  /** tax lost at full discontent; strikes above `strikeAt`; nobody moves in below `noArrivals` hope */
+  taxLoss: 0.4, strikeAt: 80, noArrivals: 25, warnDisc: 85, warnHope: 15,
+};
+/**
+ * in survival, a frozen home loses someone every `secs` once it has been cold for `after` seconds,
+ * and a starving one every `starveSecs` (slower than the sandbox, where people simply move away)
+ */
+export const FREEZE = { after: 180, secs: 60, starveSecs: 30 };
+/** upkeep grows with the size of the town: +`per` per building over `free`, capped */
+export const SCALE_UPKEEP = { free: 60, per: 0.004, max: 1.5 };
+/** the trade ship pays less the more of one good you sell; the glut fades by `fade` a day */
+export const GLUT = { per: 150, floor: 0.35, fade: 0.35 };
+
 // ---------- difficulty ----------
 export type DifficultyId = 'easy' | 'normal' | 'hard';
 export const DIFFICULTY_IDS: DifficultyId[] = ['easy', 'normal', 'hard'];

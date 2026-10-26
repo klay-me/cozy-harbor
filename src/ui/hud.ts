@@ -8,7 +8,7 @@ import type { AudioSettings } from '../audio/sound';
 import type { RotateMode } from '../render/camera';
 import type { Quality } from '../render/post';
 import { icon } from './icons';
-import { SEASON_IDS, SEASON_DAYS, DAY_LENGTH, HEAT_BELOW, PER_DAY, FOODS, FoodId, PROTECTS, ProtectId, familyOf, ELEC_BOOST, COLD_STORE, DIFFICULTY, DIFFICULTY_IDS, DifficultyId } from '../sim/data';
+import { SEASON_IDS, SEASON_DAYS, DAY_LENGTH, HEAT_BELOW, PER_DAY, FOODS, FoodId, PROTECTS, ProtectId, familyOf, ELEC_BOOST, COLD_STORE, DIFFICULTY, DIFFICULTY_IDS, DifficultyId, ModeId, MODES, SURVIVAL, MOOD } from '../sim/data';
 import { supplies, needs as chainNeeds, chainSummary, outPerDay } from './chain';
 
 export type Tool = 'select' | 'demolish' | BuildingId;
@@ -17,7 +17,7 @@ export interface HudHooks {
   tool(t: Tool): void;
   speed(s: number): void;
   save(): void;
-  newGame(): void;
+  newGame(mode: ModeId): void;
   upgrade(b: Bld): void;
   upgradeAll(b: Bld): void;
   demolish(b: Bld): void;
@@ -65,6 +65,8 @@ export class Hud {
   private toastT = 0;
   private itemsKey = '';
   private overlayOn = false;
+  /** the lost game whose card the player closed to look at the town */
+  private endSeen: Game['over'] = null;
 
   constructor(private root: HTMLElement, private hooks: HudHooks, private thumbs: Record<string, string>) {
     root.innerHTML = `
@@ -103,10 +105,12 @@ export class Hud {
       <div class="alerts" id="alerts" aria-live="polite"></div>
       <div class="banner" id="banner" aria-live="polite" hidden></div>
       <div class="actmsg" id="actmsg" aria-live="polite"></div>
+      <div class="endcard card" id="endcard" hidden role="dialog" aria-label="结局"></div>
       <div class="menu card" id="menu" hidden>
         <h3>暖港</h3>
         <button data-m="save">保存游戏</button>
-        <button data-m="new">重新开始</button>
+        <button data-m="new" data-mode="survival" title="${MODES.survival.desc}">新游戏：${MODES.survival.name}</button>
+        <button data-m="new" data-mode="sandbox" title="${MODES.sandbox.desc}">新游戏：${MODES.sandbox.name}</button>
         <div class="settings">
           <label for="volMusic">音乐</label><input type="range" id="volMusic" min="0" max="1" step="0.05">
           <label for="volSfx">音效</label><input type="range" id="volSfx" min="0" max="1" step="0.05">
@@ -129,11 +133,19 @@ export class Hud {
           <p><b>研究 / 仓库 / 污染</b>：T / G / P</p><p><b>建筑朝向</b>：放置时按 F 顺时针转、Shift+F 逆时针转，黄色箭头是正面（门口）；不按就自动朝向道路。已建好的可以在信息面板里点"转向"</p>
           <p><b>取消</b>：右键单击或 Esc</p>
           <p>气温低于 8°C 住宅就要烧柴火（工业时代后烧煤），越冷烧得越多，秋天记得囤好燃料。</p><p><b>账本</b>：L，或点金币、货物数字，看每分钟的收入支出和货物进出。</p>
+          <p><b>百日求生</b>：${MODES.survival.desc}。顶栏的<b>希望</b>跟着大家过得好不好慢慢涨落，暴风雪和死人会让它下跌；<b>不满</b>来自挨冻、挨饿和欠薪，高了会少交税、罢工。</p>
           <p>游戏每 30 秒自动保存在这台设备的浏览器里。</p>
         </div>
       </div>`;
     root.addEventListener('click', e => { if ((e.target as HTMLElement).closest('button')) hooks.click(); });
     $('#logBtn', root).addEventListener('click', () => this.togglePanel('log'));
+    $('#endcard', root).addEventListener('click', e => {
+      const a = (e.target as HTMLElement).closest<HTMLElement>('[data-end]')?.dataset.end;
+      if (a === 'go') this.game.continueEndless();
+      if (a === 'again') hooks.newGame(this.game.mode);
+      if (a === 'look') this.endSeen = this.game.over;
+      this.renderEnd();
+    });
     $('#log', root).addEventListener('click', e => {
       const el = e.target as HTMLElement;
       if (el.closest('[data-a="close"]')) { this.togglePanel('log', false); return; }
@@ -181,8 +193,9 @@ export class Hud {
       if (m === 'save') { hooks.save(); menu.hidden = true; }
       if (m === 'new') {
         const b = (e.target as HTMLElement).closest('button')!;
-        if (b.dataset.confirm) { hooks.newGame(); menu.hidden = true; delete b.dataset.confirm; b.textContent = '重新开始'; }
-        else { b.dataset.confirm = '1'; b.textContent = '确定？当前进度会丢失'; }
+        const mode = b.dataset.mode as ModeId;
+        if (b.dataset.confirm) { hooks.newGame(mode); menu.hidden = true; delete b.dataset.confirm; b.textContent = `新游戏：${MODES[mode].name}`; }
+        else { b.dataset.confirm = '1'; b.textContent = `开始${MODES[mode].name}？当前进度会丢失`; }
       }
       if (m === 'help') $('#help', root).hidden = !$('#help', root).hidden;
     });
@@ -379,6 +392,7 @@ export class Hud {
     });
     $('#tOverlay', this.root).hidden = g.era < 3 && !this.overlayOn;
     this.renderEra();
+    this.renderEnd();
     this.updateInfo();
     if (!$('#research', this.root).hidden) this.updateResearch();
     if (!$('#goods', this.root).hidden) this.updateGoods();
@@ -400,6 +414,27 @@ export class Hud {
     const badge = $('#logBadge', this.root);
     badge.hidden = !this.unread;
     badge.textContent = this.unread > 9 ? '9+' : String(this.unread);
+  }
+
+  // ---------- end of a survival game ----------
+  private endKey = '';
+  private renderEnd() {
+    const g = this.game, o = g.over, box = $('#endcard', this.root);
+    const show = !!o && o !== this.endSeen;
+    const key = show ? `${o!.won}|${o!.reason}` : '';
+    if (key === this.endKey) return;
+    this.endKey = key;
+    box.hidden = !show;
+    if (!show) return;
+    let pop = 0;
+    for (const b of g.buildings.values()) if (b.type === 'house') pop += b.residents;
+    box.innerHTML = o!.won
+      ? `<div class="bi">${icon('star')}</div><h3>撑过了 ${SURVIVAL.days} 天！</h3><p>${o!.reason}</p>
+         <p class="sub">之后是无尽模式：天不会再变暖，夏天不会回来，暴风雪每年都会来。看看暖港还能撑多久。</p>
+         <div class="row"><button data-end="go" class="primary">继续（无尽模式）</button></div>`
+      : `<div class="bi lost">${icon('cold')}</div><h3>暖港没能撑下去</h3><p>${o!.reason}</p>
+         <p class="sub">撑到第 ${g.day + 1} 天，共失去 ${g.deaths} 人，最后剩下 ${pop} 人。</p>
+         <div class="row"><button data-end="again" class="primary">再来一局</button><button data-end="look">看看城市</button></div>`;
   }
 
   /** the goods that matter right now: what people eat, burn and build with */
@@ -433,7 +468,8 @@ export class Hud {
     const fuel = g.era >= 3 ? g.storage.firewood + g.storage.coal : g.storage.firewood;
     const need = g.winterFuelEstimate();
     const happyCls = g.happyAvg >= 70 ? 'ok' : g.happyAvg >= 45 ? 'mid' : 'bad';
-    const nextSeason = SEASON_IDS[(SEASON_IDS.indexOf(g.season) + 1) % 4];
+    const nextName = g.seasonName(Math.floor(g.seasonPos) + 1.5);
+    const sv = g.mode === 'survival', goal = sv && !g.won;
     const leftMin = g.seasonLeft / 60;
     const leftTxt = leftMin >= 1 ? `${Math.ceil(leftMin)} 分钟` : `${Math.ceil(g.seasonLeft)} 秒`;
     const tempCls = g.era >= 2 && g.temp < HEAT_BELOW ? (g.temp < -3 ? 'bad' : 'mid') : g.temp > 24 ? 'hot' : '';
@@ -447,11 +483,13 @@ export class Hud {
       <span class="chip ${foodCls}" data-open="ledger" data-good="${foodKey}" title="${foodTip}">${icon('food')}<b>${foodDays === Infinity ? '—' : foodDays >= 10 ? Math.round(foodDays) : foodDays.toFixed(1)}</b><i>天</i></span>
       <span class="chip pop" data-open="work" title="人口 ${total}（点击看各阶层劳动力）">${tiers.map(t => `<span title="${TIERS[t].name}：${g.pop[t]} 人（空闲劳动力 ${Math.max(0, g.workforce[t].have - g.workforce[t].need)}，岗位 ${g.workforce[t].need}）" class="${g.workforce[t].need > g.workforce[t].have ? 'short' : ''}">${icon(t)}<b>${g.pop[t]}</b></span>`).join('')}</span>
       <span class="chip ${happyCls}" title="平均幸福度">${icon('happy')}<b>${Math.round(g.happyAvg)}</b></span>
+      <span class="chip mood ${g.hope < 25 ? 'low' : g.hope < 45 ? 'warn' : ''}" title="希望 ${Math.round(g.hope)}（正趋向 ${Math.round(g.moodTarget.hope)}）：大家过得越开心越高；暴风雪、大寒潮和每一个死去的人都会让它下跌。${g.hope < MOOD.noArrivals ? '现在太低了，没人愿意搬来。' : `低于 ${MOOD.noArrivals} 就没人搬来`}${g.mode === 'survival' ? '，归零就会失败' : ''}">${icon('star')}<i>希望</i><b>${Math.round(g.hope)}</b></span>
+      <span class="chip mood disc ${g.discontent > 75 ? 'low' : g.discontent > 50 ? 'warn' : ''}" title="不满 ${Math.round(g.discontent)}（正趋向 ${Math.round(g.moodTarget.disc)}）：挨冻、挨饿、欠薪和日子太苦都会让大家不满，死人更会。不满越高税收越少（现在 -${Math.round((1 - g.taxMood) * 100)}%），超过 ${MOOD.strikeAt} 会罢工${g.mode === 'survival' ? '，到 100 就会失败' : ''}">${icon('strike')}<i>不满</i><b>${Math.round(g.discontent)}</b></span>
       ${g.era >= 3 ? `<span class="chip ${g.power.must > g.power.gen + 0.05 ? 'low' : g.power.boostRatio < 0.95 ? 'warn' : ''}" title="电网：发电 ${g.power.gen.toFixed(1)} / 用电 ${g.power.use.toFixed(1)}&#10;必需 ${g.power.must.toFixed(1)}（电灯 ${g.power.light.toFixed(1)}，用电工厂、电取暖），满足 ${Math.round(g.power.ratio * 100)}%&#10;通电增产和冷藏 ${g.power.boost.toFixed(1)}，只用剩下的电，满足 ${Math.round(g.power.boostRatio * 100)}%&#10;晚上电灯用电约是白天的 3 倍">${icon('power')}<b>${g.power.gen.toFixed(0)}</b><i>/${g.power.use.toFixed(0)}</i></span>
       <span class="chip ${g.pollutionAvg > 25 ? 'low' : ''}" title="住宅区平均污染（点"污染"查看分布）">${icon('pollution')}<b>${g.pollutionAvg.toFixed(0)}</b></span>` : ''}
       <button class="chip research" data-open="research" title="研究（T）">${icon('research')}<b>${cur ? TECHS[cur].name : '选择研究'}</b>${cur ? `<span class="mini"><i style="width:${rPct}%"></i></span>` : ''}</button>
-      <span class="chip clock" title="${SEASONS[g.season].name}季 第 ${g.seasonDay}/${SEASON_DAYS} 天：${SEASONS[g.season].effect}&#10;距离${SEASONS[nextSeason].name}天还有 ${leftTxt}（游戏内约 ${(g.seasonLeft / DAY_LENGTH).toFixed(1)} 天）&#10;开局以来第 ${g.day + 1} 天">${icon(g.night > 0.5 ? 'moon' : g.season)}<b>第${g.day + 1}天</b><i>${g.year}年${SEASONS[g.season].name} ${g.seasonDay}/${SEASON_DAYS} ${String(Math.floor(g.hour)).padStart(2, '0')}:${String(Math.floor((g.hour % 1) * 60)).padStart(2, '0')}</i><span class="mini season"><i style="width:${Math.round(g.seasonFrac * 100)}%"></i></span></span>
-      <span class="chip temp ${tempCls}" title="${g.coldSnap ? '寒潮！' : ''}气温 ${g.temp.toFixed(1)}°C。低于 ${HEAT_BELOW}°C 住宅要烧燃料取暖，越冷烧得越多${g.era < 2 ? '（田园时代还不用取暖）' : ''}">${icon('thermo')}<b>${Math.round(g.temp)}°C</b></span>
+      <span class="chip clock${goal && g.day + 1 >= SURVIVAL.greatWarn ? ' warn' : ''}" title="${g.seasonName()}${g.season !== g.calSeason ? `（日历上是${SEASONS[g.calSeason].name}天，可天冷得还是冬天）` : ''} 第 ${g.seasonDay}/${g.seasonDays} 天：${g.seasonName() === '回暖' ? '难得暖和几天，田地能长一点庄稼' : SEASONS[g.season].effect}&#10;距离下一季（${nextName}）还有 ${leftTxt}（游戏内约 ${(g.seasonLeft / DAY_LENGTH).toFixed(1)} 天）&#10;开局以来第 ${g.day + 1} 天${goal ? `&#10;百日求生：撑到第 ${SURVIVAL.days} 天，第 ${SURVIVAL.greatFrom} 天起大寒潮` : g.won ? '&#10;已撑过 100 天，无尽模式' : ''}">${icon(g.night > 0.5 ? 'moon' : g.season)}<b>第${g.day + 1}${goal ? `/${SURVIVAL.days}` : ''}天</b><i>${g.year}年${g.seasonName()} ${g.seasonDay}/${g.seasonDays} ${String(Math.floor(g.hour)).padStart(2, '0')}:${String(Math.floor((g.hour % 1) * 60)).padStart(2, '0')}</i><span class="mini season"><i style="width:${Math.round((goal ? Math.min(1, g.dayF / SURVIVAL.days) : g.seasonFrac) * 100)}%"></i></span></span>
+      <span class="chip temp ${tempCls}${g.blizzard ? ' low' : ''}" title="${g.greatCold > 0.5 ? '大寒潮！' : g.coldSnap ? '暴风雪！户外的田地、伐木场和黏土坑只能干两成半的活，港口结冰。' : ''}气温 ${g.temp.toFixed(1)}°C。低于 ${HEAT_BELOW}°C 住宅要烧燃料取暖，越冷烧得越多${sv ? `。天气一年比一年冷：现在比开局时冷了约 ${Math.round(SURVIVAL.cool * g.chill(g.dayF))}°C；庄稼在 ${-3}°C 以下不长` : ''}">${icon(g.blizzard ? 'cold' : 'thermo')}<b>${Math.round(g.temp)}°C</b>${g.greatCold > 0.5 ? '<i>大寒潮</i>' : g.coldSnap ? '<i>暴风雪</i>' : ''}</span>
       <span class="chip weather" title="${wx.effect}">${icon(g.weather.cur)}<b>${wx.name}</b>${wx.effect !== '一切正常' ? `<i>${wx.effect}</i>` : ''}</span>
       ${winterSoon ? `<span class="chip ${fuel < need ? 'low' : 'ok'}" title="冬季燃料：库存 ${fmt(fuel)}，整个冬天大约要烧 ${Math.ceil(need)}">${icon(g.season === 'winter' ? 'cold' : 'warm')}<b>${fmt(fuel)}</b><i>/${Math.ceil(need)}</i></span>` : ''}
       <span class="sep"></span>
@@ -644,24 +682,25 @@ export class Hud {
 
   // ---------- goods & trade panel ----------
   private goodsKey = '';
+  private goodsSig() { const g = this.game; return g.era + '|' + GOOD_IDS.map(k => Math.round(g.sellPrice(k) * 10)).join(','); }
   private renderGoods() {
     const g = this.game;
-    this.goodsKey = String(g.era);
+    this.goodsKey = this.goodsSig();
     const goods = GOOD_IDS.filter(k => GOODS[k].era <= g.era);
     $('#goods', this.root).innerHTML = `<header><h3>仓库与商船</h3><span class="sub" data-f="cap"></span><button class="x" data-a="close" aria-label="关闭">×</button></header>
       <p class="desc">港口的商船随时收购多余的货物，也能高价卖给你急需的东西。</p>
       <div class="goods-grid">${goods.map(k => `<div class="gd">
         ${icon(k)}<span class="gn">${GOODS[k].name}</span><b data-g="${k}"></b>
-        <button data-trade="${k}" data-n="-10" title="卖出 10 个，每个 ${GOODS[k].price} 金币">卖 10 <small>+${GOODS[k].price * 10}</small></button>
+        <button data-trade="${k}" data-n="-10" title="卖出 10 个，现在每个约 ${g.sellPrice(k).toFixed(1)} 金币（原价 ${GOODS[k].price}）。同一种货卖得越多，商船出价越低，过几天会慢慢回升">卖 10 <small>+${Math.round(g.sellPrice(k) * 10)}</small></button>
         <button data-trade="${k}" data-n="10" title="买入 10 个，每个 ${g.buyPrice(k)} 金币">买 10 <small>-${g.buyPrice(k) * 10}</small></button>
       </div>`).join('')}</div>`;
     this.updateGoods();
   }
   private updateGoods() {
     const g = this.game;
-    if (this.goodsKey !== String(g.era)) { this.renderGoods(); return; }
+    if (this.goodsKey !== this.goodsSig()) { this.renderGoods(); return; }
     const box = $('#goods', this.root);
-    box.querySelector<HTMLElement>('[data-f="cap"]')!.textContent = `每种货物最多存 ${g.cap}（多建仓库可以扩容）`;
+    box.querySelector<HTMLElement>('[data-f="cap"]')!.textContent = g.harbourFrozen ? '暴风雪中港口封冻，商船进不来' : `每种货物最多存 ${g.cap}（多建仓库可以扩容）`;
     box.querySelectorAll<HTMLElement>('[data-g]').forEach(el => { const k = el.dataset.g as GoodId; el.textContent = fmt(g.storage[k]); el.classList.toggle('full', g.storage[k] >= g.cap - 0.5); });
   }
 

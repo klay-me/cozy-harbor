@@ -61,7 +61,7 @@ async function boot() {
     tool: t => setTool(t),
     speed: s => { game.speed = s; },
     save: () => save(true),
-    newGame: () => start(new Game(DEFAULT_MAP)),
+    newGame: mode => start(new Game(DEFAULT_MAP, mode)),
     upgrade: b => game.upgrade(b),
     upgradeAll: b => game.upgradeAll(b.tier),
     demolish: b => { game.demolish(b.x, b.z); select(null); },
