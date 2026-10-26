@@ -65,7 +65,8 @@ varying float vUp;
   diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.95, 0.97, 1.0 ), uSnow * smoothstep( 0.45, 0.8, vUp ) * ( 1.0 - vGlow ) );
   diffuseColor.rgb *= 1.0 - uWet * 0.12 * step( 0.4, vUp );`)
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-  totalEmissiveRadiance += vGlow * uGlow * vec3( 1.0, 0.78, 0.42 ) * 1.4;`);
+  // night lights: a warm glow, softer on big upward panes (glass roofs) so they do not blind
+  totalEmissiveRadiance += vGlow * uGlow * vec3( 1.0, 0.78, 0.42 ) * 0.8 * ( 1.0 - 0.7 * smoothstep( 0.45, 0.85, vUp ) );`);
   };
   return m;
 }

@@ -104,10 +104,14 @@ export class Env {
     for (let i = 0; i < 16; i++) {
       const g = new THREE.Group();
       const k = 3 + (i % 3);
+      // each cloud has its own material so it can fade out when it drifts in front of the view
+      const mat = this.cloudMat.clone();
+      mat.transparent = true; mat.depthWrite = false;
+      g.userData.mat = mat;
       for (let j = 0; j < k; j++) {
         const r = 1.6 + Math.random() * 1.4;
         const geo = new THREE.SphereGeometry(r, 16, 12);
-        const m = new THREE.Mesh(geo, this.cloudMat);
+        const m = new THREE.Mesh(geo, mat);
         m.add(new THREE.Mesh(geo, outlineMat(0.08, '#9fb3cf')));
         m.position.set((j - k / 2) * 1.8, Math.random() * 0.8, Math.random());
         g.add(m);
@@ -156,7 +160,7 @@ export class Env {
   /** for the audio mix */
   mix() { return { rain: this.w.rain, storm: this.w.storm, sunny: 1 - this.w.over, night: this.night, snow: this.w.snow }; }
 
-  update(dt: number, game: Game, target: THREE.Vector3, terrain: Terrain, fog: THREE.Fog, camDist = 26) {
+  update(dt: number, game: Game, target: THREE.Vector3, terrain: Terrain, fog: THREE.Fog, camDist = 26, camera?: THREE.Camera) {
     this.t += dt;
     ENV.uTime.value = this.t;
     const ease = 1 - Math.exp(-dt * 1.5);
@@ -217,8 +221,20 @@ export class Env {
     const nightDim = 1 - this.night * 0.65;
     this.cloudMat.color.copy(grey(new THREE.Color('#ffffff')).lerp(new THREE.Color('#ffffff'), 1 - o * 0.7)).multiplyScalar(nightDim);
     this.cloudMat.emissive.copy(this.cloudMat.color);
+    const P = new THREE.Vector3();
     this.clouds.forEach((c, j) => {
       c.visible = j < Math.round(this.w.cover * this.clouds.length);
+      const mat = c.userData.mat as THREE.MeshToonMaterial;
+      mat.color.copy(this.cloudMat.color); mat.emissive.copy(this.cloudMat.emissive);
+      // clouds below the camera stay at the edges of the screen; over the middle they turn see-through
+      let a = 1;
+      if (camera && c.position.y < camera.position.y) {
+        P.copy(c.position).project(camera);
+        const r = Math.hypot(P.x, P.y * 1.2);
+        a = THREE.MathUtils.smoothstep(r, 0.45, 1.05) * 0.85 + 0.15;
+      }
+      mat.opacity += (a - mat.opacity) * Math.min(1, dt * 4);
+      for (const m of c.children) (m.children[0] as THREE.Mesh).visible = mat.opacity > 0.7;
       c.position.x += dt * c.userData.v * (1 + this.w.storm * 2);
       if (c.position.x > target.x + 90) c.position.x = target.x - 90;
     });

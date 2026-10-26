@@ -89,7 +89,7 @@ export class View {
     // glow at night
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.rig.camera));
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.6, 0.5, 0.82);
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.4, 0.4, 0.9);
     this.composer.addPass(this.bloom);
     this.composer.addPass(new OutputPass());
     addEventListener('resize', () => {
@@ -652,7 +652,7 @@ export class View {
     this.rig.update(dt);
     this.decor?.setSeason(g.seasonPos);
     this.landmarks?.update(dt);
-    this.env.update(dt, g, this.rig.target, this.terrain, this.scene.fog as THREE.Fog, this.rig.dist);
+    this.env.update(dt, g, this.rig.target, this.terrain, this.scene.fog as THREE.Fog, this.rig.dist, this.rig.camera);
     this.people?.update(dt, gameDt);
     this.smoke?.update(dt);
     this.markT -= dt;
@@ -670,7 +670,7 @@ export class View {
     });
     const glow = ENV.uGlow.value;
     if (glow > 0.05) {
-      this.bloom.strength = 0.25 + glow * 0.55;
+      this.bloom.strength = 0.15 + glow * 0.3;
       this.composer.render();
     } else this.renderer.render(this.scene, this.rig.camera);
   }
