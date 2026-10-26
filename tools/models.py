@@ -748,6 +748,7 @@ for f in (depot, warehouse, lumberjack, sawmill, fishery, farm, mill, bakery, ma
           factory_small, windturbine, solar, hydro, purifier, recycler, hospital, theatre, lab, ore_iron, ore_coal, bridge, bridge_plain, garden, herbalist, firestation, police):
     f()
 exec(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models_resize.py'), encoding='utf-8').read())
+exec(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models_m2.py'), encoding='utf-8').read())
 exec(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models_anim.py'), encoding='utf-8').read())
 # chimney smoke markers on the older houses
 for o in list(bpy.data.objects):

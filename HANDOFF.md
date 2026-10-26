@@ -74,7 +74,7 @@
 - 建造栏里每条线只显示已解锁的最高一级，旧的在信息面板里点"升级"。
 - 现有的线：渔场 → 渔码头 → 远洋渔港；菜园 → 菜田；温室 → 水培农场；麦田 → 机械农场；草药铺 → 诊所 → 医院（医院兼算诊所，见 `SERVICE_ALSO`）。另有堆肥场（半径内农田 +25%）。
 - 温室冬天每轮烧 0.5 煤（`winterFuel`），在煤炉房范围内免烧。
-- 新建筑目前借用旧模型，专属模型还没做。
+- 新建筑的模型在 `tools/models_m2.py`（在 models_resize.py 之后执行，按最终占地直接搭，不再 regroup）；`#gallery-m2` 可以把每条升级线并排看。模型缺失时会退回到 family 的模型。
 
 ### 服务覆盖（参考纪元）
 - 消防、医疗、治安，以及集市、酒馆、教堂、学校、诊所、医院、剧院，都是从门口的路出发沿道路走（范围 = 半径 × 1.6 格），走得到的才算覆盖。
@@ -140,7 +140,7 @@ src/
     town.ts          建筑声景（声床加定时事件）
   dev/gallery.ts     模型画廊：index.html#gallery、#gallery-big、#gallery-anim、#gallery-one=NAME（可加 -pose）
 public/
-  models/town.glb    所有模型（量化压缩后约 4.7MB）
+  models/town.glb    所有模型（量化压缩后约 5.4MB）
   audio/*.json       乐器采样（每种乐器一个文件，{音名: base64 mp3}）和 sfx.json
 tools/
   models.py          Blender 主脚本，依次 exec models_m1.py、models_resize.py、models_anim.py，然后导出 GLB
@@ -238,7 +238,6 @@ npm run build && python3 tools/test/shots.py tools/test/steps-example.json
 
 **还没做的大块**
 - [x] 手工设计的固定地图「暖港湾」
-- [ ] 新建筑（渔码头、远洋渔港、菜田、堆肥场、温室、机械农场、水培农场）的专属模型
 - [ ] 其余升级线：集市 → 市场 → 商场、消防队 → 消防站、巡警所 → 警察局、教育线（见玩法设计方案 v1）
 - [ ] （暂缓）Steam 版：打包、本地存档、成就、制作人员名单（FluidR3 采样需要署名）
 - [ ] 平衡性要靠真人试玩来调：火灾频率、冬季缺粮、欠债惩罚、商船价格

@@ -14,6 +14,8 @@ const NAMES_M1 = ['house_technician_0', 'house_technician_1', 'house_citizen_0',
   'sheepfarm', 'woodshed', 'claypit', 'brickworks', 'weaver', 'tailor', 'mine', 'smithy', 'park', 'guild', 'ore_iron', 'ore_coal',
   'factory', 'cannery', 'brewery', 'powerplant', 'heatplant', 'school', 'clinic', 'townhall', 'university',
   'factory_small', 'plant_modern', 'windturbine', 'solar', 'hydro', 'purifier', 'recycler', 'hospital', 'theatre', 'lab', 'garden', 'herbalist', 'firestation', 'police', 'bridge'];
+/** upgrade lines: #gallery-m2 */
+const NAMES_M2 = ['fishery', 'fishpier', 'fishport', 'garden', 'vegfield', 'compost', 'greenhouse', 'hydroponic', 'farm', 'mechfarm'];
 
 export function gallery(container: HTMLElement, opts: { snow?: number; glow?: number } = {}) {
   const r = new THREE.WebGLRenderer({ antialias: true });
@@ -30,8 +32,8 @@ export function gallery(container: HTMLElement, opts: { snow?: number; glow?: nu
   ENV.uSnow.value = opts.snow ?? 0;
   ENV.uGlow.value = opts.glow ?? 0;
   const one = /one=([a-z_0-9]+)/.exec(location.hash)?.[1];
-  const list = one ? [one] : location.hash.includes('anim') ? NAMES_ANIM : location.hash.includes('big') ? NAMES_BIG : location.hash.includes('m1') ? NAMES_M1 : NAMES;
-  const cols = location.hash.includes('big') || location.hash.includes('anim') ? 6 : location.hash.includes('m1') ? 8 : 6;
+  const list = one ? [one] : location.hash.includes('anim') ? NAMES_ANIM : location.hash.includes('big') ? NAMES_BIG : location.hash.includes('m1') ? NAMES_M1 : location.hash.includes('m2') ? NAMES_M2 : NAMES;
+  const cols = location.hash.includes('big') || location.hash.includes('anim') ? 6 : location.hash.includes('m1') ? 8 : location.hash.includes('m2') ? 5 : 6;
   list.filter(hasModel).forEach((n, i) => {
     const m = getModel(n);
     const g = new THREE.Group();
