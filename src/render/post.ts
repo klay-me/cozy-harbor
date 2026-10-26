@@ -79,6 +79,8 @@ export class Post {
   }
 
   setQuality(q: Quality) { this.quality = q; }
+  /** after the renderer's pixel ratio changes */
+  resize() { this.composer.setSize(innerWidth, innerHeight); }
 
   /**
    * @param glow   0..1 how much the night lights are on

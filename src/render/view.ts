@@ -19,6 +19,7 @@ import { Decor } from './decor';
 import { Smoke } from './smoke';
 import { icon } from '../ui/icons';
 import { animatePart } from './animation';
+import { Chunks } from './chunks';
 
 interface Part { o: THREE.Object3D; kind: AnimKind; name: string; t: number; amp: number }
 interface BView { group: THREE.Group; tier: string; type: BuildingId; rot: number; x: number; z: number; smoke: THREE.Vector3[]; smokeT: number; parts: Part[]; born: number; b: Bld }
@@ -44,7 +45,8 @@ export class View {
   private roads!: THREE.InstancedMesh;
   private lamps!: THREE.InstancedMesh;
   private bridges: THREE.InstancedMesh[] = [];
-  private lampLine!: THREE.InstancedMesh;
+  /** chunked scenery (trees, rocks, bridges, lamps) for culling */
+  private chunks: Chunks[] = [];
   private ghost = new THREE.Group();
   private ghostFoot!: THREE.Mesh;
   private ghostArrow!: THREE.Mesh;
@@ -97,6 +99,7 @@ export class View {
   setGame(game: Game) {
     for (const o of [...this.scene.children]) if (o.userData.world) this.scene.remove(o);
     this.views.clear();
+    this.chunks = [];
     this.bVersion = this.rVersion = this.tVersion = -1;
     this.game = game;
     this.half = game.W / 2;
@@ -125,22 +128,23 @@ export class View {
   }
   private add<T extends THREE.Object3D>(o: T) { o.userData.world = true; this.scene.add(o); return o; }
 
+  /** source mesh to write instances into; call rebuild(m) after changing it so the drawn chunks follow */
   private instanced(geo: ModelGeo, n: number, lw: number, cast = true) {
     const m = new THREE.InstancedMesh(geo.body, this.worldMat, n);
-    const l = new THREE.InstancedMesh(geo.line, outlineMat(lw), n);
-    l.instanceMatrix = m.instanceMatrix;
     m.castShadow = cast; m.receiveShadow = true;
-    m.frustumCulled = l.frustumCulled = false;
-    this.add(m); this.add(l);
-    return [m, l] as const;
+    m.count = 0;
+    const ch = new Chunks(m, this.half, { geo: geo.line, mat: outlineMat(lw) });
+    m.userData.chunks = ch;
+    this.chunks.push(ch);
+    this.add(ch.group);
+    return m;
   }
+  private rebuild(m: THREE.InstancedMesh) { (m.userData.chunks as Chunks).rebuild(); }
 
   private buildTrees() {
     const max = this.game.W * this.game.W;
     this.trees = ['tree_round', 'tree_pine', 'bush'].map(n => {
-      const [m, l] = this.instanced(getModel(n), max, 0.02);
-      m.userData.line = l;
-      return m;
+      return this.instanced(getModel(n), max, 0.02);
     });
   }
   private syncTrees() {
@@ -165,7 +169,7 @@ export class View {
         put(2, wx, wz, r * 5 % 1, 0.8);
       }
     }
-    this.trees.forEach((m, i) => { m.count = n[i]; (m.userData.line as THREE.InstancedMesh).count = n[i]; m.instanceMatrix.needsUpdate = true; });
+    this.trees.forEach((m, i) => { m.count = n[i]; });
     this.colorTrees();
     this.syncDeposits();
     this.decor?.sync();
@@ -181,7 +185,8 @@ export class View {
       if (h < 1.3 ? (x + z * 3) % 3 === 0 : (x * 7 + z * 13) % 17 === 0) cells.push([x, z]);
     }
     if (!cells.length) return;
-    const [m] = this.instanced(getModel('rock'), cells.length, 0.025);
+    const m = this.instanced(getModel('rock'), cells.length, 0.025);
+    m.count = cells.length;
     const M = new THREE.Matrix4(), Q = new THREE.Quaternion();
     cells.forEach(([x, z], i) => {
       const wx = x + 0.5 - this.half, wz = z + 0.5 - this.half;
@@ -190,15 +195,14 @@ export class View {
       M.compose(new THREE.Vector3(wx, this.terrain.height(wx, wz) - 0.1, wz), Q, new THREE.Vector3(s, s, s));
       m.setMatrixAt(i, M);
     });
+    this.rebuild(m);
   }
 
   /** little ore and coal outcrops on mineral veins that nothing is built on */
   private buildDeposits() {
     const { world, W } = this.game;
     this.deposits = ['ore_iron', 'ore_coal'].map(n => {
-      const [m, l] = this.instanced(getModel(n), W * W, 0.015);
-      m.userData.line = l;
-      return m;
+      return this.instanced(getModel(n), W * W, 0.015);
     });
   }
   private syncDeposits() {
@@ -213,7 +217,7 @@ export class View {
       M.compose(new THREE.Vector3(wx, this.terrain.height(wx, wz), wz), Q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), (p.x * 3 + p.z * 5) % 6), S.set(1.9, 1.6, 1.9));
       this.deposits[p.kind - 1].setMatrixAt(n[p.kind - 1]++, M);
     }
-    this.deposits.forEach((m, i) => { m.count = n[i]; (m.userData.line as THREE.InstancedMesh).count = n[i]; m.instanceMatrix.needsUpdate = true; });
+    this.deposits.forEach((m, i) => { m.count = n[i]; this.rebuild(m); });
   }
   /** trees in smog wither towards brown */
   private colorTrees() {
@@ -226,7 +230,7 @@ export class View {
         const w = Math.min(0.85, Math.max(0, (p - 15) / 50));
         m.setColorAt(i, C.setRGB(1, 1 - w, 1));
       }
-      if (m.instanceColor) m.instanceColor.needsUpdate = true;
+      this.rebuild(m);
     }
   }
   /** show which streets and buildings a service reaches */
@@ -271,14 +275,9 @@ export class View {
     this.roads.frustumCulled = false;
     this.roads.count = 0;
     this.bridges = ['bridge', 'bridge_plain'].map(n => {
-      const [m, l] = this.instanced(getModel(n), 600, 0.015);
-      m.userData.line = l;
-      m.count = l.count = 0;
-      return m;
+      return this.instanced(getModel(n), 600, 0.015);
     });
-    const [lm, ll] = this.instanced(getModel('lamp'), 600, 0.012);
-    this.lamps = lm; this.lampLine = ll;
-    lm.count = ll.count = 0;
+    this.lamps = this.instanced(getModel('lamp'), 600, 0.012);
   }
   private syncRoads() {
     const { W, occ } = this.game;
@@ -311,9 +310,9 @@ export class View {
     }
     this.roads.count = n;
     this.roads.instanceMatrix.needsUpdate = true;
-    this.lamps.count = this.lampLine.count = nl;
-    this.lamps.instanceMatrix.needsUpdate = true;
-    this.bridges.forEach((m, i) => { m.count = (m.userData.line as THREE.InstancedMesh).count = nb[i]; m.instanceMatrix.needsUpdate = true; });
+    this.lamps.count = nl;
+    this.rebuild(this.lamps);
+    this.bridges.forEach((m, i) => { m.count = nb[i]; this.rebuild(m); });
   }
 
   /** light pools under the street lamps and around houses (lit windows spill onto the street) */
@@ -615,9 +614,30 @@ export class View {
     this.smoke!.emit(p.x, p.y, p.z, grey, size);
   }
 
+  /**
+   * Automatic render resolution: on a high-DPI screen the screen effects run on up to 4x the pixels.
+   * When frames stay slow for a couple of seconds, step the pixel ratio down (not below 1); when they
+   * have been fast for a while, try stepping back up.
+   */
+  private res = { max: Math.min(devicePixelRatio || 1, 2), slow: 0, fast: 0, hold: 0 };
+  private autoRes(dt: number) {
+    const r = this.res, pr = this.renderer.getPixelRatio();
+    r.hold -= dt;
+    if (dt > 1 / 40) { r.slow += dt; r.fast = 0; } else { r.slow = Math.max(0, r.slow - dt * 0.5); if (dt < 1 / 50) r.fast += dt; }
+    let next = pr;
+    if (r.slow > 2.5 && pr > 1) { next = Math.max(1, pr - 0.25); r.hold = 30; }
+    else if (r.fast > 8 && r.hold <= 0 && pr < r.max) { next = Math.min(r.max, pr + 0.25); r.hold = 8; }
+    if (next === pr) return;
+    r.slow = r.fast = 0;
+    this.renderer.setPixelRatio(next);
+    this.renderer.setSize(innerWidth, innerHeight);
+    this.post.resize();
+  }
+
   render(dt: number, gameDt: number) {
     const g = this.game;
     this.time += dt;
+    this.autoRes(dt);
     if (g.bVersion !== this.bVersion || g.rVersion !== this.rVersion) {
       // level the ground and repaint streets first, everything else sits on it
       this.terrain.setGround(g.occ, i => g.occ[i] === -1 && !g.isBridge(i % g.W, (i / g.W) | 0), g.era >= 3 ? 2 : g.era >= 2 ? 1 : 0);
@@ -660,6 +680,9 @@ export class View {
     this.decor?.setSeason(g.seasonPos);
     this.landmarks?.update(dt);
     this.env.update(dt, g, this.rig.target, this.terrain, this.scene.fog as THREE.Fog, this.rig.dist, this.rig.camera);
+    const fogFar = (this.scene.fog as THREE.Fog).far, cam = this.rig.camera.position;
+    for (const ch of this.chunks) ch.cull(cam, fogFar);
+    this.decor?.cull(cam, fogFar);
     this.people?.update(dt, gameDt);
     this.smoke?.update(dt);
     this.markT -= dt;

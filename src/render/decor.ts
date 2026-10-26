@@ -7,6 +7,7 @@ import { Tile } from '../sim/world';
 import { ramp, outlineMat } from './toon';
 import { ENV, worldMaterial } from './shared';
 import type { Terrain } from './terrain';
+import { Chunks } from './chunks';
 
 const hash = (x: number, z: number, k: number) => { const h = Math.sin(x * 127.1 + z * 311.7 + k * 74.7) * 43758.5453; return h - Math.floor(h); };
 
@@ -118,9 +119,8 @@ export class Decor {
   private flowers: THREE.InstancedMesh;
   private pebbles: THREE.InstancedMesh;
   private bushes: THREE.InstancedMesh;
-  private bushLine: THREE.InstancedMesh;
   private boulders: THREE.InstancedMesh;
-  private boulderLine: THREE.InstancedMesh;
+  private chunks: Chunks[];
   private flowerScale = { value: 1 };
   group = new THREE.Group();
 
@@ -146,7 +146,6 @@ export class Decor {
     };
     this.tufts = new THREE.InstancedMesh(tuftGeometry(), tm, W * W * 8);
     this.tufts.receiveShadow = true;
-    this.tufts.frustumCulled = false;
     // flowers shrink away through autumn and are gone in winter
     const fm = new THREE.MeshToonMaterial({ color: 0xffffff, gradientMap: ramp, vertexColors: true });
     const fs = this.flowerScale;
@@ -155,24 +154,28 @@ export class Decor {
       sh.vertexShader = 'uniform float uFlower;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  transformed *= uFlower;');
     };
     this.flowers = new THREE.InstancedMesh(flowerGeometry(), fm, W * W);
-    this.flowers.frustumCulled = false;
     this.pebbles = new THREE.InstancedMesh(pebbleGeometry(), worldMaterial(), W * W);
     this.pebbles.receiveShadow = true;
-    this.pebbles.frustumCulled = false;
     const wm = worldMaterial();
     const twin = (geo: THREE.BufferGeometry, n: number, lw: number) => {
       const m = new THREE.InstancedMesh(geo, wm, n);
-      const l = new THREE.InstancedMesh(geo, outlineMat(lw), n);
-      l.instanceMatrix = m.instanceMatrix;
       m.castShadow = m.receiveShadow = true;
-      m.frustumCulled = l.frustumCulled = false;
-      m.count = l.count = 0;
-      return [m, l] as const;
+      m.count = 0;
+      return [m, { geo, mat: outlineMat(lw) }] as const;
     };
-    [this.bushes, this.bushLine] = twin(bushGeometry(), W * W, 0.012);
-    [this.boulders, this.boulderLine] = twin(boulderGeometry(), (W * W) >> 3, 0.014);
+    const [bushes, bushLine] = twin(bushGeometry(), W * W, 0.012);
+    const [boulders, boulderLine] = twin(boulderGeometry(), (W * W) >> 3, 0.014);
+    this.bushes = bushes; this.boulders = boulders;
     this.boulders.setColorAt(0, new THREE.Color(1, 1, 1));
-    this.group.add(this.tufts, this.flowers, this.pebbles, this.bushes, this.bushLine, this.boulders, this.boulderLine);
+    // drawn in chunks: off-screen chunks are skipped
+    this.chunks = [
+      new Chunks(this.tufts, half),
+      new Chunks(this.flowers, half),
+      new Chunks(this.pebbles, half),
+      new Chunks(this.bushes, half, bushLine),
+      new Chunks(this.boulders, half, boulderLine),
+    ];
+    for (const c of this.chunks) this.group.add(c.group);
     this.group.userData.world = true;
   }
 
@@ -294,11 +297,13 @@ export class Decor {
         }
       }
     }
-    this.bushLine.count = nb; this.boulderLine.count = nr;
     for (const [m, n] of [[this.tufts, nt], [this.flowers, nf], [this.pebbles, np], [this.bushes, nb], [this.boulders, nr]] as const) {
       m.count = n;
       m.instanceMatrix.needsUpdate = true;
       if (m.instanceColor) m.instanceColor.needsUpdate = true;
     }
+    for (const c of this.chunks) c.rebuild();
   }
+
+  cull(cam: THREE.Vector3, fogFar: number) { for (const c of this.chunks) c.cull(cam, fogFar); }
 }
