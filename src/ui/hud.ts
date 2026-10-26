@@ -105,6 +105,7 @@ export class Hud {
         <div class="settings">
           <label for="volMusic">音乐</label><input type="range" id="volMusic" min="0" max="1" step="0.05">
           <label for="volSfx">音效</label><input type="range" id="volSfx" min="0" max="1" step="0.05">
+          <label for="volAmb">环境</label><input type="range" id="volAmb" min="0" max="1" step="0.05">
           <label for="seasonLen">季节长度</label>
           <select id="seasonLen"><option value="3">每季 3 天（一年 48 分钟）</option><option value="4">每季 4 天（一年 64 分钟）</option><option value="6">每季 6 天（一年 96 分钟）</option></select>
           <label for="rotMode">转动方式</label>
@@ -142,6 +143,7 @@ export class Hud {
     $('#muteBtn', root).addEventListener('click', () => { this.audio.muted = !this.audio.muted; hooks.audio({ muted: this.audio.muted }); this.renderAudio(); });
     $<HTMLInputElement>('#volMusic', root).addEventListener('input', e => { this.audio.music = Number((e.target as HTMLInputElement).value); hooks.audio({ music: this.audio.music }); });
     $<HTMLInputElement>('#volSfx', root).addEventListener('input', e => { this.audio.sfx = Number((e.target as HTMLInputElement).value); hooks.audio({ sfx: this.audio.sfx }); });
+    $<HTMLInputElement>('#volAmb', root).addEventListener('input', e => { this.audio.amb = Number((e.target as HTMLInputElement).value); hooks.audio({ amb: this.audio.amb }); });
     $<HTMLSelectElement>('#seasonLen', root).addEventListener('change', e => hooks.seasonDays(Number((e.target as HTMLSelectElement).value)));
     $<HTMLSelectElement>('#rotMode', root).addEventListener('change', e => hooks.rotateMode((e.target as HTMLSelectElement).value as RotateMode));
     $('#speed', root).addEventListener('click', e => {
@@ -238,11 +240,12 @@ export class Hud {
     });
   }
 
-  private audio: AudioSettings = { music: 0.6, sfx: 0.7, muted: false };
+  private audio: AudioSettings = { music: 0.6, sfx: 0.7, amb: 0.7, muted: false };
   setAudio(a: AudioSettings, mode: RotateMode) {
     this.audio = { ...a };
     $<HTMLInputElement>('#volMusic', this.root).value = String(a.music);
     $<HTMLInputElement>('#volSfx', this.root).value = String(a.sfx);
+    $<HTMLInputElement>('#volAmb', this.root).value = String(a.amb);
     $<HTMLSelectElement>('#rotMode', this.root).value = mode;
     this.renderAudio();
   }

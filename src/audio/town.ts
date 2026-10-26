@@ -1,8 +1,10 @@
 // The town you can hear: every building near the camera makes its own sound, panned to where it
-// stands on screen and louder the closer you zoom in. All synthesised, no sample files.
+// stands on screen and louder the closer you zoom in. Recorded sounds (world.json) where we have them,
+// synthesised ones until they load and for the few we don't (ship horn, steam, turbine).
 //   beds   – continuous layers whose volume follows how much of it is nearby (crowd, industry, water, fire)
 //   events – short sounds on a timer per building type (axe, saw, anvil, sheep, splash, horn …)
 import { familyOf, type BuildingId } from '../sim/data';
+import { clip, loopSource, pickOf, snippet, type WSample } from './samples';
 
 export interface Source { type: BuildingId; w: number; pan: number; working: boolean; fire: boolean }
 
@@ -25,7 +27,9 @@ const EV_OF: Partial<Record<BuildingId, [Ev, number, number]>> = {
 };
 
 export class TownSounds {
-  private beds = new Map<Bed, { g: GainNode; p: StereoPannerNode }>();
+  private beds = new Map<Bed, { g: GainNode; p: StereoPannerNode; synth: GainNode }>();
+  private rec = new Map<string, WSample>();
+  private recBed = new Set<Bed>();
   private timers = new Map<Ev, number>();
   private crowdT = 0;
   private crowdW = 0; private crowdPan = 0;
@@ -76,8 +80,9 @@ export class TownSounds {
     const mk = (b: Bed, head: AudioNode) => {
       const g = ctx.createGain(); g.gain.value = 0;
       const p = ctx.createStereoPanner();
-      head.connect(g).connect(p).connect(this.out);
-      this.beds.set(b, { g, p });
+      const synth = ctx.createGain();
+      head.connect(synth).connect(g).connect(p).connect(this.out);
+      this.beds.set(b, { g, p, synth });
     };
     // crowd murmur: band of noise with a slow wobble, plus babble blips scheduled in update()
     {
@@ -128,6 +133,21 @@ export class TownSounds {
     }
   }
 
+  /** recordings arrived: beds switch over from the synthesised layers */
+  useSamples(m: Map<string, WSample>) {
+    this.rec = m;
+    for (const [b, n] of this.beds) {
+      const s = m.get(b);
+      if (!s) continue;
+      const g = this.ctx.createGain(); g.gain.value = 0;
+      loopSource(this.ctx, s, g);
+      g.connect(n.g);
+      g.gain.setTargetAtTime(1, this.ctx.currentTime, 0.5);
+      n.synth.gain.setTargetAtTime(0, this.ctx.currentTime, 0.5);
+      this.recBed.add(b);
+    }
+  }
+
   /** called a few times a second with what is near the camera */
   update(srcs: Source[], night: number) {
     this.srcs = srcs;
@@ -142,12 +162,14 @@ export class TownSounds {
       acc.set(bed, a);
     }
     const LEVEL: Record<Bed, number> = { crowd: 0.05, industry: 0.09, water: 0.035, fire: 0.16 };
+    const REC: Record<Bed, number> = { crowd: 0.32, industry: 0.22, water: 0.2, fire: 0.5 };
     for (const [b, n] of this.beds) {
       const a = acc.get(b);
       const w = a ? Math.min(1.4, a.w) : 0;
+      const lvl = this.recBed.has(b) ? REC[b] : LEVEL[b];
       // markets and taverns quieten at night, taverns less so
       const k = b === 'crowd' ? 1 - night * 0.55 : 1;
-      n.g.gain.setTargetAtTime(Math.sqrt(w) * LEVEL[b] * k, t, 0.6);
+      n.g.gain.setTargetAtTime(Math.sqrt(w) * lvl * k, t, 0.6);
       n.p.pan.setTargetAtTime(a && a.w > 0 ? a.pan / a.w : 0, t, 0.6);
     }
     const c = acc.get('crowd');
@@ -162,10 +184,11 @@ export class TownSounds {
     this.crowdT -= dt;
     if (this.crowdT <= 0) {
       this.crowdT = 0.07 + Math.random() * 0.2;
-      if (this.crowdW > 0.04) this.voice(this.crowdPan + (Math.random() - 0.5) * 0.4, Math.sqrt(this.crowdW) * 0.035);
+      if (this.crowdW > 0.04 && !this.recBed.has('crowd')) this.voice(this.crowdPan + (Math.random() - 0.5) * 0.4, Math.sqrt(this.crowdW) * 0.035);
     }
     // fire crackles
-    for (const s of this.srcs) if (s.fire && Math.random() < dt * 12 * Math.min(1, s.w * 2)) this.crackle(s.pan, Math.sqrt(s.w) * 0.12);
+    const crack = this.recBed.has('fire') ? 3 : 12;   // the recording crackles by itself
+    for (const s of this.srcs) if (s.fire && Math.random() < dt * crack * Math.min(1, s.w * 2)) this.crackle(s.pan, Math.sqrt(s.w) * 0.12);
     // per type
     const best = new Map<Ev, Source[]>();
     for (const s of this.srcs) {
@@ -190,8 +213,16 @@ export class TownSounds {
   }
 
   // ---------- event sounds ----------
+  /** one of the recorded variants of a sound; false if none is loaded */
+  private hit(base: string, t: number, pan: number, vol: number, rate = 1, o: { lp?: number; hp?: number } = {}) {
+    const s = pickOf(this.rec, base);
+    if (!s) return false;
+    clip(this.ctx, s.b, this.out, { at: t, pan, vol, rate: rate * (0.93 + Math.random() * 0.14), ...o });
+    return true;
+  }
   private play(ev: Ev, pan: number, v: number) {
     const t = this.ctx.currentTime + 0.02;
+    if (this.rec.size && this.playRec(ev, t, pan, v)) return;
     switch (ev) {
       case 'chop': this.thunk(t, pan, v * 0.5, 850, 110); if (Math.random() < 0.15) this.thunk(t + 0.45, pan, v * 0.4, 800, 100); break;
       case 'hammer': for (let i = 0; i < 3; i++) this.thunk(t + i * 0.28, pan, v * 0.32, 1500, 220); break;
@@ -211,6 +242,55 @@ export class TownSounds {
       case 'kids': for (let i = 0; i < 3; i++) this.voice(pan, v * 0.05, 2.2, t + i * 0.12); break;
     }
   }
+  /** recorded version of each event; false where there is none (horn, steam, turbine) */
+  private playRec(ev: Ev, t: number, pan: number, v: number) {
+    const r = this.rec;
+    switch (ev) {
+      case 'chop':
+        this.hit('chop', t, pan, v * 0.55, 0.9);
+        if (Math.random() < 0.2) this.hit('chop', t + 0.5 + Math.random() * 0.15, pan, v * 0.45, 0.9);
+        return true;
+      case 'hammer': for (let i = 0; i < 3; i++) this.hit('hammer', t + i * (0.3 + Math.random() * 0.05), pan, v * 0.4); return true;
+      case 'saw': {
+        const s = r.get('saw'); if (!s) return false;
+        const dur = 1.2 + Math.random() * 0.9;
+        clip(this.ctx, s.b, this.out, { at: t, pan, vol: v * 0.3, rate: 0.75 + Math.random() * 0.1, dur, offset: Math.random() * 0.4, lp: 7000 });
+        return true;
+      }
+      case 'anvil': {
+        // the recorded strike plus a quiet ring so it reads as an anvil rather than a plate
+        const n = 1 + Math.floor(Math.random() * 3);
+        for (let i = 0; i < n; i++) {
+          this.hit('anvil', t + i * 0.42, pan, v * 0.4, 1.15);
+          this.ping(t + i * 0.42, pan, v * 0.07, 1150 + Math.random() * 60);
+        }
+        return true;
+      }
+      case 'pick': return this.hit('pick', t, pan, v * 0.4);
+      case 'cart': {
+        const s = r.get('cart'); if (!s) return false;
+        for (let i = 0; i < 2; i++) clip(this.ctx, s.b, this.out, { at: t + i * 0.9, pan, vol: v * 0.3, rate: 0.8, lp: 3000 });
+        return true;
+      }
+      case 'splash': return this.hit('splash', t, pan, v * 0.32, 0.85, { lp: 5000 });
+      case 'sheep': {
+        const s = r.get('sheep'); if (!s) return false;
+        snippet(this.ctx, s, this.out, 2.4, { at: t, pan, vol: v * 0.55, hp: 280 });
+        return true;
+      }
+      case 'creak': return this.hit('creak', t, pan, v * 0.32, 0.8);
+      case 'clink': this.hit('clink', t, pan, v * 0.2); return this.hit('clink', t + 0.07 + Math.random() * 0.1, pan, v * 0.16);
+      case 'loom': for (let i = 0; i < 4; i++) this.hit('loom', t + i * 0.17, pan, v * 0.22, 1.2); return true;
+      case 'chime': return this.hit('bell_hit', t, pan, v * 0.12, 1.6);
+      case 'kids': {
+        const s = r.get('crowd'); if (!s) return false;
+        snippet(this.ctx, s, this.out, 2.2, { at: t, pan, vol: v * 0.35, rate: 1.35, hp: 400 });
+        return true;
+      }
+    }
+    return false;
+  }
+
   private thunk(t: number, pan: number, v: number, f: number, low: number) {
     const g = this.chain(pan, v, t, 0.2);
     this.env(g, t, 0.003, v, 0.09);

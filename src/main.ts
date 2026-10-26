@@ -50,7 +50,7 @@ async function boot() {
   let rotMode: RotateMode = 'orbit';
   try { if (localStorage.getItem('cozy-harbor-rotate2') === 'look') rotMode = 'look'; } catch { /* ignore */ }
   view.rig.mode = rotMode;
-  view.onThunder = d => setTimeout(() => sound.play('thunder'), d * 1000);
+  view.onThunder = d => sound.thunder(d);
 
   const allTypes = (Object.keys(BUILDINGS) as BuildingId[]).filter(t => t !== 'road' && BUILDINGS[t].buildable !== false);
   const hud = new Hud(hudEl, {

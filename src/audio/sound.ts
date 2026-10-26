@@ -1,16 +1,18 @@
 // Audio: sample-based music (music.ts), weather and time-of-day ambience, and sound effects.
 // Instrument samples are FluidR3_GM (CC BY 3.0); interface, placement and day-ambience samples are
-// Kenney's (CC0, public/audio/sfx.json); building sounds and weather are synthesised (town.ts).
+// Kenney's (CC0, public/audio/sfx.json). Weather, nature and building sounds are field recordings
+// (public/audio/world.json, see CREDITS.md); the synthesised versions only play until those load.
 import { Music, Sampler, SONGS, Inst } from './music';
 import { TownSounds, Source } from './town';
+import { loadPack, loopSource, clip, snippet, pickOf, WSample } from './samples';
 
-export interface AudioSettings { music: number; sfx: number; muted: boolean }
+export interface AudioSettings { music: number; sfx: number; amb: number; muted: boolean }
 const KEY = 'cozy-harbor-audio';
 const PENTA = [72, 74, 76, 79, 81, 84, 86, 88];
 
 export class Sound {
   ctx: AudioContext | null = null;
-  settings: AudioSettings = { music: 0.6, sfx: 0.7, muted: false };
+  settings: AudioSettings = { music: 0.6, sfx: 0.7, amb: 0.7, muted: false };
   private master!: GainNode;
   private musicBus!: GainNode;
   private musicFilter!: BiquadFilterNode;
@@ -32,6 +34,12 @@ export class Sound {
   private townBus!: GainNode;
   private dayGain!: GainNode;
   private samples = new Map<string, AudioBuffer>();
+  /** recorded ambience and building sounds, once loaded */
+  private world = new Map<string, WSample>();
+  private beds: Record<string, GainNode> = {};
+  private season = 'spring';
+  private lastThunder = -99;
+  private duck!: GainNode;
 
   constructor() {
     try {
@@ -55,7 +63,8 @@ export class Sound {
     this.musicFilter.type = 'lowpass';
     this.musicFilter.frequency.value = 12000;
     this.musicBus = ctx.createGain();
-    this.musicBus.connect(this.musicFilter).connect(this.master);
+    this.duck = ctx.createGain();   // music dips under a close thunderclap
+    this.musicBus.connect(this.musicFilter).connect(this.duck).connect(this.master);
     this.sfxBus = ctx.createGain(); this.sfxBus.connect(this.master);
     this.ambBus = ctx.createGain(); this.ambBus.connect(this.master);
     this.townBus = ctx.createGain(); this.townBus.connect(this.master);
@@ -68,6 +77,7 @@ export class Sound {
     this.startAmbience();
     this.town = new TownSounds(ctx, this.townBus, this.noise);
     this.loadSamples();
+    this.loadWorld();
     this.apply();
     this.music.want(this.wantSong, this.wantEra, this.wantMood);
     setInterval(() => this.tick(), 50);
@@ -84,7 +94,7 @@ export class Sound {
     this.master.gain.setTargetAtTime(s.muted ? 0 : 1, t, 0.05);
     this.musicBus.gain.setTargetAtTime(s.music * 4.0, t, 0.1);
     this.sfxBus.gain.setTargetAtTime(s.sfx * 1.6, t, 0.05);
-    this.ambBus.gain.setTargetAtTime(s.sfx * 0.8, t, 0.1);
+    this.ambBus.gain.setTargetAtTime((s.amb ?? 0.7) * 1.1, t, 0.1);
     this.townBus.gain.setTargetAtTime(s.sfx * 1.5, t, 0.1);
   }
 
@@ -95,14 +105,33 @@ export class Sound {
     this.wantSong = SONGS[song] ? song : 'spring';
     this.wantEra = era;
     this.wantMood = tense ? 'tense' : 'calm';
+    this.season = season;
     if (!this.ctx) return;
     this.music.want(this.wantSong, era, this.wantMood);
-    if (this.dayGain) this.dayGain.gain.setTargetAtTime(Math.max(0, 1 - m.night * 1.3) * (1 - m.rain * 0.8) * (1 - m.snow * 0.6) * 0.32, this.ctx.currentTime, 1.5);
-    const t = this.ctx.currentTime;
-    this.rainGain.gain.setTargetAtTime(m.rain * 0.22, t, 0.5);
-    this.windGain.gain.setTargetAtTime(0.012 + m.storm * 0.09 + m.rain * 0.02 + m.snow * 0.03, t, 0.5);
-    this.waveGain.gain.setTargetAtTime(0.06 + m.storm * 0.05, t, 0.5);
+    const t = this.ctx.currentTime, rec = !!this.beds.rain_l;
+    const day = Math.max(0, 1 - m.night * 1.3);
+    if (this.dayGain) this.dayGain.gain.setTargetAtTime(day * (1 - m.rain * 0.8) * (1 - m.snow * 0.6) * (rec ? 0.2 : 0.32), t, 1.5);
+    // synthesised stand-ins until the recordings arrive
+    this.rainGain.gain.setTargetAtTime(rec ? 0 : m.rain * 0.22, t, 0.5);
+    this.windGain.gain.setTargetAtTime(rec ? 0 : 0.012 + m.storm * 0.09 + m.rain * 0.02 + m.snow * 0.03, t, 0.5);
+    this.waveGain.gain.setTargetAtTime(rec ? 0 : 0.06 + m.storm * 0.05, t, 0.5);
     this.musicFilter.frequency.setTargetAtTime(12000 - m.rain * 6000 - m.storm * 3000, t, 0.8);
+    if (!rec) return;
+    // recorded layers: light rain gives way to a downpour as the storm builds; birds by day in the warm
+    // seasons, crickets on summer nights; wind picks up in storms and snow; the harbour is always there
+    const birdK: Record<string, number> = { spring: 1, summer: 0.75, autumn: 0.4, winter: 0 };
+    const bugK: Record<string, number> = { spring: 0.5, summer: 1, autumn: 0.6, winter: 0 };
+    const dry = (1 - Math.min(1, m.rain) * 0.9) * (1 - m.snow * 0.85);
+    const lvl: Record<string, number> = {
+      rain_l: m.rain * (1 - m.storm * 0.5) * 0.9,
+      rain_h: m.rain * m.storm * 0.8,
+      wind: 0.1 + m.snow * 0.22 + m.rain * 0.06,
+      gale: m.storm * 0.38 + m.snow * 0.1,
+      waves: 0.26 + m.storm * 0.16,
+      birds: day * (birdK[season] ?? 0.5) * dry * 0.4,
+      night: Math.max(0, m.night - 0.3) / 0.7 * (bugK[season] ?? 0.5) * dry * 0.16,
+    };
+    for (const [k, v] of Object.entries(lvl)) this.beds[k]?.gain.setTargetAtTime(v, t, 1.2);
   }
   currentSong() { return this.music?.current() ?? ''; }
 
@@ -111,13 +140,7 @@ export class Sound {
 
   private async loadSamples() {
     try {
-      const res = await fetch(new URL('audio/sfx.json', document.baseURI).href);
-      const data: Record<string, string> = await res.json();
-      await Promise.all(Object.entries(data).map(async ([k, b64]) => {
-        const bin = atob(b64), arr = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
-        this.samples.set(k, await this.ctx!.decodeAudioData(arr.buffer));
-      }));
+      for (const [k, v] of await loadPack(this.ctx!, 'audio/sfx.json')) this.samples.set(k, v.b);
     } catch { return; /* no samples: the synthesised fallbacks play instead */ }
     // daytime birdsong and breeze under everything
     const day = this.samples.get('amb_day');
@@ -129,6 +152,21 @@ export class Sound {
       s.start();
     }
   }
+  /** weather, nature and building recordings; a bigger download, so they fade in when ready */
+  private async loadWorld() {
+    try { this.world = await loadPack(this.ctx!, 'audio/world.json'); } catch { return; }
+    const ctx = this.ctx!;
+    for (const k of ['waves', 'wind', 'gale', 'rain_l', 'rain_h', 'birds', 'night']) {
+      const s = this.world.get(k);
+      if (!s) continue;
+      const g = ctx.createGain(); g.gain.value = 0;
+      g.connect(this.ambBus);
+      loopSource(ctx, s, g);
+      this.beds[k] = g;
+    }
+    this.town?.useSamples(this.world);
+  }
+
   /** play a sample; returns false if it is not loaded (caller falls back to a synth) */
   private sample(name: string, vol: number, rate = 1, at = 0) {
     const b = this.samples.get(name);
@@ -149,9 +187,16 @@ export class Sound {
     const dt = 0.05;
     // daytime birds and gulls, night crickets
     this.birdT -= dt; this.gullT -= dt; this.cricketT -= dt;
-    if (this.birdT <= 0) { this.birdT = 3 + Math.random() * 6; if (this.w.sunny > 0.5 && this.w.night < 0.3 && this.w.snow < 0.3) this.bird(); }
-    if (this.gullT <= 0) { this.gullT = 8 + Math.random() * 14; if (this.w.night < 0.3 && this.w.storm < 0.3) this.gull(); }
-    if (this.cricketT <= 0) { this.cricketT = 0.6 + Math.random() * 0.9; if (this.w.night > 0.6 && this.w.rain < 0.2 && this.w.snow < 0.2) this.cricket(); }
+    const rec = !!this.beds.birds, gulls = this.world.get('gulls');
+    if (this.birdT <= 0) { this.birdT = 3 + Math.random() * 6; if (!rec && this.w.sunny > 0.5 && this.w.night < 0.3 && this.w.snow < 0.3) this.bird(); }
+    if (this.gullT <= 0) {
+      this.gullT = 10 + Math.random() * 16;
+      if (this.w.night < 0.3 && this.w.storm < 0.3 && this.season !== 'winter') {
+        if (gulls) snippet(this.ctx, gulls, this.ambBus, 3 + Math.random() * 3, { vol: 0.22, pan: Math.random() * 1.2 - 0.6, hp: 500 });
+        else this.gull();
+      }
+    }
+    if (this.cricketT <= 0) { this.cricketT = 0.6 + Math.random() * 0.9; if (!rec && this.w.night > 0.6 && this.w.rain < 0.2 && this.w.snow < 0.2) this.cricket(); }
   }
 
   // ---------- building blocks ----------
@@ -299,21 +344,45 @@ export class Sound {
       case 'produce':
         this.note('kalimba', PENTA[Math.floor(Math.random() * PENTA.length)], t, 0.16);
         break;
-      case 'coin':
-        this.note('glockenspiel', 95, t, 0.25);
-        this.note('glockenspiel', 100, t + 0.08, 0.25);
+      case 'coin': {
+        const c = pickOf(this.world, 'coins');
+        if (c) { clip(ctx, c.b, out, { at: t, vol: 0.45, rate: 0.95 + Math.random() * 0.1 }); this.note('glockenspiel', 100, t + 0.06, 0.1); }
+        else { this.note('glockenspiel', 95, t, 0.25); this.note('glockenspiel', 100, t + 0.08, 0.25); }
         break;
+      }
       case 'bell':
         [67, 64, 60].forEach((m, i) => this.note('tubular_bells', m, t + i * 0.7, 0.35));
         break;
       case 'season':
         [60, 64, 67, 72, 76].forEach((m, i) => this.note('celesta', m + 12, t + i * 0.12, 0.35));
         break;
-      case 'thunder':
-        this.hiss(t, 0.005, 0.35, 0.25, 'highpass', 1500, this.ambBus);
-        this.hiss(t + 0.05, 0.08, 0.6, 3.2, 'lowpass', 320, this.ambBus, 60);
-        this.hiss(t + 0.4, 0.2, 0.3, 2.4, 'lowpass', 180, this.ambBus, 50);
-        break;
+      case 'thunder': this.thunder(0); break;
+    }
+  }
+
+  /**
+   * Thunder after a lightning flash. The gap between flash and sound says how far away the strike was:
+   * a short gap is a sharp crack that briefly dips the music, a long one a dull far-off roll.
+   */
+  thunder(delay: number) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const t = ctx.currentTime + delay;
+    const near = delay < 0.6, far = delay > 1.15;
+    const busy = t - this.lastThunder < 6;   // the last roll is still going: keep this one under it
+    this.lastThunder = t;
+    const s = far && Math.random() < 0.5 ? this.world.get('thunder_far') : pickOf(this.world, 'thunder');
+    if (!s) {
+      this.hiss(t, 0.005, 0.35, 0.25, 'highpass', 1500, this.ambBus);
+      this.hiss(t + 0.05, 0.08, 0.6, 3.2, 'lowpass', 320, this.ambBus, 60);
+      this.hiss(t + 0.4, 0.2, 0.3, 2.4, 'lowpass', 180, this.ambBus, 50);
+      return;
+    }
+    const vol = (near ? 1.6 : far ? 0.75 : 1.1) * (busy ? 0.5 : 1);
+    clip(ctx, s.b, this.ambBus, { at: t, vol, rate: 0.88 + Math.random() * 0.14, lp: near ? 14000 : far ? 900 : 2600 });
+    if (near && !busy) {
+      this.duck.gain.setTargetAtTime(0.5, t, 0.04);
+      this.duck.gain.setTargetAtTime(1, t + 1.2, 1.5);
     }
   }
 }
