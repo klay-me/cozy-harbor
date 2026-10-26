@@ -6,6 +6,7 @@ import {
   HEAT_PER_RESIDENT, POWER_HEAT_PER_RESIDENT, coldness, SEASON_TEMP, COLDER_PER_YEAR, COLDER_MAX, WEATHER_TEMP, POLLUTION_RADIUS,
   DAY_LENGTH, SEASON_DAYS, START_HOUR, SEASONS, SEASON_IDS, SeasonId,
   SERVICE_ALSO, familyOf, FOODS, FoodId, ProtectId, FIRE, PLAGUE, CRIME, STRIKE, HUNGER, PER_DAY, DEBT,
+  ELEC_BOOST, LIGHT, COLD_STORE, SPOIL, SPOIL_SUMMER, COLD_SNAP, DIFFICULTY, DifficultyId,
 } from './data';
 
 export interface Bld {
@@ -42,6 +43,7 @@ export interface Bld {
   fed: number;             // 0..1 share of hunger stilled
   plague: number;          // seconds since infection (0 = healthy)
   paused: boolean;         // closed by the player: no workers, quarter upkeep
+  elecOff: boolean;        // the player switched off its optional power draw (no ELEC_BOOST)
 }
 
 export interface ProdEvent { id: number; good: GoodId; n: number }
@@ -138,7 +140,13 @@ export class Game {
   workforce = {} as Record<TierId, { have: number; need: number }>;
   taxRate = 0;
   upkeepRate = 0;
-  power = { gen: 0, use: 0, ratio: 1 };
+  /**
+   * The grid. `must` is what has to be fed (factories that need power, electric light, electric heating);
+   * `boost` is optional draw (workshops' ELEC_BOOST, cold stores) that only gets what is left over.
+   * ratio: share of `must` met; boostRatio: share of `boost` met; cold: share of storage kept cold.
+   */
+  power = { gen: 0, use: 0, ratio: 1, must: 0, boost: 0, boostRatio: 1, light: 0, cold: 0 };
+  difficulty: DifficultyId = 'normal';
   research = { current: null as TechId | null, points: 0, rate: 0, levels: {} as Partial<Record<TechId, number>>, saved: {} as Partial<Record<TechId, number>> };
   mods = emptyMods();
   pollution: Float32Array;
@@ -233,8 +241,22 @@ export class Game {
     const year = Math.floor(seasonPos / 4);
     t -= Math.min(COLDER_MAX, year * COLDER_PER_YEAR) * Math.max(0, Math.min(1, (12 - t) / 18));
     t += 4 * Math.cos(((hour - 15) / 24) * Math.PI * 2);
+    t -= this.snapDrop(seasonPos);
     return t;
   }
+  /** the winter day (1-based) the cold snap falls on in a given year, or 0 for none */
+  snapDay(year: number) { return year < COLD_SNAP.fromYear ? 0 : 2 + (year * 5) % Math.max(1, this.seasonDays - 1); }
+  /** how many degrees the cold snap takes off at this point of the calendar (eases in and out over a few hours) */
+  snapDrop(seasonPos: number) {
+    if (Math.floor(seasonPos) % 4 !== 3) return 0;
+    const year = Math.floor(seasonPos / 4) + 1, sd = this.snapDay(year);
+    if (!sd) return 0;
+    const d = (seasonPos % 1) * this.seasonDays - (sd - 1);
+    if (d < 0 || d >= 1) return 0;
+    const k = Math.min(1, d / 0.15, (1 - d) / 0.15);
+    return k * Math.min(COLD_SNAP.maxDrop, COLD_SNAP.drop + (year - COLD_SNAP.fromYear) * COLD_SNAP.perYear) * DIFFICULTY[this.difficulty].snap;
+  }
+  get coldSnap() { return this.snapDrop(this.seasonPos) > 0; }
   private calcTemp() {
     const w = this.weather;
     const wt = WEATHER_TEMP[w.prev] + (WEATHER_TEMP[w.cur] - WEATHER_TEMP[w.prev]) * w.blend;
@@ -242,7 +264,17 @@ export class Game {
   }
   prodFactor(type: BuildingId) {
     const f = familyOf(type), w = WEATHER[this.weather.cur].prod, s = SEASONS[this.season].prod;
-    return (w[type] ?? w[f] ?? 1) * (s[type] ?? s[f] ?? 1);
+    const ice = this.coldSnap ? COLD_SNAP.fishing[type] ?? 1 : 1;
+    return (w[type] ?? w[f] ?? 1) * (s[type] ?? s[f] ?? 1) * ice;
+  }
+  /** the grid has a power station: optional draws (ELEC_BOOST, cold stores) switch on */
+  get gridUp() { return this.era >= 3 && this.plants > 0; }
+  /** working power stations last step (a solar farm at night still counts: the grid exists) */
+  plants = 0;
+  /** extra production share the grid gives this building right now */
+  elecBoost(b: Bld) {
+    const d = BUILDINGS[b.type];
+    return d.elec && d.cycle && !b.elecOff && this.gridUp ? ELEC_BOOST * this.power.boostRatio : 0;
   }
   /** research bonus for a building (upgraded buildings share their line's bonus) */
   prodBonus(type: BuildingId) {
@@ -356,6 +388,11 @@ export class Game {
     return [Math.floor(c.gold * f) ? `${Math.floor(c.gold * f)} 金币` : '', ...got].filter(Boolean).join('、');
   }
   /** close or reopen a workplace */
+  toggleElec(b: Bld) {
+    if (!BUILDINGS[b.type].elec) return;
+    b.elecOff = !b.elecOff;
+    this.notify(b.elecOff ? `${BUILDINGS[b.type].name}断开了电：不再用电，也没有通电加成` : `${BUILDINGS[b.type].name}接通了电`, 'info');
+  }
   togglePause(b: Bld) {
     if (!BUILDINGS[b.type].workers) return;
     b.paused = !b.paused;
@@ -445,7 +482,7 @@ export class Game {
     const b: Bld = {
       id, type, x, z, w, h, rot: rot & 3, variant: (x * 7 + z * 13) % 4,
       progress: 0, loaded: false, staff: 0, env: 1, working: false, status: '', connected: false, gen: 0,
-      tier: 'peasant', residents: 0, sick: 0, happy: 0, parts: [], needs: [], warm: 1, coldT: 0, growT: 0, cover: new Set(), heaters: [], protect: new Set(), fire: 0, strike: 0, hungerT: 0, fed: 1, plague: 0, paused: false,
+      tier: 'peasant', residents: 0, sick: 0, happy: 0, parts: [], needs: [], warm: 1, coldT: 0, growT: 0, cover: new Set(), heaters: [], protect: new Set(), fire: 0, strike: 0, hungerT: 0, fed: 1, plague: 0, paused: false, elecOff: false,
     };
     this.buildings.set(id, b);
     for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
@@ -860,14 +897,15 @@ export class Game {
     const broke = this.gold < 0;
     if (broke) this.once('broke', '金库空了！工人领不到工钱会不开心，拖久了会罢工。卖掉多余的货物或拆掉闲置的建筑', 'warn', 'gold');
     else this.flags.delete('broke');
-    const powerRatio = this.power.ratio;
-    let upkeep = 0, gen = 0, use = 0, rp = 0;
+    const powerRatio = this.power.ratio, gridUp = this.gridUp, diff = DIFFICULTY[this.difficulty];
+    let upkeep = 0, gen = 0, use = 0, boostUse = 0, coldCap = 0, rp = 0, plants = 0;
     const W = WEATHER[this.weather.cur];
 
     for (const b of this.buildings.values()) {
       const def = BUILDINGS[b.type];
+      if (def.powerGen && b.connected && !b.paused) plants++;
       // idle workshops (no staff, no input, strike, fire) only cost a quarter
-      const fee = def.workers && (!b.working || b.paused) ? def.upkeep * 0.25 : def.upkeep;
+      const fee = (def.workers && (!b.working || b.paused) ? def.upkeep * 0.25 : def.upkeep) * diff.upkeep;
       upkeep += fee;
       this.ledger.add('gold', 'out', `维护·${def.name}`, fee / 60 * dt);
       b.gen = 0;
@@ -881,7 +919,13 @@ export class Game {
         remain[def.workers.tier] -= got;
         b.staff = got / need;
       } else b.staff = b.connected ? 1 : 0;
-      if (!def.workers && !def.powerGen && !def.cycle && !def.heating && def.pollution === undefined) { b.working = b.connected; b.status = b.connected ? '' : '没有连上道路'; continue; }
+      // a powered warehouse is a cold store
+      if (def.storage && def.elec && b.connected && gridUp && !b.elecOff) { boostUse += def.elec; coldCap += def.storage * this.power.boostRatio; }
+      if (!def.workers && !def.powerGen && !def.cycle && !def.heating && def.pollution === undefined) {
+        b.working = b.connected;
+        b.status = !b.connected ? '没有连上道路' : def.storage && def.elec && gridUp && !b.elecOff ? (this.power.boostRatio > 0.95 ? '通电冷藏：鱼、菜、面包坏得慢' : `冷藏电力不足 (${Math.round(this.power.boostRatio * 100)}%)`) : '';
+        continue;
+      }
       if (!b.connected) { b.status = '没有连上道路'; b.working = false; continue; }
       if (b.fire > 0) { b.status = '着火了！'; b.working = false; continue; }
       if (b.strike > 0) { b.strike = Math.max(0, b.strike - dt); b.status = `罢工中（还有 ${Math.ceil(b.strike)} 秒）`; b.working = false; continue; }
@@ -945,7 +989,9 @@ export class Game {
       let pf = 1;
       if (def.power) { use += def.power * b.staff; pf = powerRatio; if (pf < 0.05) { b.status = '没有电'; b.working = false; continue; } }
       if (def.powerGen) { b.gen = def.powerGen * b.staff; gen += b.gen; }
-      const mult = 1 + this.prodBonus(b.type) + this.boostAt(b);
+      const eb = this.elecBoost(b);
+      if (def.elec && gridUp && !b.elecOff) boostUse += def.elec * b.staff;
+      const mult = 1 + this.prodBonus(b.type) + this.boostAt(b) + eb;
       b.progress += (dt / def.cycle) * b.staff * b.env * wf * pf * mult;
       if (b.progress >= 1) {
         b.progress -= 1;
@@ -959,7 +1005,7 @@ export class Game {
       }
       b.working = true;
       const pct = Math.round((wf * b.env * mult - 1) * 100);
-      b.status = staffNote || (pf < 0.99 ? `电力不足 (${Math.round(pf * 100)}%)` : def.powerGen ? `发电 ${b.gen.toFixed(0)}` : Math.abs(pct) >= 1 ? `运转中（${pct > 0 ? '+' : ''}${pct}%）` : '运转中');
+      b.status = staffNote || (pf < 0.99 ? `电力不足 (${Math.round(pf * 100)}%)` : def.powerGen ? `发电 ${b.gen.toFixed(0)}` : Math.abs(pct) >= 1 ? `运转中（${pct > 0 ? '+' : ''}${pct}%${eb > 0.01 ? '，通电' : ''}）` : '运转中');
     }
 
     // ---- food: each tier eats what it likes from the shared store, spread across the kinds in stock
@@ -1028,9 +1074,31 @@ export class Game {
       fuelOk[f] = r;
     }
 
-    this.power = { gen, use, ratio: use > 0 ? Math.min(1, gen / use) : 1 };
-    if (use > gen + 0.01 && use > 0) this.once('power', '电力不足：用电建筑只能按比例运转，多建发电站吧', 'warn', 'power');
-    else this.flags.delete('power');
+    // electric light for the tiers that want it, more after dark
+    let light = 0;
+    if (this.era >= 3) for (const t of TIER_IDS) light += this.pop[t] * (TIERS[t].light ?? 0);
+    light *= LIGHT.day + (LIGHT.night - LIGHT.day) * this.night;
+    use += light;
+    const spare = Math.max(0, gen - use);
+    this.plants = plants;
+    this.power = {
+      gen, use: use + boostUse, must: use, boost: boostUse, light,
+      ratio: use > 0 ? Math.min(1, gen / use) : 1,
+      boostRatio: boostUse > 0 ? Math.min(1, spare / boostUse) : 1,
+      cold: this.cap > 0 ? Math.min(1, coldCap / this.cap) : 0,
+    };
+    if (use > gen + 0.01 && use > 0) this.throttle('power', 240, gen > 0.01 ? '停电了：发电跟不上，住户没有电灯、用电的工厂按比例减产。多建发电站，或者关掉一些工厂的通电增产' : '城里还没有电：技工和市民想要电灯，研究蒸汽机后建燃煤电厂吧', 'warn', undefined, 'power');
+    if (gridUp && boostUse > 0 && this.power.boostRatio < 0.5) this.once('boost', '电不够分：工厂的通电增产和仓库冷藏只能用剩下的电。多建发电站，或在信息面板里关掉一些建筑的通电', 'info', 'power');
+    else if (this.power.boostRatio > 0.9) this.flags.delete('boost');
+
+    // ---- spoilage: fresh food rots in store; powered warehouses keep it cold
+    const rot = diff.spoil * (this.season === 'summer' ? SPOIL_SUMMER : 1) * (1 - COLD_STORE * this.power.cold);
+    for (const [g, r] of Object.entries(SPOIL) as [GoodId, number][]) {
+      const n = this.storage[g] * r * rot / 60 * dt;
+      if (n <= 0) continue;
+      this.storage[g] -= n;
+      this.ledger.add(g, 'out', '腐烂', n);
+    }
 
     // ---- houses: happiness, growth, sickness, tax
     let tax = 0, happySum = 0, houses = 0, coldHouses = 0;
@@ -1039,7 +1107,10 @@ export class Game {
       if (b.type !== 'house') continue;
       const T = TIERS[b.tier];
       const com = Object.keys(T.comforts) as GoodId[];
-      const comV = com.length ? com.reduce((a, g) => a + (this.storage[g] >= 1 ? 1 : this.supply[g]), 0) / com.length : 1;
+      // electric light counts as one more comfort once the town reaches the industrial era
+      const lit = T.light && this.era >= 3 ? (this.power.gen > 0.01 ? this.power.ratio : 0) : -1;
+      const comN = com.length + (lit >= 0 ? 1 : 0);
+      const comV = comN ? (com.reduce((a, g) => a + (this.storage[g] >= 1 ? 1 : this.supply[g]), 0) + Math.max(0, lit)) / comN : 1;
       // food: how full they are, and how many of their favourite foods are on the shelf
       b.fed += (this.fedRatio[b.tier] - b.fed) * Math.min(1, dt / 2);
       const kinds = T.foods.filter(f => this.storage[f] >= 0.5);
@@ -1072,6 +1143,7 @@ export class Game {
       b.needs = [
         ...T.foods.map(f => ({ label: GOODS[f].name, value: this.storage[f] >= 0.5 ? 1 : 0 })),
         ...com.map(g => ({ label: GOODS[g].name, value: this.storage[g] >= 1 ? 1 : this.supply[g] })),
+        ...(lit >= 0 ? [{ label: '电灯', value: lit }] : []),
         ...T.services.map((s, i) => ({ label: SERVICES[s], value: svc[i] })),
       ];
       let happy = b.parts.reduce((a, p) => a + p.value, 0) + this.mods.happiness;
@@ -1102,7 +1174,7 @@ export class Game {
       if (b.residents < 0) b.residents = 0;
       if (b.residents === target) b.growT = Math.min(b.growT, 4);
       b.status = !b.connected ? '没有连上道路' : b.fire > 0 ? '着火了！' : b.plague > 0 ? '闹瘟疫，有人病倒了' : b.hungerT > HUNGER.leaveSecs ? '饿得受不了，有人要搬走' : b.hungerT > HUNGER.hungrySecs ? '吃不饱，干活没力气' : b.coldT > 30 ? '天太冷，有人生病了' : b.warm < 0.5 && heat ? '家里没有燃料取暖' : this.gold < 0 ? '领不到工钱' : hp >= 80 ? '生活美满' : hp >= 50 ? '还算满意' : '日子不好过';
-      const t1 = b.fire > 0 || b.hungerT > HUNGER.hungrySecs ? 0 : (b.residents - b.sick) * T.tax * (hp / 100) * (hp > 80 ? 1.2 : 1);
+      const t1 = b.fire > 0 || b.hungerT > HUNGER.hungrySecs ? 0 : (b.residents - b.sick) * T.tax * diff.tax * (hp / 100) * (hp > 80 ? 1.2 : 1);
       tax += t1;
       this.ledger.add('gold', 'in', `${T.name}税收`, t1 / 60 * dt);
       happySum += hp; houses++;
@@ -1172,7 +1244,7 @@ export class Game {
 
   // ---------- fire, plague, crime and strikes ----------
   private stepDisasters(dt: number) {
-    const day = dt / DAY_LENGTH;
+    const day = dt / DAY_LENGTH * DIFFICULTY[this.difficulty].disaster;
     const settled = this.time > DAY_LENGTH * 2;       // a grace period at the start
     const wx = this.weather.cur;
     const wet = wx === 'rain' || wx === 'storm' || wx === 'snow';
@@ -1294,6 +1366,10 @@ export class Game {
     if (this.debtDays >= 1) this.notify(`金库已经亏空 ${this.debtDays} 天：大家越来越不满${this.debtDays >= STRIKE.debtDays ? '，工人开始罢工' : '，明天起工人会罢工'}`, 'warn', { cat: 'alert', icon: 'strike' });
     this.flowLeft = { hunger: 0, cold: 0, plague: 0, fire: 0 };
     this.dayStart = { gold: this.gold, pop };
+    // cold snap: warn the day before, announce it when it comes
+    const snapOn = (day: number) => this.snapDrop((day + 0.5) / this.seasonDays);
+    if (snapOn(d + 1) > 0) this.notify(`寒潮预警：明天气温会骤降约 ${Math.round(snapOn(d + 1))}°C，取暖燃料要多烧好几成，港口结冰渔船大多出不了海。今天多囤柴火、煤和食物`, 'warn', { cat: 'alert', icon: 'cold' });
+    if (snapOn(d) > 0) this.notify('寒潮来了！今天格外冷，撑过这一天', 'warn', { cat: 'milestone', icon: 'cold' });
     this.lastDay = d;
   }
 
@@ -1408,10 +1484,10 @@ export class Game {
     const roads: number[] = [];
     this.occ.forEach((o, i) => { if (o === -1) roads.push(i); });
     return JSON.stringify({
-      v: 2, rf: 1, seasonDays: this.seasonDays, seed: this.world.seed, map: this.world.mapId, weather: this.weather.cur, gold: this.gold, time: this.time, quest: this.questIndex, era: this.era,
+      v: 2, rf: 1, seasonDays: this.seasonDays, diff: this.difficulty, seed: this.world.seed, map: this.world.mapId, weather: this.weather.cur, gold: this.gold, time: this.time, quest: this.questIndex, era: this.era,
       research: { current: this.research.current, points: this.research.points, levels: this.research.levels, saved: this.research.saved },
       storage: this.storage, roads,
-      b: [...this.buildings.values()].filter(b => b.type !== 'depot').map(b => [b.type, b.x, b.z, b.tier, b.residents, b.progress, b.paused ? 1 : 0, b.rot]),
+      b: [...this.buildings.values()].filter(b => b.type !== 'depot').map(b => [b.type, b.x, b.z, b.tier, b.residents, b.progress, b.paused ? 1 : 0, b.rot, b.elecOff ? 1 : 0]),
     });
   }
   static load(json: string): Game | null {
@@ -1419,7 +1495,7 @@ export class Game {
       const s = JSON.parse(json);
       if (s.v !== 2) return null;
       const g = new Game(isMapId(s.map) ? s.map : s.seed);
-      g.gold = s.gold; g.time = s.time; if (s.seasonDays) g.seasonDays = s.seasonDays; g.questIndex = s.quest; g.era = s.era ?? 1;
+      g.gold = s.gold; g.time = s.time; if (s.seasonDays) g.seasonDays = s.seasonDays; if (s.diff in DIFFICULTY) g.difficulty = s.diff; g.questIndex = s.quest; g.era = s.era ?? 1;
       if (s.research) { g.research.current = s.research.current; g.research.points = s.research.points; g.research.levels = s.research.levels ?? {}; g.research.saved = s.research.saved ?? {}; }
       if (s.weather && s.weather in WEATHER) { g.weather.cur = g.weather.prev = s.weather; }
       GOOD_IDS.forEach(k => { g.storage[k] = s.storage[k] ?? 0; });
@@ -1427,14 +1503,14 @@ export class Game {
       // buildings that grew since the save (each upgrade line now has one footprint) may not fit where they
       // stood: place everything else first, then try them again shifted by a tile
       const grown: typeof s.b = [];
-      for (const [pass, list] of [[0, s.b], [1, grown]] as const) for (const [type, x0, z0, tier, res, prog, paused, rot] of list) {
+      for (const [pass, list] of [[0, s.b], [1, grown]] as const) for (const [type, x0, z0, tier, res, prog, paused, rot, eoff] of list) {
         if (!(type in BUILDINGS)) continue;
         const spot = (pass ? [[-1, 0], [0, -1], [-1, -1], [1, 0], [0, 1]] : [[0, 0]]).find(([dx, dz]) => g.canFit(type, x0 + dx, z0 + dz, rot ?? 0));
-        if (!spot) { if (!pass) grown.push([type, x0, z0, tier, res, prog, paused, rot]); continue; }
+        if (!spot) { if (!pass) grown.push([type, x0, z0, tier, res, prog, paused, rot, eoff]); continue; }
         const x = x0 + spot[0], z = z0 + spot[1];
         // saves before free facing only stored the turn (0/1); pick the side facing the road like they used to
         const b = g.addBuilding(type, x, z, s.rf ? rot ?? 0 : g.bestRot(type, x, z, rot ?? 0));
-        b.tier = tier; b.residents = res; b.progress = prog; b.paused = !!paused;
+        b.tier = tier; b.residents = res; b.progress = prog; b.paused = !!paused; b.elecOff = !!eoff;
       }
       g.rVersion++; g.tVersion++;
       g.refresh();

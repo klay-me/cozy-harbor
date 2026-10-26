@@ -7,7 +7,7 @@ import {
 import type { AudioSettings } from '../audio/sound';
 import type { RotateMode } from '../render/camera';
 import { icon } from './icons';
-import { SEASON_IDS, SEASON_DAYS, DAY_LENGTH, HEAT_BELOW, PER_DAY, FOODS, FoodId, PROTECTS, ProtectId, familyOf } from '../sim/data';
+import { SEASON_IDS, SEASON_DAYS, DAY_LENGTH, HEAT_BELOW, PER_DAY, FOODS, FoodId, PROTECTS, ProtectId, familyOf, ELEC_BOOST, COLD_STORE, DIFFICULTY, DIFFICULTY_IDS, DifficultyId } from '../sim/data';
 import { supplies, needs as chainNeeds, chainSummary, outPerDay } from './chain';
 
 export type Tool = 'select' | 'demolish' | BuildingId;
@@ -29,7 +29,9 @@ export interface HudHooks {
   trade(g: GoodId, n: number): void;
   overlay(on: boolean): void;
   pause(b: Bld): void;
+  elec(b: Bld): void;
   seasonDays(n: number): void;
+  difficulty(d: DifficultyId): void;
   rotate(): void;
   turn(b: Bld): void;
   lookAt(x: number, z: number): void;
@@ -109,6 +111,8 @@ export class Hud {
           <label for="volAmb">环境</label><input type="range" id="volAmb" min="0" max="1" step="0.05">
           <label for="seasonLen">季节长度</label>
           <select id="seasonLen"><option value="3">每季 3 天（一年 48 分钟）</option><option value="4">每季 4 天（一年 64 分钟）</option><option value="6">每季 6 天（一年 96 分钟）</option></select>
+          <label for="difficulty">难度</label>
+          <select id="difficulty">${DIFFICULTY_IDS.map(d => `<option value="${d}">${DIFFICULTY[d].name}${DIFFICULTY[d].desc ? `（${DIFFICULTY[d].desc}）` : ''}</option>`).join('')}</select>
           <label for="rotMode">转动方式</label>
           <select id="rotMode"><option value="orbit">旋转地图（绕画面中心）</option><option value="look">转动视角（镜头原地转）</option></select>
         </div>
@@ -146,6 +150,7 @@ export class Hud {
     $<HTMLInputElement>('#volSfx', root).addEventListener('input', e => { this.audio.sfx = Number((e.target as HTMLInputElement).value); hooks.audio({ sfx: this.audio.sfx }); });
     $<HTMLInputElement>('#volAmb', root).addEventListener('input', e => { this.audio.amb = Number((e.target as HTMLInputElement).value); hooks.audio({ amb: this.audio.amb }); });
     $<HTMLSelectElement>('#seasonLen', root).addEventListener('change', e => hooks.seasonDays(Number((e.target as HTMLSelectElement).value)));
+    $<HTMLSelectElement>('#difficulty', root).addEventListener('change', e => hooks.difficulty((e.target as HTMLSelectElement).value as DifficultyId));
     $<HTMLSelectElement>('#rotMode', root).addEventListener('change', e => hooks.rotateMode((e.target as HTMLSelectElement).value as RotateMode));
     $('#speed', root).addEventListener('click', e => {
       const b = (e.target as HTMLElement).closest('button');
@@ -242,6 +247,7 @@ export class Hud {
       if (a === 'focus') hooks.focus(b);
       if (a === 'turn') hooks.turn(b);
       if (a === 'pause') { hooks.pause(b); this.infoKey = ''; this.renderInfo(); }
+      if (a === 'elec') { hooks.elec(b); this.infoKey = ''; this.renderInfo(); }
     });
   }
 
@@ -261,7 +267,7 @@ export class Hud {
     b.title = this.audio.muted ? '打开声音' : '静音';
   }
 
-  setGame(g: Game) { $<HTMLSelectElement>('#seasonLen', this.root).value = String(g.seasonDays); this.game = g; this.selected = null; this.infoKey = ''; this.itemsKey = ''; this.renderInfo(); this.renderItems(); }
+  setGame(g: Game) { $<HTMLSelectElement>('#seasonLen', this.root).value = String(g.seasonDays); $<HTMLSelectElement>('#difficulty', this.root).value = g.difficulty; this.game = g; this.selected = null; this.infoKey = ''; this.itemsKey = ''; this.renderInfo(); this.renderItems(); }
   setTool(t: Tool) {
     this.tool = t;
     const cat = BUILD_MENU.findIndex(c => menuItems(c.cat).includes(t as BuildingId));
@@ -435,11 +441,11 @@ export class Hud {
       <span class="chip ${foodCls}" data-open="ledger" data-good="${foodKey}" title="${foodTip}">${icon('food')}<b>${foodDays === Infinity ? '—' : foodDays >= 10 ? Math.round(foodDays) : foodDays.toFixed(1)}</b><i>天</i></span>
       <span class="chip pop" data-open="work" title="人口 ${total}（点击看各阶层劳动力）">${tiers.map(t => `<span title="${TIERS[t].name}：${g.pop[t]} 人（空闲劳动力 ${Math.max(0, g.workforce[t].have - g.workforce[t].need)}，岗位 ${g.workforce[t].need}）" class="${g.workforce[t].need > g.workforce[t].have ? 'short' : ''}">${icon(t)}<b>${g.pop[t]}</b></span>`).join('')}</span>
       <span class="chip ${happyCls}" title="平均幸福度">${icon('happy')}<b>${Math.round(g.happyAvg)}</b></span>
-      ${g.era >= 3 ? `<span class="chip ${g.power.use > g.power.gen + 0.05 ? 'low' : ''}" title="电网：发电 ${g.power.gen.toFixed(1)} / 用电 ${g.power.use.toFixed(1)}">${icon('power')}<b>${g.power.gen.toFixed(0)}</b><i>/${g.power.use.toFixed(0)}</i></span>
+      ${g.era >= 3 ? `<span class="chip ${g.power.must > g.power.gen + 0.05 ? 'low' : g.power.boostRatio < 0.95 ? 'warn' : ''}" title="电网：发电 ${g.power.gen.toFixed(1)} / 用电 ${g.power.use.toFixed(1)}&#10;必需 ${g.power.must.toFixed(1)}（电灯 ${g.power.light.toFixed(1)}，用电工厂、电取暖），满足 ${Math.round(g.power.ratio * 100)}%&#10;通电增产和冷藏 ${g.power.boost.toFixed(1)}，只用剩下的电，满足 ${Math.round(g.power.boostRatio * 100)}%&#10;晚上电灯用电约是白天的 3 倍">${icon('power')}<b>${g.power.gen.toFixed(0)}</b><i>/${g.power.use.toFixed(0)}</i></span>
       <span class="chip ${g.pollutionAvg > 25 ? 'low' : ''}" title="住宅区平均污染（点"污染"查看分布）">${icon('pollution')}<b>${g.pollutionAvg.toFixed(0)}</b></span>` : ''}
       <button class="chip research" data-open="research" title="研究（T）">${icon('research')}<b>${cur ? TECHS[cur].name : '选择研究'}</b>${cur ? `<span class="mini"><i style="width:${rPct}%"></i></span>` : ''}</button>
       <span class="chip clock" title="${SEASONS[g.season].name}季 第 ${g.seasonDay}/${SEASON_DAYS} 天：${SEASONS[g.season].effect}&#10;距离${SEASONS[nextSeason].name}天还有 ${leftTxt}（游戏内约 ${(g.seasonLeft / DAY_LENGTH).toFixed(1)} 天）&#10;开局以来第 ${g.day + 1} 天">${icon(g.night > 0.5 ? 'moon' : g.season)}<b>第${g.day + 1}天</b><i>${g.year}年${SEASONS[g.season].name} ${g.seasonDay}/${SEASON_DAYS} ${String(Math.floor(g.hour)).padStart(2, '0')}:${String(Math.floor((g.hour % 1) * 60)).padStart(2, '0')}</i><span class="mini season"><i style="width:${Math.round(g.seasonFrac * 100)}%"></i></span></span>
-      <span class="chip temp ${tempCls}" title="气温 ${g.temp.toFixed(1)}°C。低于 ${HEAT_BELOW}°C 住宅要烧燃料取暖，越冷烧得越多${g.era < 2 ? '（田园时代还不用取暖）' : ''}">${icon('thermo')}<b>${Math.round(g.temp)}°C</b></span>
+      <span class="chip temp ${tempCls}" title="${g.coldSnap ? '寒潮！' : ''}气温 ${g.temp.toFixed(1)}°C。低于 ${HEAT_BELOW}°C 住宅要烧燃料取暖，越冷烧得越多${g.era < 2 ? '（田园时代还不用取暖）' : ''}">${icon('thermo')}<b>${Math.round(g.temp)}°C</b></span>
       <span class="chip weather" title="${wx.effect}">${icon(g.weather.cur)}<b>${wx.name}</b>${wx.effect !== '一切正常' ? `<i>${wx.effect}</i>` : ''}</span>
       ${winterSoon ? `<span class="chip ${fuel < need ? 'low' : 'ok'}" title="冬季燃料：库存 ${fmt(fuel)}，整个冬天大约要烧 ${Math.ceil(need)}">${icon(g.season === 'winter' ? 'cold' : 'warm')}<b>${fmt(fuel)}</b><i>/${Math.ceil(need)}</i></span>` : ''}
       <span class="sep"></span>
@@ -686,6 +692,7 @@ export class Hud {
         <div class="chain">${chainNeeds(b.type).map(t => `<span>${icon('box')}${t}</span>`).join('')}${supplies(b.type).map(t => `<span>${icon('check')}${t}</span>`).join('')}<small>以上按满员、一天 ${DAY_LENGTH / 60} 分钟计算</small></div>` : ''}
         ${d.powerGen ? '<div class="row"><span>发电</span><b data-f="gen"></b></div>' : ''}
         ${d.power ? `<div class="row"><span>用电</span><b data-f="pow"></b></div>` : ''}
+        ${d.elec ? `<div class="row"><span>通电</span><b data-f="elec"></b>${g.era >= 3 ? `<button class="ghost small" data-a="elec">${b.elecOff ? '接通电' : '断电'}</button>` : ''}</div>` : ''}
         ${d.needs === 'forest' ? '<div class="row"><span>附近树木</span><b data-f="trees"></b></div>' : ''}
         ${['farm', 'fishery', 'sheepfarm'].includes(familyOf(b.type)) ? '<div class="row"><span>环境</span><b data-f="env"></b></div>' : ''}`;
     } else if (d.research_pts) {
@@ -696,7 +703,7 @@ export class Hud {
     } else if (d.service) {
       body = `<div class="row"><span>覆盖范围</span><b>${g.usesRoads(b.type) ? `沿道路走 ${g.roadRange(b.type)} 格` : `半径 ${g.radiusOf(b)} 格`}</b></div><div class="row"><span>覆盖住宅</span><b data-f="cov"></b></div>${d.service ? `<div class="row"><span>全城缺少${SERVICES[d.service]}</span><b data-f="gap"></b></div>` : ''}`;
     } else if (BUILDINGS[b.type].storage) {
-      body = `<div class="row"><span>每种货物上限</span><b data-f="cap"></b></div><button class="ghost" data-a="goods">打开仓库与商船</button>`;
+      body = `<div class="row"><span>每种货物上限</span><b data-f="cap"></b></div>${d.elec ? `<div class="row"><span>冷藏</span><b data-f="elec"></b>${g.era >= 3 ? `<button class="ghost small" data-a="elec">${b.elecOff ? '接通电' : '断电'}</button>` : ''}</div>` : ''}<button class="ghost" data-a="goods">打开仓库与商船</button>`;
     } else if (d.workers) {
       body = `<div class="row"><span>${TIERS[d.workers.tier].name}</span><b data-f="staff"></b></div>`;
     }
@@ -722,7 +729,7 @@ export class Hud {
     const foods = T.foods.map(k => GOODS[k].name).join('、');
     const com = Object.keys(T.comforts).map(k => GOODS[k as GoodId].name);
     const svc = T.services.map(s => SERVICES[s]);
-    return `${T.name}的家。每人每天要吃 ${T.hunger} 份饱食，爱吃${foods}（种类越多越开心）${com.length ? `；还想要${com.join('、')}` : ''}；需要${svc.join('、')}的覆盖。`;
+    return `${T.name}的家。每人每天要吃 ${T.hunger} 份饱食，爱吃${foods}（种类越多越开心）${com.length ? `；还想要${com.join('、')}` : ''}；需要${svc.join('、')}的覆盖${T.light ? '；工业时代起还想要电灯（晚上用电更多）' : ''}。`;
   }
 
   private updateInfo() {
@@ -746,7 +753,7 @@ export class Hud {
     if (b.type === 'house') {
       const T = TIERS[b.tier], hp = b.happy * 100;
       f('res')!.textContent = `${b.residents} / ${T.cap} ${T.name}${b.sick ? `（${b.sick} 人生病）` : ''}`;
-      f('tax')!.textContent = `${((b.residents - b.sick) * T.tax * (hp / 100) * (hp > 80 ? 1.2 : 1) * PER_DAY).toFixed(0)} 金币/天`;
+      f('tax')!.textContent = `${((b.residents - b.sick) * T.tax * DIFFICULTY[g.difficulty].tax * (hp / 100) * (hp > 80 ? 1.2 : 1) * PER_DAY).toFixed(0)} 金币/天`;
       const kinds = T.foods.filter(k => g.storage[k] >= 0.5).map(k => GOODS[k].name);
       f('fed')!.textContent = `${Math.round(b.fed * 100)}%${kinds.length ? `，有${kinds.join('、')}` : '，家里没吃的了'}`;
       f('happy')!.textContent = String(Math.round(hp));
@@ -763,12 +770,13 @@ export class Hud {
     } else if (d.cycle || d.powerGen) {
       if (f('prog')) f('prog')!.style.width = `${Math.round(b.progress * 100)}%`;
       if (f('rate')) {
-        const mult = 1 + g.prodBonus(b.type) + g.boostAt(b);
+        const mult = 1 + g.prodBonus(b.type) + g.boostAt(b) + g.elecBoost(b);
         const now = outPerDay(b.type) * b.staff * b.env * mult * g.prodFactor(b.type);
         f('rate')!.textContent = `${now.toFixed(1)}（满员 ${outPerDay(b.type).toFixed(0)}）`;
       }
       if (f('gen')) f('gen')!.textContent = `${b.gen.toFixed(1)} / ${d.powerGen}`;
       if (f('pow')) f('pow')!.textContent = `${d.power}（电网满足 ${Math.round(g.power.ratio * 100)}%）`;
+      if (f('elec')) f('elec')!.textContent = g.era < 3 ? `工业时代有电以后 +${ELEC_BOOST * 100}%` : b.elecOff ? '已断电' : !g.gridUp ? `还没有发电站（用电 ${d.elec}，+${ELEC_BOOST * 100}%）` : `产量 +${Math.round(g.elecBoost(b) * 100)}%，用电 ${d.elec}`;
       if (f('trees')) f('trees')!.textContent = `${g.treesAround(b, d.radius!)} 棵（效率 ${Math.round(b.env * 100)}%）`;
       if (f('env')) f('env')!.textContent = b.env < 0.99 ? `污染减产 ${Math.round((1 - b.env) * 100)}%` : '良好';
     } else if (d.research_pts) {
@@ -777,7 +785,10 @@ export class Hud {
       let n = 0;
       g.buildings.forEach(h => { if (h.type === 'house' && (d.heating ? h.heaters.includes(b) : g.covered(h, d.service!))) n++; });
       f('cov')!.textContent = b.connected ? `${n} 座` : '没有连上道路，无法服务';
-    } else if (f('cap')) f('cap')!.textContent = String(g.cap);
+    } else if (f('cap')) {
+      f('cap')!.textContent = String(g.cap);
+      if (f('elec')) f('elec')!.textContent = g.era < 3 ? '工业时代有电以后，通电变冷库' : b.elecOff ? '已断电' : !g.gridUp ? '还没有发电站' : `全城 ${Math.round(g.power.cold * 100)}% 的库存在冷藏（鱼、菜、面包少坏 ${Math.round(COLD_STORE * g.power.cold * 100)}%）`;
+    }
     if (b.type !== 'house') {
       const up = box.querySelector<HTMLButtonElement>('[data-a="upgrade"]');
       if (up) { const block = g.upgradeBlock(b); up.disabled = !!block; f('block')!.textContent = block ?? '可以升级'; }

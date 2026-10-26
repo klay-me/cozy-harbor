@@ -48,6 +48,7 @@ svg { flex: none; }
 .chip i.up { color: #3e9a4a; }
 .chip i.down { color: var(--danger); }
 .chip.low { background: #ffe1dc; border-color: var(--coral); animation: pulse 1.2s ease-in-out infinite; }
+.chip.warn { background: #fff3d6; border-color: #e8b84a; }
 .res .sep { width: 2px; height: 22px; background: #e6d8bd; border-radius: 2px; }
 @keyframes pulse { 50% { transform: scale(1.06); } }
 .speed, .menu-btn { display: flex; padding: 4px; gap: 2px; background: var(--card); border: 2.5px solid var(--ink); border-radius: 14px; box-shadow: 0 4px 0 var(--ink); }
@@ -112,6 +113,7 @@ svg { flex: none; }
 .pill.bad { background: #ffe1dc; }
 .row { display: flex; justify-content: space-between; font-size: 13px; font-variant-numeric: tabular-nums; }
 .row b { font-weight: 700; }
+.row .small { margin-left: 8px; padding: 2px 8px; }
 .flow { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
 .flow em { font-style: normal; color: var(--ink-soft); }
 .bar { display: block; height: 10px; background: #efe3cb; border-radius: 6px; border: 1.5px solid var(--ink); overflow: hidden; }

@@ -1,7 +1,7 @@
 import './style.css';
 import { Game } from './sim/game';
 import { DEFAULT_MAP } from './sim/maps';
-import { BUILDINGS, BuildingId } from './sim/data';
+import { BUILDINGS, BuildingId, DIFFICULTY } from './sim/data';
 import { View } from './render/view';
 import { Hud, Tool } from './ui/hud';
 import { makeThumbs } from './render/thumbs';
@@ -72,6 +72,8 @@ async function boot() {
     trade: (g, n) => { n > 0 ? game.buy(g, n) : game.sell(g, -n); },
     overlay: on => view.setPollutionView(on),
     pause: b => game.togglePause(b),
+    elec: b => game.toggleElec(b),
+    difficulty: d => { game.difficulty = d; game.notify(`难度改为${DIFFICULTY[d].name}`, 'info'); },
     rotate: () => turnGhost(1),
     turn: b => { if (game.turn(b)) hud.select(b); },
     seasonDays: n => { game.setSeasonDays(n); game.notify(`季节长度改为每季 ${n} 天`, 'info'); },

@@ -217,7 +217,7 @@ for (let t = 0; t < minutes * 60; t += 10) {
     if (g.storage.planks < 8 && n('sawmill') < 1 + Math.floor(houses().length / 25)) build('sawmill');
     for (const [t, f] of plain) if (n(t) < f() && g.gold - BUILDINGS[t].cost.gold > 150 && g.taxRate - g.upkeepRate > BUILDINGS[t].upkeep * 0.5) build(t);
     // power
-    if (g.power.use > g.power.gen * 0.95 || n('steelworks') > n('coalplant') * 2) {
+    if (g.power.must > g.power.gen * 0.95 || (g.power.boostRatio < 0.5 && g.gold > 2500) || n('steelworks') > n('coalplant') * 2) {
       if (g.era >= 4 && g.unlocked('windturbine')) build(n('windturbine') <= n('solar') ? 'windturbine' : 'solar'); else build('coalplant');
     }
     if (g.unlocked('coalplant') && n('coalplant') === 0 && n('steelworks') === 0 && g.era >= 3) build('coalplant');
@@ -254,7 +254,7 @@ for (let t = 0; t < minutes * 60; t += 10) {
   if (t % 120 === 0 || g.era !== lastEra) {
     lastEra = g.era;
     const st = Object.fromEntries(GOOD_IDS.filter(k => g.storage[k] > 0.5).map(k => [k, Math.round(g.storage[k])]));
-    L(`t=${(g.time / 60).toFixed(0)}m y${g.year} ${g.season} era${g.era} gold=${Math.round(g.gold)} net=${Math.round(g.taxRate - g.upkeepRate)} pop=${JSON.stringify(g.pop)} happy=${g.happyAvg.toFixed(0)} pol=${g.pollutionAvg.toFixed(1)} power=${g.power.gen.toFixed(0)}/${g.power.use.toFixed(0)} rp=${g.research.rate.toFixed(0)} cap=${g.cap} q=${g.questIndex}`);
+    L(`t=${(g.time / 60).toFixed(0)}m y${g.year} ${g.season} era${g.era} gold=${Math.round(g.gold)} net=${Math.round(g.taxRate - g.upkeepRate)} pop=${JSON.stringify(g.pop)} happy=${g.happyAvg.toFixed(0)} pol=${g.pollutionAvg.toFixed(1)} power=${g.power.gen.toFixed(0)}/${g.power.must.toFixed(0)}+${g.power.boost.toFixed(0)}(${Math.round(g.power.boostRatio*100)}%) snap=${g.coldSnap?1:0} t=${g.temp.toFixed(0)} rp=${g.research.rate.toFixed(0)} cap=${g.cap} q=${g.questIndex}`);
     L('   store', JSON.stringify(st));
     const wf = Object.fromEntries(Object.entries(g.workforce).map(([k, v]) => [k, `${v.have}/${v.need}`]));
     L('   workforce', JSON.stringify(wf), 'houses', houses().length, 'blds', JSON.stringify(Object.fromEntries(Object.keys(built).map(k => [k, n(k as BuildingId)]))));
