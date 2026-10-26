@@ -17,6 +17,8 @@ export class Terrain {
   half: number;
   private landT: Float32Array;   // smoothed land value per tile (incl. margin)
   private rockT: Float32Array;
+  /** rock height per tile (incl. margin), lightly smoothed */
+  private heightT: Float32Array;
   private TW: number;            // tiles across incl. margin
   terrainU = {
     uGrid: { value: 0 }, uW: { value: 0 },
@@ -90,6 +92,27 @@ export class Terrain {
     this.occT = new Float32Array(TW * TW);
     this.landT = blur(raw);
     this.rockT = blur(rawR);
+    // rock heights: maps without a height layer get the old low crags; past the edge the range keeps rising
+    const rawH = new Float32Array(TW * TW);
+    for (let tz = 0; tz < TW; tz++) for (let tx = 0; tx < TW; tx++) {
+      const x = tx - MARGIN, z = tz - MARGIN;
+      if (this.tileOut(x, z) !== Tile.Rock) continue;
+      const cx = Math.max(0, Math.min(W - 1, x)), cz = Math.max(0, Math.min(W - 1, z));
+      const h = world.heights[cz * W + cx] || 0.9;
+      const out = Math.max(cx - x, x - cx, cz - z, z - cz);
+      rawH[tz * TW + tx] = h + out * 0.35 * (0.6 + 0.4 * Math.sin(x * 0.4 + z * 0.3));
+    }
+    this.heightT = new Float32Array(TW * TW);
+    for (let z = 0; z < TW; z++) for (let x = 0; x < TW; x++) {
+      const own = rawH[z * TW + x];
+      if (!own) continue;
+      let s = 0, n = 0;
+      for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+        const v = rawH[Math.min(TW - 1, Math.max(0, z + dz)) * TW + Math.min(TW - 1, Math.max(0, x + dx))];
+        if (v) { s += v; n++; }
+      }
+      this.heightT[z * TW + x] = own * 0.55 + (s / n) * 0.45;
+    }
     this.terrain = this.buildTerrain();
     const { mesh, uniforms } = this.buildWater();
     this.water = mesh;
@@ -100,7 +123,8 @@ export class Terrain {
     const W = this.W;
     if (x >= 0 && z >= 0 && x < W && z < W) return this.world.tile(x, z);
     const cx = Math.max(0, Math.min(W - 1, x)), cz = Math.max(0, Math.min(W - 1, z));
-    return this.world.tile(cx, cz) === Tile.Water ? Tile.Water : Tile.Grass;
+    const t = this.world.tile(cx, cz);
+    return t === Tile.Water ? Tile.Water : t === Tile.Rock ? Tile.Rock : Tile.Grass;
   }
 
   private sample(f: Float32Array, wx: number, wz: number) {
@@ -175,7 +199,15 @@ export class Terrain {
     else if (L >= 0.5) y = (L - 0.62) * 1.0;
     else y = Math.max(-1.0, -0.12 + (L - 0.5) * 3.2);
     const R = this.sample(this.rockT, wx, wz);
-    if (R > 0.05) y += R * R * 0.9 + (Math.sin(wx * 2.3 + wz) * 0.5 + 0.5) * R * 0.18;
+    if (R > 0.05) {
+      // rock rises from the edge of its tile: flat ground stays flat, water stays water
+      const m = THREE.MathUtils.smoothstep(R, 0.42, 0.64);
+      const h = this.sample(this.heightT, wx, wz);
+      // crags and gullies: ridged noise that grows with the height of the rock
+      const ridge = 0.5 - Math.abs(this.noise(wx * 0.9 + 7, wz * 0.9)) * 2;
+      const rough = ridge * 0.9 + this.noise(wx * 1.9, wz * 1.9) * 0.6 + this.noise(wx * 4.1 + 3, wz * 4.1) * 0.3;
+      y += m * (h + rough * Math.min(1, h * 0.4) * 0.8) + (Math.sin(wx * 2.3 + wz) * 0.5 + 0.5) * R * 0.12;
+    }
     // gentle hills beyond the playable area (land only)
     const ox = Math.max(-this.half - wx, wx - this.half, 0), oz = Math.max(-this.half - wz, 0);
     const out = Math.max(ox, oz);
@@ -205,7 +237,7 @@ export class Terrain {
     const U = this.terrainU;
     mat.onBeforeCompile = sh => {
       Object.assign(sh.uniforms, U, ENV);
-      sh.vertexShader = 'attribute vec3 kind;\nattribute float raise;\nvarying vec3 vKind;\nvarying vec3 vWP;\nvarying float vRaise;\n' + sh.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvKind = kind;\nvRaise = raise;');
+      sh.vertexShader = 'attribute vec3 kind;\nattribute float raise;\nvarying vec3 vKind;\nvarying vec3 vWP;\nvarying vec3 vWN;\nvarying float vRaise;\n' + sh.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvWN = objectNormal;\nvKind = kind;\nvRaise = raise;');
       sh.fragmentShader = `
 uniform float uGrid, uW, uRangeOn, uSnow, uWet, uPollOn, uRoadStyle, uReachOn, uTime;
 uniform sampler2D uPoll, uRoad, uReach;
@@ -214,6 +246,7 @@ uniform vec3 uRange, uGrass;
 uniform vec4 uSel;
 varying vec3 vKind;
 varying vec3 vWP;
+varying vec3 vWN;
 float th(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float tn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
   return mix(mix(th(i), th(i + vec2(1, 0)), f.x), mix(th(i + vec2(0, 1)), th(i + vec2(1, 1)), f.x), f.y); }
@@ -234,7 +267,25 @@ float tfbm(vec2 p){ return tn(p) * 0.6 + tn(p * 2.3 + 7.1) * 0.3 + tn(p * 5.1 + 
   vec3 sand = vec3(0.96, 0.87, 0.64) * (1.0 - 0.04 * step(0.8, sin(vWP.x * 3.0 + tn(vWP.xz * 1.5) * 4.0)));
   vec3 wetSand = vec3(0.86, 0.76, 0.55);
   vec3 under = vec3(0.70, 0.80, 0.68);
-  vec3 rock = vec3(0.74, 0.71, 0.66) * (0.9 + 0.15 * n2);
+  // mountains: layered rock on the steep faces (warm sandstone low down, grey granite higher up),
+  // moss and alpine grass on ledges and flat tops, snow on the high crests
+  float ny = normalize(vWN).y;
+  float hgt = vWP.y;
+  float band = tn(vec2(hgt * 3.2 + tn(vWP.xz * 0.35) * 2.5, 0.5));
+  vec3 stoneLo = vec3(0.86, 0.74, 0.58), stoneHi = vec3(0.66, 0.64, 0.66);
+  vec3 rock = mix(stoneLo, stoneHi, smoothstep(1.4, 3.6, hgt));
+  rock *= 0.84 + 0.2 * step(0.5, band) + 0.08 * n2;
+  rock = mix(rock, rock * 0.72, smoothstep(0.55, 0.25, ny) * step(0.72, tn(vWP.xz * 2.4 + hgt)));
+  // baked hill shading so the relief reads from above, warm on the sunny side
+  float hs = clamp(dot(normalize(vWN), normalize(vec3(-0.45, 0.75, 0.5))), 0.0, 1.0);
+  rock *= 0.62 + 0.5 * hs;
+  rock = mix(rock, rock * vec3(1.05, 0.98, 0.9), hs * 0.5);
+  float ledge = step(0.84 + (tn(vWP.xz * 1.3) - 0.5) * 0.12, ny);
+  vec3 moss = mix(uGrass * vec3(0.78, 0.8, 0.66), uGrass * vec3(0.72, 0.76, 0.6), smoothstep(2.0, 4.2, hgt)) * (0.78 + 0.25 * hs);
+  rock = mix(rock, moss, ledge * (1.0 - smoothstep(4.4, 5.2, hgt)));
+  float snowLine = 5.6 + (tn(vWP.xz * 0.4) - 0.5) * 1.2;
+  float peakSnow = step(snowLine, hgt) * step(0.45, ny);
+  rock = mix(rock, vec3(0.95, 0.97, 1.0) * (0.8 + 0.22 * hs), peakSnow);
   vec3 c = mix(sand, grass, vKind.x);
   c = mix(c, wetSand, smoothstep(-0.02, -0.14, vWP.y) * vKind.y);
   c = mix(c, under, smoothstep(-0.2, -0.45, vWP.y));
@@ -276,7 +327,7 @@ float tfbm(vec2 p){ return tn(p) * 0.6 + tn(p * 2.3 + 7.1) * 0.3 + tn(p * 5.1 + 
   vec2 f = abs(fract(gp) - 0.5);
   float inMap = step(0.0, gp.x) * step(0.0, gp.y) * step(gp.x, uW) * step(gp.y, uW);
   float line = smoothstep(0.47, 0.5, max(f.x, f.y));
-  gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(1.0), line * 0.28 * uGrid * inMap * step(-0.05, vWP.y));
+  gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(1.0), line * 0.28 * uGrid * inMap * step(-0.05, vWP.y) * step(vWP.y, 0.35));
   // pollution view: clean green, then yellow, orange and smoggy purple
   float pv = texture2D(uPoll, gp / uW).r;
   vec3 heat = pv < 0.33 ? mix(vec3(0.55, 0.85, 0.5), vec3(1.0, 0.86, 0.35), pv / 0.33)

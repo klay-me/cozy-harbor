@@ -1,5 +1,5 @@
 // Tile map: terrain types, trees, ore. Either read from a fixed map (sim/maps) or generated from a seed.
-import { MAPS, MapId } from './maps';
+import { MAPS, MapId, Landmark } from './maps';
 
 export enum Tile { Grass = 0, Sand = 1, Water = 2, Rock = 3 }
 
@@ -39,6 +39,9 @@ export class World {
   readonly ocean: Uint8Array;
   /** 2x2 mineral patches (top-left corner) */
   readonly patches: { x: number; z: number; kind: number }[] = [];
+  /** height of each tile above the ground you build on (rock only; world units) */
+  readonly heights: Float32Array;
+  readonly landmarks: Landmark[];
 
   /** a fixed map by id, or a random map of size W from a seed */
   constructor(W: number, readonly seed: number, readonly mapId?: MapId) {
@@ -49,7 +52,15 @@ export class World {
     this.trees = new Uint8Array(W * W);
     this.deposits = new Uint8Array(W * W);
     this.ocean = new Uint8Array(W * W);
-    if (rows) { this.depot = this.readRows(rows); return; }
+    this.heights = new Float32Array(W * W);
+    this.landmarks = [];
+    if (rows && mapId) {
+      this.depot = this.readRows(rows);
+      const hr = MAPS[mapId].height;
+      if (hr) hr.forEach((row, z) => { for (let x = 0; x < W; x++) this.heights[z * W + x] = parseInt(row[x], 36) / 4; });
+      this.landmarks.push(...(MAPS[mapId].landmarks ?? []));
+      return;
+    }
     const r = rng(seed);
     const coastBase = W * 0.7;
     const riverX0 = W * (0.55 + r() * 0.12);
@@ -111,9 +122,9 @@ export class World {
       if (row.length !== W) throw new Error(`map row ${z} has ${row.length} tiles, expected ${W}`);
       for (let x = 0; x < W; x++) {
         const ch = row[x], i = z * W + x;
-        this.tiles[i] = ch === '~' || ch === '=' ? Tile.Water : ch === '^' ? Tile.Rock : ch === ':' ? Tile.Sand : Tile.Grass;
+        this.tiles[i] = ch === '~' || ch === '=' ? Tile.Water : ch === '^' || ch === 'P' ? Tile.Rock : ch === ':' ? Tile.Sand : Tile.Grass;
         if (ch === '~') this.ocean[i] = 1;
-        if (ch === 't') this.trees[i] = 1; else if (ch === 'p') this.trees[i] = 2;
+        if (ch === 't') this.trees[i] = 1; else if (ch === 'p' || ch === 'P') this.trees[i] = 2;
         if (ch === 'i') this.deposits[i] = 1; else if (ch === 'c') this.deposits[i] = 2;
         if (ch === 'H' && !depot) depot = { x, z };
       }

@@ -16,6 +16,7 @@ import { ENV, worldMaterial } from './shared';
 import { Terrain } from './terrain';
 import { Env } from './env';
 import { People } from './people';
+import { Landmarks } from './landmarks';
 import { Decor } from './decor';
 import { Smoke } from './smoke';
 import { icon } from '../ui/icons';
@@ -62,6 +63,7 @@ export class View {
   private composer: EffectComposer;
   private bloom: UnrealBloomPass;
   private time = 0;
+  private landmarks?: Landmarks;
   half = 0;
   onThunder: (delay: number) => void = () => {};
 
@@ -113,6 +115,8 @@ export class View {
     this.buildTrees();
     this.buildRocks();
     this.buildDeposits();
+    this.landmarks = new Landmarks(game.world, this.terrain, this.half);
+    this.add(this.landmarks.group);
     this.smoke = new Smoke(this.scene);
     this.pVersion = -1;
     this.buildRoads();
@@ -175,7 +179,12 @@ export class View {
   private buildRocks() {
     const { world, W } = this.game;
     const cells: [number, number][] = [];
-    for (let z = 0; z < W; z++) for (let x = 0; x < W; x++) if (world.tile(x, z) === Tile.Rock && (x + z * 3) % 2 === 0) cells.push([x, z]);
+    // boulders: on low crags every other tile, sparse on the mountains (where the terrain itself is the rock)
+    for (let z = 0; z < W; z++) for (let x = 0; x < W; x++) {
+      if (world.tile(x, z) !== Tile.Rock) continue;
+      const h = world.heights[z * W + x] || 0.9;
+      if (h < 1.3 ? (x + z * 3) % 3 === 0 : (x * 7 + z * 13) % 17 === 0) cells.push([x, z]);
+    }
     if (!cells.length) return;
     const [m] = this.instanced(getModel('rock'), cells.length, 0.025);
     const M = new THREE.Matrix4(), Q = new THREE.Quaternion();
@@ -642,6 +651,7 @@ export class View {
     }
     this.rig.update(dt);
     this.decor?.setSeason(g.seasonPos);
+    this.landmarks?.update(dt);
     this.env.update(dt, g, this.rig.target, this.terrain, this.scene.fog as THREE.Fog);
     this.people?.update(dt, gameDt);
     this.smoke?.update(dt);

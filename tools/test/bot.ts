@@ -3,21 +3,29 @@ import { BUILDINGS, BuildingId, TECH_IDS, TECHS, GOOD_IDS, TierId } from '../../
 import { Tile } from '../../src/sim/world';
 
 // map id (default: the fixed map) or a numeric seed for a random map
-const arg = process.argv[2] ?? 'harbor';
+const arg = process.argv[2] ?? 'haven';
 const g = new Game(isNaN(Number(arg)) ? arg as any : Number(arg));
 const W = g.W, d = g.world.depot;
 const L = (...a: any[]) => console.log(...a);
 // grid roads every 5 tiles around the depot
 const ox = d.x + 1, oz = d.z - 1;
 function gridRoads(r: number) {
+  const free = (p: [number, number][]) => p.filter(([a, b]) => !g.world.deposit(a, b));
   for (let k = -r; k <= r; k++) {
     const x = ox + k * 5, z = oz - k * 5;
-    g.placeRoads(g.roadPath(x, oz, x, Math.max(1, oz - r * 5)).filter(([a, b]) => g.roadTileOk(a, b)));
-    if (z > 0) g.placeRoads(g.roadPath(ox - r * 5, z, ox + r * 5, z));
+    g.placeRoads(free(g.roadPath(x, oz, x, Math.max(1, oz - r * 5)).filter(([a, b]) => g.roadTileOk(a, b))));
+    if (z > 0) g.placeRoads(free(g.roadPath(ox - r * 5, z, ox + r * 5, z)));
   }
-  g.placeRoads(g.roadPath(ox - r * 5, oz, ox + r * 5, oz));
+  g.placeRoads(free(g.roadPath(ox - r * 5, oz, ox + r * 5, oz)));
 }
 gridRoads(2);
+// like a player, keep ore veins free for mines
+function onOre(type: BuildingId, x: number, z: number) {
+  if (BUILDINGS[type].needs === 'iron' || BUILDINGS[type].needs === 'coal') return false;
+  const [w, h] = BUILDINGS[type].size;
+  for (let j = 0; j < Math.max(w, h); j++) for (let i = 0; i < Math.max(w, h); i++) if (g.world.deposit(x + i, z + j)) return true;
+  return false;
+}
 function spots(type: BuildingId) {
   const [w, h] = BUILDINGS[type].size;
   const seen = new Set<number>();
@@ -29,7 +37,7 @@ function spots(type: BuildingId) {
       const key = z * W + x;
       if (seen.has(key)) continue;
       seen.add(key);
-      if (x < 0 || z < 0 || !g.canPlace(type, x, z).ok) continue;
+      if (x < 0 || z < 0 || onOre(type, x, z) || !g.canPlace(type, x, z).ok) continue;
       out.push([x, z, Math.hypot(x - d.x, z - d.z)]);
     }
   }
@@ -40,7 +48,7 @@ function farSpots(type: BuildingId) {
   const [w, h] = BUILDINGS[type].size;
   const out: [number, number, number][] = [];
   for (let z = 0; z < W - h; z++) for (let x = 0; x < W - w; x++) {
-    if (!g.canPlace(type, x, z).ok) continue;
+    if (onOre(type, x, z) || !g.canPlace(type, x, z).ok) continue;
     out.push([x, z, Math.hypot(x - d.x, z - d.z)]);
   }
   return out.sort((a, b) => a[2] - b[2]);
@@ -76,6 +84,7 @@ function connect(b: any) {
       const nk = nz * W + nx;
       if (prev[nk] !== -2) continue;
       if (!g.roadTileOk(nx, nz) && !g.netRoads[nk]) continue;
+      if (g.world.deposit(nx, nz) && !g.netRoads[nk]) continue;   // keep roads off ore veins
       prev[nk] = k; q.push(nk);
     }
   }
@@ -91,7 +100,7 @@ function build(type: BuildingId) {
     const [w, h] = BUILDINGS[type].size;
     const c: [number, number, number][] = [];
     for (let z = 0; z < W - h; z++) for (let x = 0; x < W - w; x++) {
-      if (!g.canPlace(type, x, z).ok) continue;
+      if (onOre(type, x, z) || !g.canPlace(type, x, z).ok) continue;
       let near = false;
       for (let j = -4; j < h + 4 && !near; j++) for (let i = -4; i < w + 4; i++) if (g.world.inside(x + i, z + j) && g.netRoads[(z + j) * W + x + i]) { near = true; break; }
       if (!near) continue;
