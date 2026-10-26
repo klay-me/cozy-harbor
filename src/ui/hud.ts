@@ -116,7 +116,7 @@ export class Hud {
           <label for="difficulty">难度</label>
           <select id="difficulty">${DIFFICULTY_IDS.map(d => `<option value="${d}">${DIFFICULTY[d].name}${DIFFICULTY[d].desc ? `（${DIFFICULTY[d].desc}）` : ''}</option>`).join('')}</select>
           <label for="quality">画质</label>
-          <select id="quality"><option value="high">高（环境光遮蔽、景深、夜间灯光）</option><option value="low">低（电脑卡时用）</option></select>
+          <select id="quality"><option value="high">高（环境光遮蔽、景深、柔光）</option><option value="low">低（电脑卡时用，关掉这些后期效果）</option></select>
           <label for="rotMode">转动方式</label>
           <select id="rotMode"><option value="orbit">旋转地图（绕画面中心）</option><option value="look">转动视角（镜头原地转）</option></select>
         </div>

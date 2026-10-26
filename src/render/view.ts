@@ -676,7 +676,7 @@ export class View {
       return true;
     });
     const warm = { spring: 0.6, summer: 1, autumn: 0.35, winter: 0 }[g.season];
-    this.night?.update(dt, ENV.uGlow.value, this.env.night, this.rig.target, warm, mx.rain, this.post.quality === 'high');
+    this.night?.update(ENV.uGlow.value, this.env.night, warm, mx.rain);
     this.post.render(dt, ENV.uGlow.value, this.env.night, this.rig.dist);
   }
 }

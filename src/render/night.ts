@@ -1,6 +1,5 @@
-// Night atmosphere: warm pools of light under street lamps and around lit houses, a handful of
-// real point lights on the lamps nearest the camera (so walls and roofs catch the glow), and
-// fireflies drifting over meadows and woods on warm nights.
+// Night atmosphere: warm pools of light under street lamps and around lit houses, a halo on
+// every lamp head (all lamps look the same and stay lit all night), and fireflies drifting over meadows and woods on warm nights.
 import * as THREE from 'three';
 import type { Game } from '../sim/game';
 import { Tile } from '../sim/world';
@@ -8,7 +7,6 @@ import type { Terrain } from './terrain';
 import { ENV } from './shared';
 import { getModel } from './assets';
 
-const LIGHTS = 8;
 const FLIES = 2400;
 
 function glowTexture() {
@@ -25,13 +23,10 @@ export class Night {
   group = new THREE.Group();
   private pools: THREE.InstancedMesh;
   private poolMat: THREE.MeshBasicMaterial;
-  private lights: THREE.PointLight[] = [];
-  private lampPos: THREE.Vector3[] = [];
   private halos: THREE.Points;
   private haloU = { uAmt: { value: 0 }, uScale: { value: 1 } };
   private flies: THREE.Points;
   private flyU = { uTime: ENV.uTime, uAmt: { value: 0 }, uScale: { value: 1 } };
-  private pickT = 0;
 
   constructor(game: Game, private terrain: Terrain, half: number) {
     const tex = glowTexture();
@@ -44,7 +39,7 @@ export class Night {
     this.pools.count = 0;
     this.pools.renderOrder = 2;
     this.group.add(this.pools);
-    // every lamp head gets the same soft halo, so all lamps look lit (the point lights only add light on walls)
+    // every lamp head gets the same soft halo, so all lamps look equally lit
     this.halos = new THREE.Points(new THREE.BufferGeometry(), new THREE.ShaderMaterial({
       uniforms: { ...this.haloU, uMap: { value: tex } },
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
@@ -53,7 +48,7 @@ uniform float uScale;
 void main(){
   vec4 mv = modelViewMatrix * vec4(position, 1.0);
   gl_Position = projectionMatrix * mv;
-  gl_PointSize = uScale * 40.0 * (20.0 / -mv.z);
+  gl_PointSize = uScale * 48.0 * (20.0 / -mv.z);
 }`,
       fragmentShader: /* glsl */`
 uniform sampler2D uMap;
@@ -65,11 +60,6 @@ void main(){
     }));
     this.halos.frustumCulled = false;
     this.group.add(this.halos);
-    for (let i = 0; i < LIGHTS; i++) {
-      const l = new THREE.PointLight('#FFB25E', 0, 4.5, 1.6);
-      this.lights.push(l);
-      this.group.add(l);
-    }
     // fireflies over grass and woods; each has a home spot it wanders around
     const W = game.W, pos: number[] = [], seed: number[] = [];
     let tries = 0;
@@ -118,13 +108,11 @@ void main(){
   /** street lamps and lit houses moved: rebuild the light pools */
   sync(lamps: THREE.InstancedMesh, houses: { x: number; z: number; r: number }[]) {
     const M = new THREE.Matrix4(), P = new THREE.Vector3(), Q = new THREE.Quaternion(), S = new THREE.Vector3();
-    this.lampPos = [];
     const top = getModel('lamp').height - 0.08, hp: number[] = [];
     let n = 0;
     for (let i = 0; i < lamps.count && n < 1200; i++) {
       lamps.getMatrixAt(i, M);
       P.setFromMatrixPosition(M);
-      this.lampPos.push(P.clone());
       hp.push(P.x, P.y + top, P.z);
       M.compose(P.setY(P.y + 0.04), Q, S.set(2.6, 1, 2.6));
       this.pools.setMatrixAt(n++, M);
@@ -137,39 +125,12 @@ void main(){
     this.halos.geometry.setAttribute('position', new THREE.Float32BufferAttribute(hp, 3));
     this.pools.count = n;
     this.pools.instanceMatrix.needsUpdate = true;
-    this.pickT = 0;
   }
 
-  update(dt: number, glow: number, night: number, target: THREE.Vector3, warm: number, rain: number, highQuality: boolean) {
+  update(glow: number, night: number, warm: number, rain: number) {
     this.poolMat.opacity = glow * 0.55;
     this.pools.visible = glow > 0.02;
-    // the point lights follow the lamps closest to the middle of the screen; a light only moves
-    // after fading out, and lamps that stay near keep their light, so nothing blinks while panning
-    this.pickT -= dt;
-    if (this.pickT <= 0) {
-      this.pickT = 0.4;
-      const want = new Set(this.lampPos
-        .map(p => ({ p, d: (p.x - target.x) ** 2 + (p.z - target.z) ** 2 }))
-        .sort((a, b) => a.d - b.d).slice(0, LIGHTS).map(e => e.p));
-      for (const l of this.lights) {
-        if (l.userData.lamp && want.has(l.userData.lamp)) want.delete(l.userData.lamp);
-        else l.userData.lamp = null;
-      }
-      const free = [...want];
-      for (const l of this.lights) l.userData.next = l.userData.lamp ? null : free.shift() ?? null;
-    }
-    const k = 1 - Math.exp(-dt * 4);
-    for (const l of this.lights) {
-      const u = l.userData;
-      u.level = u.level ?? 0;
-      if (!u.lamp && u.next && u.level < 0.02) {
-        u.lamp = u.next; u.next = null;
-        l.position.set(u.lamp.x, u.lamp.y + 0.9, u.lamp.z);
-      }
-      u.level += ((u.lamp && highQuality ? 1 : 0) - u.level) * k;
-      l.intensity = u.level * glow * 2.2;
-    }
-    this.haloU.uAmt.value = glow * 0.9;
+    this.haloU.uAmt.value = glow;
     this.haloU.uScale.value = Math.min(2, devicePixelRatio || 1);
     this.halos.visible = glow > 0.02;
     // fireflies: warm, dry nights, not in winter
