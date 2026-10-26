@@ -1,0 +1,8 @@
+[
+ {"name":"setup","js":"(()=>{const c=__cozy,g=c.game;const fs=[...g.buildings.values()].filter(b=>b.type==='firestation');const a=g.center(fs[0]);c.view.rig.jumpTo(a.x-c.view.half,a.z-c.view.half);c.select(fs[0].id);for(let i=0;i<30;i++){c.view.render(0.1,0.1);c.hud.update(0.3);}return fs.length})()","wait":300,"shot":"cov"},
+ {"name":"log","js":"(()=>{const c=__cozy,g=c.game;c.select(null);g.notify('房子着火了','warn',{cat:'alert',at:[...g.buildings.values()][4],icon:'fire'});g.notify('研究完成：轮作 — 麦田+20%','good',{cat:'milestone',icon:'research'});g.notify('天气转为下雨','info',{cat:'report',icon:'rain'});c.hud.update(0.1);c.hud.togglePanel('log',true);c.hud.update(0.3);return 1})()","wait":300,"shot":"log"},
+ {"name":"audio","click":[640,300],"wait":4000},
+ {"name":"audio2","js":"(()=>{const s=__cozy.sound;__cozy.hud.togglePanel('log',false);s.setTown(__cozy.view.soundSources());return [s.ctx&&s.ctx.state, s.currentSong(), __cozy.view.soundSources().length, s.samples.size]})()","wait":3000},
+ {"name":"era","js":"(()=>{const s=__cozy.sound;s.play('era');s.play('place');s.play('demolish');s.setScene({rain:0,storm:0,sunny:1,night:0,snow:0},'winter',3,true);return 1})()","wait":5000},
+ {"name":"song","js":"__cozy.sound.currentSong()"}
+]
