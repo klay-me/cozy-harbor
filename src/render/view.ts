@@ -21,7 +21,7 @@ import { Smoke } from './smoke';
 import { icon } from '../ui/icons';
 
 interface Part { o: THREE.Object3D; kind: AnimKind; name: string; t: number; amp: number }
-interface BView { group: THREE.Group; tier: string; type: BuildingId; smoke: THREE.Vector3[]; smokeT: number; parts: Part[]; born: number; b: Bld }
+interface BView { group: THREE.Group; tier: string; type: BuildingId; rot: number; x: number; z: number; smoke: THREE.Vector3[]; smokeT: number; parts: Part[]; born: number; b: Bld }
 
 export class View {
   renderer: THREE.WebGLRenderer;
@@ -47,6 +47,7 @@ export class View {
   private lampLine!: THREE.InstancedMesh;
   private ghost = new THREE.Group();
   private ghostFoot!: THREE.Mesh;
+  private ghostArrow!: THREE.Mesh;
   private ghostRoads!: THREE.InstancedMesh;
   private floatLayer: HTMLElement;
   private floats: { el: HTMLElement; pos: THREE.Vector3; t: number }[] = [];
@@ -318,6 +319,13 @@ export class View {
     this.ghostFoot.renderOrder = 2;
     this.add(this.ghost);
     this.ghost.add(this.ghostFoot);
+    // arrow on the ground in front of the ghost: which side is the front (door)
+    const arrow = new THREE.Shape();
+    arrow.moveTo(0, 0.42); arrow.lineTo(0.38, 0); arrow.lineTo(0.14, 0); arrow.lineTo(0.14, -0.3);
+    arrow.lineTo(-0.14, -0.3); arrow.lineTo(-0.14, 0); arrow.lineTo(-0.38, 0); arrow.closePath();
+    this.ghostArrow = new THREE.Mesh(new THREE.ShapeGeometry(arrow).rotateX(Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffd54a, transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide }));
+    this.ghostArrow.renderOrder = 3;
+    this.ghost.add(this.ghostArrow);
     this.ghostRoads = this.add(new THREE.InstancedMesh(new THREE.BoxGeometry(0.96, 0.08, 0.96), new THREE.MeshBasicMaterial({ color: 0x7ee08a, transparent: true, opacity: 0.6, depthWrite: false }), 400));
     this.ghostRoads.count = 0;
     this.ghostRoads.frustumCulled = false;
@@ -325,36 +333,18 @@ export class View {
   }
 
   // ---------- buildings ----------
-  facing(b: Pick<Bld, 'x' | 'z' | 'w' | 'h' | 'type'>): number {
-    const g = this.game;
-    // a non-square building can only turn the ways its footprint allows
-    const [dw, dh] = BUILDINGS[b.type].size;
-    const turned = dw !== dh && b.w !== dw;
-    const allowed = (yaw: number) => dw === dh || (turned ? Math.abs(Math.abs(yaw) - Math.PI / 2) < 0.01 : Math.abs(Math.abs(yaw) - Math.PI / 2) > 0.01);
-    const sides: [number, number[][]][] = [
-      [0, Array.from({ length: b.w }, (_, i) => [b.x + i, b.z + b.h])],
-      [Math.PI / 2, Array.from({ length: b.h }, (_, j) => [b.x + b.w, b.z + j])],
-      [Math.PI, Array.from({ length: b.w }, (_, i) => [b.x + i, b.z - 1])],
-      [-Math.PI / 2, Array.from({ length: b.h }, (_, j) => [b.x - 1, b.z + j])],
-    ];
-    const wantWater = familyOf(b.type) === 'fishery' || b.type === 'depot';
-    let best = 0, bestScore = -1;
-    for (const [yaw, cells] of sides) {
-      if (!allowed(yaw)) continue;
-      let s = 0;
-      for (const [x, z] of cells) s += wantWater ? (g.world.tile(x, z) === Tile.Water ? 1 : 0) : (g.isRoad(x, z) ? 1 : 0);
-      if (s > bestScore) { bestScore = s; best = yaw; }
-    }
-    return bestScore > 0 ? best : turned ? Math.PI / 2 : 0;
-  }
-  /** where people enter and leave a building: the middle of an edge that touches a road */
+  /** model yaw for the way the front faces (models face +z) */
+  facing(b: Pick<Bld, 'rot'>): number { return [0, Math.PI / 2, Math.PI, -Math.PI / 2][b.rot & 3]; }
+  /** where people enter and leave a building: the front if a road is there, otherwise the nearest side that touches one */
   door(b: Bld): THREE.Vector2 {
     const g = this.game;
     const c = g.center(b);
     const cx = c.x - this.half, cz = c.z - this.half;
     let best: THREE.Vector2 | null = null, bd = 1e9;
+    const front = new Set(g.frontCells(b.x, b.z, b.w, b.h, b.rot).map(([x, z]) => z * g.W + x));
+    const frontRoad = [...front].some(k => g.isRoad(k % g.W, (k / g.W) | 0));
     g.forEdge(b, (x, z) => {
-      if (!g.isRoad(x, z)) return;
+      if (!g.isRoad(x, z) || (frontRoad && !front.has(z * g.W + x))) return;
       const rx = x + 0.5 - this.half, rz = z + 0.5 - this.half;
       // point halfway between the wall and the road tile centre
       const px = Math.max(b.x - this.half, Math.min(b.x + b.w - this.half, rx));
@@ -363,8 +353,8 @@ export class View {
       if (d < bd) { bd = d; best = new THREE.Vector2((px + rx) / 2, (pz + rz) / 2); }
     });
     if (best) return best;
-    const yaw = this.facing(b);
-    return new THREE.Vector2(cx + Math.sin(yaw) * (b.h / 2 + 0.2), cz + Math.cos(yaw) * (b.h / 2 + 0.2));
+    const yaw = this.facing(b), depth = BUILDINGS[b.type].size[1];
+    return new THREE.Vector2(cx + Math.sin(yaw) * (depth / 2 + 0.2), cz + Math.cos(yaw) * (depth / 2 + 0.2));
   }
 
   private makeView(b: Bld): BView {
@@ -373,7 +363,7 @@ export class View {
     const body = new THREE.Mesh(m.body, this.worldMat);
     body.castShadow = true; body.receiveShadow = true;
     group.add(body, new THREE.Mesh(m.line, outlineMat(0.022)));
-    const v: BView = { group, tier: b.tier, type: b.type, born: this.time, b, parts: [], smoke: m.smoke.map(p => new THREE.Vector3(...p)), smokeT: Math.random() };
+    const v: BView = { group, tier: b.tier, type: b.type, rot: b.rot, x: b.x, z: b.z, born: this.time, b, parts: [], smoke: m.smoke.map(p => new THREE.Vector3(...p)), smokeT: Math.random() };
     for (const a of m.anims) {
       const o = new THREE.Group();
       const ab = new THREE.Mesh(a.geo.body, this.worldMat);
@@ -395,7 +385,7 @@ export class View {
     for (const [id, v] of this.views) {
       const b = g.buildings.get(id);
       if (!b) { this.scene.remove(v.group); this.views.delete(id); continue; }
-      if (b.tier !== v.tier || b.type !== v.type) { this.scene.remove(v.group); this.views.set(id, this.makeView(b)); }
+      if (b.tier !== v.tier || b.type !== v.type || b.rot !== v.rot || b.x !== v.x || b.z !== v.z) { this.scene.remove(v.group); this.views.set(id, this.makeView(b)); }
     }
     for (const b of g.buildings.values()) if (!this.views.has(b.id)) this.views.set(b.id, this.makeView(b));
   }
@@ -409,7 +399,7 @@ export class View {
     const [w, h] = this.game.sizeOf(type, rot);
     const key = type === 'house' ? 'house-peasant-0' : type;
     if (this.ghost.userData.key !== key) {
-      this.ghost.children.filter(c => c !== this.ghostFoot).forEach(c => this.ghost.remove(c));
+      this.ghost.children.filter(c => c !== this.ghostFoot && c !== this.ghostArrow).forEach(c => this.ghost.remove(c));
       if (type !== 'road') {
         const m = model(type, 'peasant', 0);
         this.ghost.add(new THREE.Mesh(m.body, this.ghostMat), new THREE.Mesh(m.line, outlineMat(0.022)));
@@ -421,11 +411,15 @@ export class View {
       }
       this.ghost.userData.key = key;
     }
-    this.ghostFoot.scale.set(w, 1, h);
+    // foot and arrow live in the ghost's turned frame, so they use the unturned size
+    const [dw, dh] = def.size;
+    this.ghostFoot.scale.set(dw, 1, dh);
+    this.ghostArrow.visible = type !== 'road';
+    this.ghostArrow.position.set(0, 0.1, dh / 2 + 0.5);
     this.ghostMat.color.setHex(ok ? 0xffffff : 0xff8a80);
     (this.ghostFoot.material as THREE.MeshBasicMaterial).color.setHex(ok ? 0x7ee08a : 0xff7a6e);
     this.ghost.position.set(x + w / 2 - this.half, 0, z + h / 2 - this.half);
-    this.ghost.rotation.y = this.facing({ x, z, w, h, type });
+    this.ghost.rotation.y = this.facing({ rot });
     if (this.game.usesRoads(type)) {
       U.uRangeOn.value = 0;
       const k = `${type}:${x},${z}`;

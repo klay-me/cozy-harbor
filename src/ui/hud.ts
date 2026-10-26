@@ -31,6 +31,7 @@ export interface HudHooks {
   pause(b: Bld): void;
   seasonDays(n: number): void;
   rotate(): void;
+  turn(b: Bld): void;
   lookAt(x: number, z: number): void;
   sound(name: string): void;
 }
@@ -85,7 +86,7 @@ export class Hud {
           <button id="tLedger" title="收支账本 (L)">${icon('ledger')}账本</button>
           <button id="tGoods" title="仓库与商船 (G)">${icon('box')}仓库</button>
           <button id="tOverlay" title="污染视图 (P)">${icon('pollution')}污染</button>
-          <button id="tRotate" title="旋转建筑 (F)" hidden>↻ 旋转</button>
+          <button id="tRotate" title="转动建筑朝向：F 顺时针，Shift+F 逆时针。黄色箭头指的是正面（门口）" hidden>↻ 旋转</button>
           <button id="tSelect" title="选择 (Esc)">选择</button>
           <button id="tDemolish" title="拆除 (X)">拆除</button>
         </div>
@@ -115,7 +116,7 @@ export class Hud {
           <p><b>旋转地图</b>：按住中键（滚轮）拖动，或按住 Q / E</p>
           <p><b>缩放</b>：滚轮，手机上双指捏合</p>
           <p><b>修路</b>：选"道路"后按住拖动</p>
-          <p><b>研究 / 仓库 / 污染</b>：T / G / P</p><p><b>旋转建筑</b>：放置长方形建筑时按 F</p>
+          <p><b>研究 / 仓库 / 污染</b>：T / G / P</p><p><b>建筑朝向</b>：放置时按 F 顺时针转、Shift+F 逆时针转，黄色箭头是正面（门口）；不按就自动朝向道路。已建好的可以在信息面板里点"转向"</p>
           <p><b>取消</b>：右键单击或 Esc</p>
           <p>气温低于 8°C 住宅就要烧柴火（工业时代后烧煤），越冷烧得越多，秋天记得囤好燃料。</p><p><b>账本</b>：L，或点金币、货物数字，看每分钟的收入支出和货物进出。</p>
           <p>游戏每 30 秒自动保存在这台设备的浏览器里。</p>
@@ -232,6 +233,7 @@ export class Hud {
         else { btn.dataset.confirm = '1'; btn.textContent = '再点一次确认拆除'; }
       }
       if (a === 'focus') hooks.focus(b);
+      if (a === 'turn') hooks.turn(b);
       if (a === 'pause') { hooks.pause(b); this.infoKey = ''; this.renderInfo(); }
     });
   }
@@ -260,7 +262,11 @@ export class Hud {
     this.renderItems();
     $('#tDemolish', this.root).classList.toggle('on', t === 'demolish');
     $('#tSelect', this.root).classList.toggle('on', t === 'select');
-    $('#tRotate', this.root).hidden = !(t in BUILDINGS && BUILDINGS[t as BuildingId].size[0] !== BUILDINGS[t as BuildingId].size[1]);
+    $('#tRotate', this.root).hidden = !(t in BUILDINGS && t !== 'road');
+  }
+  /** label on the rotate button: which way the front faces, or 自动 while it follows the road */
+  setFacing(rot: number, auto: boolean) {
+    $('#tRotate', this.root).innerHTML = `↻ 正面朝${'南东北西'[rot & 3]}${auto ? '<small>（自动）</small>' : ''}`;
   }
   select(b: Bld | null) { this.selected = b; this.infoKey = ''; this.renderInfo(); }
   setOverlay(on: boolean) {
@@ -669,7 +675,7 @@ export class Hud {
       <span class="pill" data-f="status"></span>
       <p class="desc">${isHouse ? this.houseDesc(b) : d.desc}</p>
       ${body}
-      <footer>${d.upkeep ? `<span class="upkeep">维护费 ${Math.round(d.upkeep * PER_DAY * (b.paused ? 0.25 : 1))}/天</span>` : '<span></span>'}<span class="acts">${d.workers ? `<button class="ghost small" data-a="pause">${b.paused ? '重新开工' : '暂停'}</button>` : ''}${b.type !== 'depot' ? `<button class="danger" data-a="demolish" title="返还一半造价：${costHtml(refund(d.cost)).replace(/<[^>]+>/g, ' ')}">拆除</button>` : ''}</span></footer>`;
+      <footer>${d.upkeep ? `<span class="upkeep">维护费 ${Math.round(d.upkeep * PER_DAY * (b.paused ? 0.25 : 1))}/天</span>` : '<span></span>'}<span class="acts">${d.workers ? `<button class="ghost small" data-a="pause">${b.paused ? '重新开工' : '暂停'}</button>` : ''}${b.type !== 'depot' ? `<button class="ghost small" data-a="turn" title="原地掉头：正方形建筑转 90 度，长方形转 180 度">转向</button><button class="danger" data-a="demolish" title="返还一半造价：${costHtml(refund(d.cost)).replace(/<[^>]+>/g, ' ')}">拆除</button>` : ''}</span></footer>`;
     box.querySelector('[data-a="research"]')?.addEventListener('click', () => this.togglePanel('research', true));
     box.querySelector('[data-a="goods"]')?.addEventListener('click', () => this.togglePanel('goods', true));
     this.updateInfo();

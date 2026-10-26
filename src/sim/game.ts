@@ -12,7 +12,7 @@ export interface Bld {
   id: number;
   type: BuildingId;
   x: number; z: number; w: number; h: number;
-  rot: number;        // 1 = turned a quarter (non-square footprints only)
+  rot: number;        // which way the front (door) faces: 0 south (+z), 1 east (+x), 2 north (−z), 3 west (−x); odd = footprint turned
   variant: number;
   // production
   progress: number;
@@ -188,7 +188,7 @@ export class Game {
     GOOD_IDS.forEach(g => { this.storage[g] = START.goods[g] ?? 0; this.supply[g] = 1; });
     TIER_IDS.forEach(t => { this.workforce[t] = { have: 0, need: 0 }; });
     const d = this.world.depot;
-    this.addBuilding('depot', d.x, d.z);
+    this.addBuilding('depot', d.x, d.z, this.bestRot('depot', d.x, d.z));
     this.refresh();
   }
 
@@ -273,6 +273,49 @@ export class Game {
   center(b: Bld) { return { x: b.x + b.w / 2, z: b.z + b.h / 2 }; }
   /** footprint, swapped when rotated a quarter turn */
   sizeOf(type: BuildingId, rot = 0): [number, number] { const [w, h] = BUILDINGS[type].size; return rot % 2 ? [h, w] : [w, h]; }
+  /** top-left corner when the footprint is centred on the hovered tile */
+  anchor(type: BuildingId, hx: number, hz: number, rot = 0) {
+    const [w, h] = this.sizeOf(type, rot);
+    return { x: hx - Math.floor((w - 1) / 2), z: hz - Math.floor((h - 1) / 2) };
+  }
+  /** the row of tiles just outside the front (door) side */
+  frontCells(x: number, z: number, w: number, h: number, rot: number): [number, number][] {
+    switch (rot & 3) {
+      case 0: return Array.from({ length: w }, (_, i) => [x + i, z + h]);
+      case 1: return Array.from({ length: h }, (_, j) => [x + w, z + j]);
+      case 2: return Array.from({ length: w }, (_, i) => [x + i, z - 1]);
+      default: return Array.from({ length: h }, (_, j) => [x - 1, z + j]);
+    }
+  }
+  /** water buildings (fisheries, clay pits, hydro) want their front on the water; the rest want a road */
+  frontsWater(type: BuildingId) { const n = BUILDINGS[type].needs; return n === 'water' || n === 'river' || type === 'depot'; }
+  private frontScore(type: BuildingId, x: number, z: number, rot: number) {
+    const [w, h] = this.sizeOf(type, rot);
+    const inland = BUILDINGS[type].needs === 'river';
+    let s = 0;
+    for (const [cx, cz] of this.frontCells(x, z, w, h, rot)) {
+      if (this.frontsWater(type)) { if (this.world.inside(cx, cz) && this.world.tile(cx, cz) === Tile.Water && (!inland || !this.world.isOcean(cx, cz))) s++; }
+      else if (this.isRoad(cx, cz)) s++;
+    }
+    return s;
+  }
+  /** best way to face at a fixed corner, keeping the footprint's turn (parity) */
+  bestRot(type: BuildingId, x: number, z: number, parity = 0) {
+    const [dw, dh] = BUILDINGS[type].size;
+    const opts = dw === dh ? [0, 1, 2, 3] : parity % 2 ? [1, 3] : [0, 2];
+    let best = opts[0], bs = 0;
+    for (const r of opts) { const s = this.frontScore(type, x, z, r); if (s > bs) { bs = s; best = r; } }
+    return best;
+  }
+  /** automatic facing while placing: try all four directions around the hovered tile */
+  autoRot(type: BuildingId, hx: number, hz: number) {
+    let best = { rot: 0, ...this.anchor(type, hx, hz, 0) }, bs = 0;
+    for (const r of [0, 1, 2, 3]) {
+      const a = this.anchor(type, hx, hz, r), s = this.frontScore(type, a.x, a.z, r);
+      if (s > bs) { bs = s; best = { rot: r, ...a }; }
+    }
+    return best;
+  }
   has(t: TechId) { return (this.research.levels[t] ?? 0) > 0; }
   unlocked(type: BuildingId) {
     const d = BUILDINGS[type];
@@ -338,6 +381,7 @@ export class Game {
     if (def.needs === 'river' && !this.touchesWater(x, z, w, h, true)) return { ok: false, reason: `${def.name}必须紧挨河流或湖泊` };
     if (def.needs === 'iron' && dep < 4) return { ok: false, reason: '必须正好压在一块铁矿上（2×2 的矿点）' };
     if (def.needs === 'coal' && dep < 4) return { ok: false, reason: '必须正好压在一块煤矿上（2×2 的矿点）' };
+    if (this.frontsWater(type) && !this.frontScore(type, x, z, rot)) return { ok: false, reason: `${def.name}的正面要朝向水面，按 F 转一下` };
     const m = this.missing(def.cost);
     if (m) return { ok: false, reason: m };
     return { ok: true };
@@ -383,7 +427,9 @@ export class Game {
   }
 
   // ---------- actions ----------
-  place(type: BuildingId, x: number, z: number, rot = 0): boolean {
+  /** rot left out = face the road (or water) automatically, keeping the unturned footprint */
+  place(type: BuildingId, x: number, z: number, rot?: number): boolean {
+    rot ??= this.bestRot(type, x, z, 0);
     const chk = this.canPlace(type, x, z, rot);
     if (!chk.ok) { this.notify(chk.reason!, 'warn'); return false; }
     this.pay(BUILDINGS[type].cost);
@@ -397,7 +443,7 @@ export class Game {
     const [w, h] = this.sizeOf(type, rot);
     const id = this.nextId++;
     const b: Bld = {
-      id, type, x, z, w, h, rot: rot % 2, variant: (x * 7 + z * 13) % 4,
+      id, type, x, z, w, h, rot: rot & 3, variant: (x * 7 + z * 13) % 4,
       progress: 0, loaded: false, staff: 0, env: 1, working: false, status: '', connected: false, gen: 0,
       tier: 'peasant', residents: 0, sick: 0, happy: 0, parts: [], needs: [], warm: 1, coldT: 0, growT: 0, cover: new Set(), heaters: [], protect: new Set(), fire: 0, strike: 0, hungerT: 0, fed: 1, plague: 0, paused: false,
     };
@@ -469,6 +515,22 @@ export class Game {
     return false;
   }
 
+  /** turn a placed building where it stands: square ones a quarter turn, others half a turn (the footprint stays) */
+  turn(b: Bld) {
+    const [dw, dh] = BUILDINGS[b.type].size;
+    const step = dw === dh ? 1 : 2;
+    let r = b.rot;
+    for (let k = 0; k < 4; k += step) {
+      r = (r + step) & 3;
+      if (!this.frontsWater(b.type) || this.frontScore(b.type, b.x, b.z, r)) break;
+    }
+    if (r === b.rot) { this.notify(`${BUILDINGS[b.type].name}只能这样朝着水面`, 'warn'); return false; }
+    b.rot = r;
+    this.bVersion++;
+    this.sfx.push('rotate');
+    return true;
+  }
+
   /** take a building off the map (demolished or burnt down) */
   private remove(b: Bld) {
     for (let j = 0; j < b.h; j++) for (let i = 0; i < b.w; i++) this.occ[(b.z + j) * this.W + b.x + i] = 0;
@@ -528,17 +590,23 @@ export class Game {
     if (!this.upgradeFits(b, up.to)) return `${next.name}占 ${next.size[0]}×${next.size[1]}，周围要先空出地方`;
     return this.missing(up.cost);
   }
-  /** the bigger footprint of the next level, anchored at the same corner, with the same turn */
-  private upgradeFits(b: Bld, to: BuildingId) {
+  /** where the next level stands: same facing, front edge kept in place, growing backwards */
+  upgradeSpot(b: Bld, to: BuildingId) {
     const [w, h] = this.sizeOf(to, b.rot);
+    const r = b.rot & 3;
+    const x = r === 1 ? b.x + b.w - w : r === 3 ? b.x : b.x + Math.floor((b.w - w) / 2);
+    const z = r === 0 ? b.z + b.h - h : r === 2 ? b.z : b.z + Math.floor((b.h - h) / 2);
+    return { x, z, w, h };
+  }
+  private upgradeFits(b: Bld, to: BuildingId) {
+    const { x, z, w, h } = this.upgradeSpot(b, to);
     for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
-      const tx = b.x + i, tz = b.z + j;
+      const tx = x + i, tz = z + j;
       if (!this.world.inside(tx, tz)) return false;
       const t = this.world.tile(tx, tz), o = this.occ[tz * this.W + tx];
       if (t === Tile.Water || t === Tile.Rock || (o !== 0 && o !== b.id)) return false;
     }
-    const d = BUILDINGS[to];
-    if (d.needs === 'water' && !this.touchesWater(b.x, b.z, w, h)) return false;
+    if (BUILDINGS[to].needs === 'water' && !this.touchesWater(x, z, w, h)) return false;
     return true;
   }
   upgrade(b: Bld, quiet = false) {
@@ -548,8 +616,8 @@ export class Game {
       const up = BUILDINGS[b.type].upgrade!, from = BUILDINGS[b.type].name;
       this.pay(up.cost, '建筑升级');
       for (let j = 0; j < b.h; j++) for (let i = 0; i < b.w; i++) this.occ[(b.z + j) * this.W + b.x + i] = 0;
-      const [w, h] = this.sizeOf(up.to, b.rot);
-      b.type = up.to; b.w = w; b.h = h; b.progress = 0; b.loaded = false;
+      const { x, z, w, h } = this.upgradeSpot(b, up.to);
+      b.type = up.to; b.x = x; b.z = z; b.w = w; b.h = h; b.progress = 0; b.loaded = false;
       for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
         const k = (b.z + j) * this.W + b.x + i;
         this.occ[k] = b.id;
@@ -1340,7 +1408,7 @@ export class Game {
     const roads: number[] = [];
     this.occ.forEach((o, i) => { if (o === -1) roads.push(i); });
     return JSON.stringify({
-      v: 2, seasonDays: this.seasonDays, seed: this.world.seed, map: this.world.mapId, weather: this.weather.cur, gold: this.gold, time: this.time, quest: this.questIndex, era: this.era,
+      v: 2, rf: 1, seasonDays: this.seasonDays, seed: this.world.seed, map: this.world.mapId, weather: this.weather.cur, gold: this.gold, time: this.time, quest: this.questIndex, era: this.era,
       research: { current: this.research.current, points: this.research.points, levels: this.research.levels, saved: this.research.saved },
       storage: this.storage, roads,
       b: [...this.buildings.values()].filter(b => b.type !== 'depot').map(b => [b.type, b.x, b.z, b.tier, b.residents, b.progress, b.paused ? 1 : 0, b.rot]),
@@ -1359,7 +1427,8 @@ export class Game {
       for (const [type, x, z, tier, res, prog, paused, rot] of s.b) {
         if (!(type in BUILDINGS)) continue;
         if (!g.canFit(type, x, z, rot ?? 0)) continue;
-        const b = g.addBuilding(type, x, z, rot ?? 0);
+        // saves before free facing only stored the turn (0/1); pick the side facing the road like they used to
+        const b = g.addBuilding(type, x, z, s.rf ? rot ?? 0 : g.bestRot(type, x, z, rot ?? 0));
         b.tier = tier; b.residents = res; b.progress = prog; b.paused = !!paused;
       }
       g.rVersion++; g.tVersion++;

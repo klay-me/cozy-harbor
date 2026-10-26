@@ -72,7 +72,8 @@ async function boot() {
     trade: (g, n) => { n > 0 ? game.buy(g, n) : game.sell(g, -n); },
     overlay: on => view.setPollutionView(on),
     pause: b => game.togglePause(b),
-    rotate: () => { rot = 1 - rot; updatePreview(); sound.play('rotate'); },
+    rotate: () => turnGhost(1),
+    turn: b => { if (game.turn(b)) hud.select(b); },
     seasonDays: n => { game.setSeasonDays(n); game.notify(`季节长度改为每季 ${n} 天`, 'info'); },
   }, makeThumbs(allTypes));
   hud.setAudio(sound.settings, rotMode);
@@ -97,8 +98,11 @@ async function boot() {
       if (announce) game.notify('保存失败：浏览器不允许本地存储', 'warn');
     }
   }
+  // facing while placing: follows the road (or water) until the player turns it with F, then stays put
+  let rot = 0, autoRot = true;
   function setTool(t: Tool) {
     tool = t;
+    autoRot = true;
     hud.setTool(t);
     view.setGrid(t !== 'select');
     if (t === 'select' || t === 'demolish' || t === 'road') view.showGhost(null);
@@ -130,11 +134,16 @@ async function boot() {
   let pinch: { d: number; a: number; cx: number; cy: number } | null = null;
   let touchGhost: string | null = null;
 
-  let rot = 0;
   const anchor = (t: BuildingId, p: { x: number; z: number }) => {
-    const [w, h] = game.sizeOf(t, rot);
-    return { x: p.x - Math.floor((w - 1) / 2), z: p.z - Math.floor((h - 1) / 2) };
+    if (autoRot) { const a = game.autoRot(t, p.x, p.z); rot = a.rot; }
+    return game.anchor(t, p.x, p.z, rot);
   };
+  function turnGhost(dir: number) {
+    if (tool === 'select' || tool === 'demolish' || tool === 'road') return;
+    autoRot = false;
+    rot = (rot + dir + 4) & 3;
+    updatePreview(); sound.play('rotate');
+  }
   function updatePreview() {
     if (!hover) return;
     if (tool === 'road') {
@@ -143,6 +152,7 @@ async function boot() {
     } else if (tool !== 'select' && tool !== 'demolish') {
       const a = anchor(tool, hover);
       view.showGhost(tool, a.x, a.z, game.canPlace(tool, a.x, a.z, rot).ok, rot);
+      hud.setFacing(rot, autoRot);
     }
   }
   function act(p: { x: number; z: number }) {
@@ -245,7 +255,7 @@ async function boot() {
     const k = e.key.toLowerCase();
     keys.add(k);
     if (k === 'escape') { if (hud.panelOpen) { hud.closePanels(); return; } setTool('select'); select(null); }
-    if (k === 'f' && tool !== 'select' && tool !== 'demolish' && tool !== 'road') { rot = 1 - rot; updatePreview(); sound.play('rotate'); }
+    if (k === 'f') turnGhost(e.shiftKey ? -1 : 1);
     if (k === 't') hud.togglePanel('research');
     if (k === 'g') hud.togglePanel('goods');
     if (k === 'l') hud.togglePanel('ledger');
