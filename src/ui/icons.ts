@@ -58,5 +58,21 @@ export const ICONS: Record<string, string> = {
   food: wrap(`<path d="M4 12h16a8 7 0 0 1-16 0z" fill="#fff8ea"/><path d="M8 9c0-2 1-3 1-4M12 9c0-2 1-3 1-4M16 9c0-2 1-3 1-4" fill="none"/>`),
   fire: wrap(`<path d="M12 21c-4 0-6.5-2.6-6.5-6 0-4 4-6 3.5-11 3 1.5 5 4 5 6.5 1-1 1.5-2.2 1.5-3.5 2 1.8 3 4.5 3 7.5 0 3.8-2.6 6.5-6.5 6.5z" fill="#f2766b"/>`),
   clock: wrap(`<circle cx="12" cy="12" r="8.5" fill="#fff8ea"/><path d="M12 7v5l3 2" fill="none"/>`),
+  // status and message icons
+  sick: wrap(`<circle cx="12" cy="12" r="8.5" fill="#b9e08a"/><path d="M8 10.5l2 0M14 10.5l2 0" fill="none"/><path d="M8.5 16c1-1.2 2.2-1.6 3.5-1.6s2.5.4 3.5 1.6" fill="none"/><path d="M17.5 4.5c1 1.6 1.6 2.6 1.6 3.4a1.6 1.6 0 0 1-3.2 0c0-.8.6-1.8 1.6-3.4z" fill="#7fc3e8"/>`),
+  thief: wrap(`<circle cx="12" cy="12" r="8.5" fill="#ffd9b0"/><path d="M3.8 9.5h16.4v3.2H3.8z" fill="#3b3346"/><circle cx="9" cy="11.1" r="1" fill="#fff" stroke="none"/><circle cx="15" cy="11.1" r="1" fill="#fff" stroke="none"/><path d="M9.5 16.2h5" fill="none"/>`),
+  strike: wrap(`<path d="M6 21V4" fill="none"/><path d="M6 4h13l-3 4 3 4H6z" fill="#f2766b"/><path d="M10 8h5" fill="none" stroke="#fff"/>`),
+  hungry: wrap(`<path d="M4 12h16a8 7 0 0 1-16 0z" fill="#fff8ea"/><path d="M8 4.5l8 6M16 4.5l-8 6" fill="none" stroke="#e0574a" stroke-width="2"/>`),
+  star: wrap(`<path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z" fill="#f7c948"/>`),
+  full: wrap(`<path d="M3 9l9-4 9 4v9l-9 4-9-4z" fill="#f0c88f"/><path d="M3 9l9 4 9-4M12 13v9" fill="none"/><circle cx="18" cy="6" r="4" fill="#f2766b"/><path d="M18 4v2.5" fill="none" stroke="#fff"/><circle cx="18" cy="8.2" r=".4" fill="#fff" stroke="#fff"/>`),
+  noroad: wrap(`<path d="M7 21l3-18M17 21l-3-18" fill="none"/><path d="M12 6v2M12 11v2M12 16v2" fill="none"/><circle cx="12" cy="12" r="9" fill="none" stroke="#e0574a" stroke-width="2"/><path d="M5.6 5.6l12.8 12.8" fill="none" stroke="#e0574a" stroke-width="2"/>`),
+  noworkers: wrap(`<circle cx="10" cy="8" r="3.6" fill="#ffd9b0"/><path d="M3 20c0-4 3.2-6.5 7-6.5 2 0 3.6.6 4.8 1.7" fill="#c9ccd6"/><circle cx="17.5" cy="16.5" r="4.5" fill="#f2766b"/><path d="M15.5 16.5h4" fill="none" stroke="#fff"/>`),
+  noinput: wrap(`<path d="M3 9l9-4 9 4v9l-9 4-9-4z" fill="#e8e2d6" stroke-dasharray="2 2"/><path d="M9 11.5a3 3 0 1 1 3.8 2.9V16" fill="none" stroke="#e0574a"/><circle cx="12.8" cy="18.5" r=".5" fill="#e0574a" stroke="#e0574a"/>`),
+  paused: wrap(`<circle cx="12" cy="12" r="8.5" fill="#e8e2d6"/><path d="M10 8.5v7M14 8.5v7" fill="none" stroke-width="2.2"/>`),
+  nopower: wrap(`<path d="M13.5 2.5L5 13.5h6l-1.5 8 8.5-11h-6z" fill="#e8e2d6"/><path d="M4 4l16 16" fill="none" stroke="#e0574a" stroke-width="2"/>`),
+  bell: wrap(`<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z" fill="#f7e2b0"/><path d="M10 20.5a2 2 0 0 0 4 0" fill="none"/>`),
+  idle: wrap(`<circle cx="12" cy="12" r="8.5" fill="#e8e2d6"/><path d="M8.5 9.5h3l-3 4h3M13.5 12.5h2.5l-2.5 3h2.5" fill="none"/>`),
+  up: wrap(`<circle cx="12" cy="12" r="8.5" fill="#8fd16a"/><path d="M12 17V7.5M8 11l4-4 4 4" fill="none" stroke-width="2.2"/>`),
+  pin: wrap(`<path d="M12 21s-6-6.2-6-11a6 6 0 0 1 12 0c0 4.8-6 11-6 11z" fill="#f2766b"/><circle cx="12" cy="10" r="2.2" fill="#fff"/>`),
 };
 export const icon = (k: string) => ICONS[k] ?? '';

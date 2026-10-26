@@ -74,7 +74,7 @@ export const POWER_HEAT_PER_RESIDENT = 0.2;
 // ---------- buildings ----------
 export type Cost = { gold: number } & Partial<Record<GoodId, number>>;
 export type BuildingId =
-  | 'road' | 'house' | 'depot' | 'warehouse'
+  | 'road' | 'house' | 'depot' | 'warehouse' | 'bigwarehouse'
   // era 1
   | 'lumberjack' | 'sawmill' | 'fishery' | 'garden' | 'farm' | 'sheepfarm' | 'market' | 'church' | 'study' | 'herbalist' | 'firestation'
   // era 2
@@ -122,7 +122,8 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
   road: B({ name: '道路', desc: '连接建筑与港口。按住拖动可以一次修一段。也能架桥跨过河流和湖泊（每格 12 金币 + 1 木板），但不能跨海。', era: 1, size: [1, 1], cost: { gold: 2 }, upkeep: 0, category: 'road', model: '', hotkey: 'R' }),
   house: B({ name: '住宅', desc: '居民的家。满足需求、住得开心，就能升级为更高的阶层。', era: 1, size: [2, 2], cost: { gold: 40, planks: 2 }, upkeep: 0, category: 'home', model: 'house', hotkey: 'H' }),
   depot: B({ name: '港口', desc: '城镇的起点，存放所有货物。', era: 1, size: [3, 3], cost: { gold: 0 }, upkeep: 0, category: 'public', model: 'depot', storage: 60, buildable: false }),
-  warehouse: B({ name: '仓库', desc: '每座仓库让每种货物的存储上限增加 40。', era: 1, size: [3, 2], cost: { gold: 100, planks: 6 }, upkeep: 5, category: 'public', model: 'warehouse', storage: 40 }),
+  warehouse: B({ name: '仓库', desc: '每座仓库让每种货物的存储上限增加 40。也是道路网的起点，偏远的街区可以靠它连进城里。', era: 1, size: [3, 2], cost: { gold: 100, planks: 6 }, upkeep: 5, category: 'public', model: 'warehouse', storage: 40 }),
+  bigwarehouse: B({ name: '大型仓库', desc: '砖砌的大货栈，带吊车和装卸台。每种货物的存储上限增加 150，占地比 4 座小仓库还小。', era: 2, size: [4, 3], cost: { gold: 450, planks: 12, bricks: 16 }, upkeep: 14, category: 'public', model: 'bigwarehouse', storage: 150 }),
 
   // ---- era 1 ----
   lumberjack: B({ name: '伐木场', desc: '砍伐附近的树木，周围树越多效率越高，还会慢慢补种树苗。只要金币就能建。', era: 1, size: [2, 2], cost: { gold: 60 }, upkeep: 5, category: 'raw', model: 'lumberjack', workers: { tier: 'peasant', n: 4 }, cycle: 15, output: 'wood', radius: 3, needs: 'forest' }),

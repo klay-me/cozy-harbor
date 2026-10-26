@@ -129,10 +129,16 @@ export class Terrain {
     const L = this.land(wx, wz);
     return THREE.MathUtils.smoothstep(o, 0.3, 0.62) * THREE.MathUtils.smoothstep(L, 0.46, 0.53);
   }
-  /** street coverage overlay: 2 = reached road, 1 = covered building, null hides it */
+  /** street coverage overlay, bit flags: 1 own road, 2 other road of the same kind, 4 covered, 8 uncovered; null hides it */
   setReach(cells: Uint8Array | null) {
     if (!cells) { this.terrainU.uReachOn.value = 0; return; }
-    for (let i = 0; i < cells.length; i++) { this.reachData[i * 4] = cells[i] * 120; this.reachData[i * 4 + 3] = 255; }
+    for (let i = 0; i < cells.length; i++) {
+      const c = cells[i];
+      this.reachData[i * 4] = c & 1 ? 240 : c & 4 ? 120 : 0;
+      this.reachData[i * 4 + 1] = c & 2 ? 255 : 0;
+      this.reachData[i * 4 + 2] = c & 8 ? 255 : 0;
+      this.reachData[i * 4 + 3] = 255;
+    }
     this.terrainU.uReach.value!.needsUpdate = true;
     this.terrainU.uReachOn.value = 1;
   }
@@ -282,6 +288,9 @@ float tfbm(vec2 p){ return tn(p) * 0.6 + tn(p * 2.3 + 7.1) * 0.3 + tn(p * 5.1 + 
   float pulse = 0.85 + 0.15 * sin(uTime * 4.0);
   gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(1.0, 0.86, 0.35), uReachOn * inMap * step(0.6, rv) * 0.55 * pulse);
   gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.6, 0.9, 1.0), uReachOn * inMap * step(0.3, rv) * (1.0 - step(0.6, rv)) * 0.45);
+  vec3 rq = texture2D(uReach, gp / uW).rgb;
+  gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(1.0, 0.68, 0.28), uReachOn * inMap * step(0.5, rq.g) * (1.0 - step(0.6, rv)) * 0.4);
+  gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(1.0, 0.45, 0.4), uReachOn * inMap * step(0.5, rq.b) * 0.42);
   float d = distance(vWP.xz, uRange.xy);
   float inside = 1.0 - smoothstep(uRange.z - 0.06, uRange.z, d);
   float ring = smoothstep(uRange.z - 0.18, uRange.z - 0.06, d) * inside;

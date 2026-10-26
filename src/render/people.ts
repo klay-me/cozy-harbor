@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import type { Game, Bld } from '../sim/game';
 import type { GoodId } from '../sim/data';
+import { BUILDINGS } from '../sim/data';
 import { getModel } from './assets';
 import { worldMaterial } from './shared';
 import { outlineMat } from './toon';
@@ -138,7 +139,7 @@ export class People {
     const g = this.game, c = g.center(b);
     let best: Bld | null = null, bd = 1e9;
     for (const s of g.buildings.values()) {
-      if (s.type !== 'depot' && s.type !== 'warehouse') continue;
+      if (!BUILDINGS[s.type].storage) continue;
       const sc = g.center(s), d = Math.hypot(sc.x - c.x, sc.z - c.z);
       if (d < bd) { bd = d; best = s; }
     }

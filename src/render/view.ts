@@ -7,10 +7,10 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { Game, Bld } from '../sim/game';
 import { Tile } from '../sim/world';
-import { BUILDINGS, BuildingId, GOODS } from '../sim/data';
+import { BUILDINGS, BuildingId, GOODS, TIERS } from '../sim/data';
 import { outlineMat, ramp } from './toon';
 import { model, ModelGeo } from './models';
-import { getModel } from './assets';
+import { getModel, AnimKind } from './assets';
 import { CameraRig } from './camera';
 import { ENV, worldMaterial } from './shared';
 import { Terrain } from './terrain';
@@ -18,8 +18,10 @@ import { Env } from './env';
 import { People } from './people';
 import { Decor } from './decor';
 import { Smoke } from './smoke';
+import { icon } from '../ui/icons';
 
-interface BView { group: THREE.Group; tier: string; smoke: THREE.Vector3[]; smokeT: number; spins: { o: THREE.Object3D; axis: 'x' | 'z' }[]; bobs: THREE.Object3D[]; born: number; b: Bld }
+interface Part { o: THREE.Object3D; kind: AnimKind; name: string; t: number; amp: number }
+interface BView { group: THREE.Group; tier: string; smoke: THREE.Vector3[]; smokeT: number; parts: Part[]; born: number; b: Bld }
 
 export class View {
   renderer: THREE.WebGLRenderer;
@@ -48,6 +50,11 @@ export class View {
   private ghostRoads!: THREE.InstancedMesh;
   private floatLayer: HTMLElement;
   private floats: { el: HTMLElement; pos: THREE.Vector3; t: number }[] = [];
+  /** problem bubbles over buildings (fire, plague, full storage, …) */
+  private marks = new Map<number, { el: HTMLElement; key: string; pos: THREE.Vector3 }>();
+  private markT = 0;
+  private pings: { el: HTMLElement; pos: THREE.Vector3; t: number }[] = [];
+  onMarkClick: (id: number) => void = () => {};
   private raycaster = new THREE.Raycaster();
   private ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   private composer: EffectComposer;
@@ -217,16 +224,33 @@ export class View {
     }
   }
   /** show which streets and buildings a service reaches */
-  private showReach(type: BuildingId, x: number, z: number, w: number, h: number, mask?: Uint8Array) {
-    const g = this.game, W = g.W;
+  /**
+   * Street coverage overlay. Every building giving the same cover (all fire stations, all markets …)
+   * is drawn together so gaps show up at once: this building's streets glow, the others' streets are
+   * a softer orange, covered buildings get a blue wash and uncovered ones a red one.
+   */
+  private showReach(type: BuildingId, x: number, z: number, w: number, h: number, mask?: Uint8Array, selfId = -1) {
+    const g = this.game, W = g.W, d = BUILDINGS[type];
     const m = mask ?? g.roadReach(x, z, w, h, g.roadRange(type));
-    const cells = new Uint8Array(W * W);
-    for (let i = 0; i < W * W; i++) if (m[i]) cells[i] = 2;
-    const all = !!BUILDINGS[type].protects;
+    const same = (t: BuildingId) => d.protects ? BUILDINGS[t].protects === d.protects : d.service ? BUILDINGS[t].service === d.service : t === type;
+    const cells = new Uint8Array(W * W);   // bit 1 own road, 2 other road, 4 covered, 8 uncovered
+    const masks: Uint8Array[] = [m];
+    for (let i = 0; i < W * W; i++) if (m[i]) cells[i] |= 1;
+    for (const [id, r] of g.reach) {
+      const o = g.buildings.get(id);
+      if (!o || id === selfId || !same(o.type)) continue;
+      masks.push(r);
+      for (let i = 0; i < W * W; i++) if (r[i] && !(cells[i] & 1)) cells[i] |= 2;
+    }
+    const all = !!d.protects;
     for (const b of g.buildings.values()) {
+      if (b.id === selfId || same(b.type)) continue;
       if (!all && b.type !== 'house') continue;
-      if (!g.touchesMask(b, m)) continue;
-      for (let j = 0; j < b.h; j++) for (let i = 0; i < b.w; i++) cells[(b.z + j) * W + b.x + i] = 1;
+      if (all && (b.type === 'depot')) continue;
+      const hit = masks.some(mk => g.touchesMask(b, mk));
+      // houses that don't want this service are only shown when covered
+      if (!hit && !all && !(d.service && TIERS[b.tier].services.includes(d.service))) continue;
+      for (let j = 0; j < b.h; j++) for (let i = 0; i < b.w; i++) cells[(b.z + j) * W + b.x + i] |= hit ? 4 : 8;
     }
     this.terrain.setReach(cells);
   }
@@ -349,7 +373,7 @@ export class View {
     const body = new THREE.Mesh(m.body, this.worldMat);
     body.castShadow = true; body.receiveShadow = true;
     group.add(body, new THREE.Mesh(m.line, outlineMat(0.022)));
-    const v: BView = { group, tier: b.tier, born: this.time, b, spins: [], bobs: [], smoke: m.smoke.map(p => new THREE.Vector3(...p)), smokeT: Math.random() };
+    const v: BView = { group, tier: b.tier, born: this.time, b, parts: [], smoke: m.smoke.map(p => new THREE.Vector3(...p)), smokeT: Math.random() };
     for (const a of m.anims) {
       const o = new THREE.Group();
       const ab = new THREE.Mesh(a.geo.body, this.worldMat);
@@ -358,7 +382,7 @@ export class View {
       o.position.set(...a.at);
       o.userData.base = o.position.y;
       group.add(o);
-      if (a.kind === 'bob') v.bobs.push(o); else v.spins.push({ o, axis: a.kind === 'spinX' ? 'x' : 'z' });
+      v.parts.push({ o, kind: a.kind, name: a.name, t: Math.random() * 10, amp: 0 });
     }
     const c = this.game.center(b);
     group.position.set(c.x - this.half, 0, c.z - this.half);
@@ -432,7 +456,7 @@ export class View {
     const c = this.game.center(b);
     s.set(c.x - this.half, c.z - this.half, b.w, b.h);
     const r = BUILDINGS[b.type].radius;
-    if (this.game.usesRoads(b.type)) { U.uRangeOn.value = 0; this.showReach(b.type, b.x, b.z, b.w, b.h, this.game.reach.get(b.id)); }
+    if (this.game.usesRoads(b.type)) { U.uRangeOn.value = 0; this.showReach(b.type, b.x, b.z, b.w, b.h, this.game.reach.get(b.id), b.id); }
     else if (r) { this.terrain.setReach(null); U.uRangeOn.value = 1; U.uRange.value.set(c.x - this.half, c.z - this.half, this.game.radiusOf(b) + (BUILDINGS[b.type].service ? 0 : 0.5)); }
     else if (!this.ghost.visible) { U.uRangeOn.value = 0; this.terrain.setReach(null); }
   }
@@ -460,6 +484,61 @@ export class View {
     return { x: Math.floor(p.x + this.half), z: Math.floor(p.z + this.half) };
   }
 
+  /** a ring that pulses on the ground, to show where a message happened */
+  ping(x: number, z: number) {
+    const el = document.createElement('div');
+    el.className = 'ping';
+    this.floatLayer.appendChild(el);
+    this.pings.push({ el, pos: new THREE.Vector3(x - this.half, Math.max(0, this.terrain.height(x - this.half, z - this.half)), z - this.half), t: 0 });
+  }
+  private syncMarks() {
+    const g = this.game;
+    const seen = new Set<number>();
+    for (const b of g.buildings.values()) {
+      const a = g.alertOf(b);
+      if (!a) continue;
+      seen.add(b.id);
+      const key = a.icon + a.level;
+      let m = this.marks.get(b.id);
+      if (!m) {
+        const el = document.createElement('button');
+        el.addEventListener('click', () => this.onMarkClick(b.id));
+        this.floatLayer.appendChild(el);
+        const c = g.center(b);
+        const h = model(b.type, b.tier, b.variant).height;
+        m = { el, key: '', pos: new THREE.Vector3(c.x - this.half, h + 0.5, c.z - this.half) };
+        this.marks.set(b.id, m);
+      }
+      if (m.key !== key) {
+        m.key = key;
+        m.el.className = `mark ${a.level} m-${a.icon}`;
+        m.el.innerHTML = icon(a.icon);
+      }
+      m.el.title = a.tip;
+    }
+    for (const [id, m] of this.marks) if (!seen.has(id)) { m.el.remove(); this.marks.delete(id); }
+  }
+  private placeMarks(dt: number) {
+    const cam = this.rig.camera, v3 = new THREE.Vector3();
+    const dist = this.rig.dist;
+    const sc = Math.max(0.55, Math.min(1.15, 24 / dist));
+    for (const m of this.marks.values()) {
+      v3.copy(m.pos).project(cam);
+      const off = v3.z > 1 || Math.abs(v3.x) > 1.1 || Math.abs(v3.y) > 1.1;
+      const hideGood = m.key.endsWith('good') && dist > 19;
+      if (off || hideGood) { m.el.style.display = 'none'; continue; }
+      m.el.style.display = '';
+      m.el.style.transform = `translate(${(v3.x * 0.5 + 0.5) * innerWidth}px, ${(-v3.y * 0.5 + 0.5) * innerHeight}px) translate(-50%, -100%) scale(${sc})`;
+    }
+    this.pings = this.pings.filter(p => {
+      p.t += dt;
+      if (p.t > 2.4) { p.el.remove(); return false; }
+      v3.copy(p.pos).project(cam);
+      p.el.style.transform = `translate(${(v3.x * 0.5 + 0.5) * innerWidth}px, ${(-v3.y * 0.5 + 0.5) * innerHeight}px) translate(-50%, -50%) scale(${sc})`;
+      return true;
+    });
+  }
+
   floatText(b: Bld, text: string) {
     if (this.floats.length > 40) return;
     const el = document.createElement('div');
@@ -471,6 +550,79 @@ export class View {
   }
 
   weatherMix() { return this.env.mix(); }
+
+  /**
+   * Buildings that can be heard from the camera: loudness falls off with distance from the point the
+   * camera looks at and with zoom; pan follows the building's place on screen.
+   */
+  soundSources() {
+    const out: { type: BuildingId; w: number; pan: number; working: boolean; fire: boolean }[] = [];
+    const t = this.rig.target, cam = this.rig.camera, v3 = new THREE.Vector3();
+    const R = 9 + this.rig.dist * 0.3, zf = Math.max(0.25, Math.min(1.3, 26 / this.rig.dist));
+    for (const v of this.views.values()) {
+      const p = v.group.position;
+      const d = Math.hypot(p.x - t.x, p.z - t.z);
+      if (d > R) continue;
+      const k = 1 - d / R;
+      v3.set(p.x, 0.5, p.z).project(cam);
+      out.push({ type: v.b.type, w: k * k * zf, pan: Math.max(-1, Math.min(1, v3.x)) * 0.8, working: v.b.working, fire: v.b.fire > 0 });
+    }
+    return out;
+  }
+
+  /** one moving part: what it does depends on its kind and name (see tools/models_anim.py) */
+  private animate(v: BView, p: Part, gdt: number, wind: number, bellOn: boolean) {
+    const o = p.o, b = v.b, work = b.working && gdt > 0;
+    switch (p.kind) {
+      case 'spinZ': case 'spinX': {
+        if (!work) return;
+        const sp = p.name === 'saw' ? 7 : p.name === 'rotor' ? 2.6 : p.name === 'sails' ? 1.1 * wind + 0.4 : p.name === 'gear' ? 0.8 : 1.4;
+        if (p.kind === 'spinZ') o.rotation.z -= gdt * sp; else o.rotation.x -= gdt * sp;
+        return;
+      }
+      case 'spinY': {
+        if (p.name === 'crane') {
+          // slews back and forth between ship and quay, pausing at each end
+          if (work || b.type === 'depot') p.t += gdt * 0.35;
+          const c = Math.sin(p.t);
+          o.rotation.y = 1.25 * Math.sign(c) * Math.pow(Math.abs(c), 0.6);
+        } else if (p.name === 'dome') o.rotation.y += gdt * (work ? 0.12 : 0);
+        else if (p.name === 'dish') { p.t += gdt * (work ? 0.4 : 0); o.rotation.y = Math.sin(p.t) * 1.4; }
+        else if (work) o.rotation.y += gdt * 4;
+        return;
+      }
+      case 'swingX': case 'swingZ': {
+        let a = 0;
+        if (p.name === 'axe' || p.name === 'hammer') {
+          // a quick strike, then lift again
+          if (work) p.t += gdt * (p.name === 'hammer' ? 1.6 : 1.1);
+          const f = p.t % 1;
+          a = (p.name === 'hammer' ? -1 : 1) * (f < 0.75 ? Math.sin(f / 0.75 * Math.PI * 0.5) : 1 - (f - 0.75) / 0.25) * (p.name === 'hammer' ? 1.0 : 1.3);
+          if (!work) a = 0;
+        } else if (p.name === 'bell' || p.name === 'firebell') {
+          const on = p.name === 'bell' ? bellOn : this.game.fires.size > 0;
+          p.amp += ((on ? 0.7 : 0) - p.amp) * Math.min(1, gdt * 1.5);
+          p.t += gdt * (p.name === 'firebell' ? 7 : 3.2);
+          a = Math.sin(p.t) * p.amp;
+        } else {
+          // signs and washing on the line move with the wind
+          p.t += Math.max(gdt, 0.016) * (1.6 + wind);
+          a = Math.sin(p.t) * 0.07 * wind + Math.sin(p.t * 2.7) * 0.025 * wind;
+        }
+        if (p.kind === 'swingX') o.rotation.x = a; else o.rotation.z = a;
+        return;
+      }
+      case 'flag':
+        p.t += 0.016 * (1.5 + wind * 1.5);
+        o.rotation.y = 0.25 * Math.sin(p.t * 2.1) * Math.min(1.5, wind) + 0.12 * Math.sin(p.t * 5.3);
+        o.rotation.x = 0.06 * Math.sin(p.t * 3.1);
+        return;
+      case 'bob':
+        o.position.y = o.userData.base + Math.sin(this.time * 1.8 + b.id) * 0.03;
+        o.rotation.z = Math.sin(this.time * 1.3 + b.id) * 0.06;
+        return;
+    }
+  }
 
   /** chimneys: factories smoke while working, homes when cooking (mornings, evenings) or heating */
   private puff(v: BView, gameDt: number) {
@@ -515,6 +667,10 @@ export class View {
       this.floatText(b, `+${ev.n} ${GOODS[ev.good].name}`);
       this.people?.produced(b, ev.good);
     }
+    const mx = this.env.mix();
+    const wind = 0.5 + mx.storm * 1.4 + mx.rain * 0.3;
+    // the church rings for a while at 6, 12 and 18 o'clock
+    const hr = g.hour % 6, bellOn = g.hour >= 5.9 && g.hour < 19 && (hr >= 5.9 || hr < 0.45);
     for (const v of this.views.values()) {
       const age = this.time - v.born;
       if (age < 0.6) {
@@ -522,11 +678,7 @@ export class View {
         const s = 1 + 2.4 * q * q * q + 1.4 * q * q;
         v.group.scale.set(Math.min(1, k * 2), Math.max(0.01, s), Math.min(1, k * 2));
       } else if (v.group.scale.y !== 1) v.group.scale.set(1, 1, 1);
-      for (const s of v.spins) {
-        if (!v.b.working) continue;
-        const sp = v.b.type === 'sawmill' ? (s.axis === 'z' ? 7 : 1.4) : 1.4;
-        if (s.axis === 'z') s.o.rotation.z -= gameDt * sp; else s.o.rotation.x -= gameDt * sp;
-      }
+      for (const p of v.parts) this.animate(v, p, gameDt, wind, bellOn);
       if (v.smoke.length && gameDt > 0) this.puff(v, gameDt);
       if (v.b.fire > 0 && this.smoke) {
         // flames over the roof and thick dark smoke
@@ -538,13 +690,15 @@ export class View {
         }
         if (Math.random() < 0.35) this.smoke.emit(v.group.position.x + (Math.random() - 0.5) * 0.6, h + 0.2, v.group.position.z + (Math.random() - 0.5) * 0.6, 1, 1.8);
       }
-      for (const o of v.bobs) { o.position.y = o.userData.base + Math.sin(this.time * 1.8 + v.b.id) * 0.03; o.rotation.z = Math.sin(this.time * 1.3 + v.b.id) * 0.06; }
     }
     this.rig.update(dt);
     this.decor?.setSeason(g.seasonPos);
     this.env.update(dt, g, this.rig.target, this.terrain, this.scene.fog as THREE.Fog);
     this.people?.update(dt, gameDt);
     this.smoke?.update(dt);
+    this.markT -= dt;
+    if (this.markT <= 0) { this.markT = 0.4; this.syncMarks(); }
+    this.placeMarks(dt);
     const v3 = new THREE.Vector3();
     this.floats = this.floats.filter(f => {
       f.t += dt;

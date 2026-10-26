@@ -4,10 +4,12 @@
 
 | 素材 | 来源 | 授权 | 用在哪里 |
 |---|---|---|---|
-| 乐器采样（尼龙吉他、马林巴、钢片琴、长笛、拨弦、低音提琴、钢片琴 celesta、卡林巴、陶笛、木琴、八音盒、手风琴、木鱼、管钟） | FluidR3_GM 音色库，经 [gleitz/midi-js-soundfonts](https://github.com/gleitz/midi-js-soundfonts) 转换 | [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/)，可商用，需在游戏中署名 | `public/audio/*.json`，背景音乐和部分音效 |
+| 乐器采样（竖琴、弦乐合奏、圆号、单簧管、大提琴、颤音琴、电钢琴、定音鼓、小号；以及尼龙吉他、马林巴、钢片琴、长笛、拨弦、低音提琴、钢片琴 celesta、卡林巴、陶笛、木琴、八音盒、手风琴、木鱼、管钟） | FluidR3_GM 音色库，经 [gleitz/midi-js-soundfonts](https://github.com/gleitz/midi-js-soundfonts) 转换 | [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/)，可商用，需在游戏中署名 | `public/audio/*.json`，背景音乐和部分音效 |
+| 放置/拆除/旋转音效、白天环境音 | Kenney《Starter Kit City Builder》([GitHub](https://github.com/KenneyNL/Starter-Kit-City-Builder)) | CC0，可商用，无需署名 | `public/audio/sfx.json` |
+| 界面音效（点击、打开/关闭面板、错误、确认等） | Kenney《Interface Sounds》([GitHub 镜像](https://github.com/Calinou/kenney-interface-sounds)) | CC0，可商用，无需署名 | `public/audio/sfx.json` |
 | 所有 3D 模型 | 本项目用 Blender 脚本生成（`tools/models.py`） | 自有 | `public/models/town.glb` |
 | 曲子 | 本项目原创（`src/audio/music.ts`） | 自有 | 背景音乐 |
-| 环境音、部分音效 | 代码实时合成（`src/audio/sound.ts`） | 自有 | 海浪、风雨雷、鸟叫、蟋蟀等 |
+| 环境音、建筑音效 | 代码实时合成（`src/audio/sound.ts`、`src/audio/town.ts`） | 自有 | 海浪、风雨雷、鸟叫、蟋蟀；砍树、锯木、打铁、羊叫、集市人声、工厂轰鸣、火焰等 |
 | 字体 ZCOOL KuaiLe | Google Fonts | SIL Open Font License | 界面标题 |
 | three.js | npm | MIT | 渲染 |
 

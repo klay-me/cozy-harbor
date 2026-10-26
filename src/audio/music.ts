@@ -3,7 +3,8 @@
 // accompaniment (arpeggios or off-beat strums), bass, pads, sparkles and light percussion.
 
 export type Inst = 'acoustic_guitar_nylon' | 'marimba' | 'glockenspiel' | 'flute' | 'pizzicato_strings' | 'acoustic_bass'
-  | 'celesta' | 'kalimba' | 'ocarina' | 'xylophone' | 'music_box' | 'accordion' | 'woodblock' | 'tubular_bells';
+  | 'celesta' | 'kalimba' | 'ocarina' | 'xylophone' | 'music_box' | 'accordion' | 'woodblock' | 'tubular_bells'
+  | 'orchestral_harp' | 'string_ensemble_1' | 'french_horn' | 'clarinet' | 'cello' | 'vibraphone' | 'electric_piano_1' | 'timpani' | 'trumpet';
 
 const NAMES = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
 const toMidi = (n: string) => { const m = n.match(/^([A-G]b?)(-?\d)$/)!; return NAMES.indexOf(m[1]) + (Number(m[2]) + 1) * 12; };
@@ -67,7 +68,7 @@ export interface Song {
   lead: Inst; leadOct: number; leadVol: number;
   comp: Inst; style: 'arp' | 'strum' | 'broken';
   bass: Inst; pad?: Inst; sparkle?: Inst; counter?: Inst;
-  perc: 'shaker' | 'market' | 'soft' | 'none';
+  perc: 'shaker' | 'market' | 'soft' | 'timp' | 'none';
 }
 
 export const SONGS: Record<string, Song> = {
@@ -111,6 +112,54 @@ export const SONGS: Record<string, Song> = {
       { chords: ['vi', 'IV', 'ii', 'V'], mel: "1':8 6:8 | 4:8 6:8 | 2':4 1':4 6:8 | 7:16" },
     ],
   },
+  spring2: {
+    name: '风车与麦浪', bpm: 100, key: 67, form: [0, 1, 0, 1], lead: 'flute', leadOct: -1, leadVol: 0.42,
+    comp: 'acoustic_guitar_nylon', style: 'broken', bass: 'pizzicato_strings', sparkle: 'glockenspiel', perc: 'soft',
+    sections: [
+      { chords: ['I', 'IV', 'I', 'V'], mel: "1:2 2:2 3:4 5:4 3:4 | 4:4 6:4 5:8 | 3:2 4:2 5:4 1':4 7:2 6:2 | 5:12 -:4" },
+      { chords: ['vi', 'IV', 'ii', 'V'], mel: "6:4 5:2 6:2 1':8 | 4:4 6:4 5:8 | 2:2 3:2 4:4 6:4 5:2 4:2 | 3:4 2:4 5:8" },
+    ],
+  },
+  summer2: {
+    name: '海风', bpm: 116, key: 62, form: [0, 0, 1, 0], lead: 'kalimba', leadOct: 0, leadVol: 0.5,
+    comp: 'acoustic_guitar_nylon', style: 'strum', bass: 'acoustic_bass', sparkle: 'xylophone', perc: 'market',
+    sections: [
+      { chords: ['I', 'V', 'vi', 'IV'], mel: "5:2 5:2 6:2 5:2 3:4 1:4 | 2:2 2:2 3:2 2:2 7,:8 | 1:2 3:2 6:4 5:4 3:4 | 4:4 3:4 2:8" },
+      { chords: ['IV', 'I', 'V', 'I'], mel: "4:4 6:4 1':4 6:4 | 5:4 3:4 1:8 | 2:4 5:4 7:4 2':4 | 1':12 -:4" },
+    ],
+  },
+  autumn2: {
+    name: '落叶小径', bpm: 96, key: 65, form: [0, 1, 0, 1], lead: 'acoustic_guitar_nylon', leadOct: 0, leadVol: 0.5,
+    comp: 'pizzicato_strings', style: 'arp', bass: 'acoustic_bass', pad: 'accordion', perc: 'soft',
+    sections: [
+      { chords: ['vi', 'IV', 'I', 'V'], mel: "3':4 2':2 1':2 6:8 | 1':4 6:2 4:2 1:8 | 3:2 4:2 5:4 1':4 7:4 | 6:12 -:4" },
+      { chords: ['ii', 'V', 'I', 'vi'], mel: "2:4 4:4 6:4 4:4 | 5:4 7:4 2':8 | 1':4 7:2 6:2 5:4 3:4 | 6:16" },
+    ],
+  },
+  winter2: {
+    name: '炉火', bpm: 84, key: 60, form: [0, 1, 0, 1], lead: 'celesta', leadOct: 0, leadVol: 0.36,
+    comp: 'acoustic_guitar_nylon', style: 'arp', bass: 'pizzicato_strings', pad: 'accordion', counter: 'flute', perc: 'none',
+    sections: [
+      { chords: ['I', 'iii', 'vi', 'IV'], mel: "3:4 5:4 1':8 | 7:4 5:4 3:8 | 6:4 1':4 3':6 2':2 | 1':4 6:4 4:8" },
+      { chords: ['ii', 'V', 'I', 'V'], mel: "2':6 1':2 6:8 | 7:6 5:2 2:8 | 3:4 5:4 1':4 3':4 | 2':16" },
+    ],
+  },
+  night2: {
+    name: '萤火', bpm: 72, key: 62, form: [0, 1], lead: 'music_box', leadOct: 0, leadVol: 0.34,
+    comp: 'kalimba', style: 'arp', bass: 'acoustic_bass', perc: 'none',
+    sections: [
+      { chords: ['I', 'vi', 'IV', 'V'], mel: "5:8 3:8 | 1':8 6:8 | 4:6 5:2 6:8 | 5:16" },
+      { chords: ['IV', 'I', 'ii', 'V'], mel: "6:8 1':8 | 5:8 3:8 | 2:4 4:4 6:8 | 7:8 5:8" },
+    ],
+  },
+  crisis: {
+    name: '风雨欲来', bpm: 96, key: 60, form: [0, 1, 0, 1], lead: 'cello', leadOct: -1, leadVol: 0.5,
+    comp: 'pizzicato_strings', style: 'broken', bass: 'acoustic_bass', pad: 'string_ensemble_1', counter: 'french_horn', perc: 'timp',
+    sections: [
+      { chords: ['vi', 'IV', 'V', 'vi'], mel: "6:4 7:4 1':4 7:4 | 6:8 4:8 | 5:4 6:4 7:4 5:4 | 6:16" },
+      { chords: ['vi', 'iii', 'IV', 'V'], mel: "3':4 2':4 1':4 7:4 | 5:8 3:8 | 4:4 6:4 1':4 6:4 | 7:8 3':8" },
+    ],
+  },
   rain: {
     name: '雨天', bpm: 88, key: 60, form: [0, 1], lead: 'kalimba', leadOct: 0, leadVol: 0.42,
     comp: 'marimba', style: 'broken', bass: 'pizzicato_strings', perc: 'none',
@@ -120,6 +169,36 @@ export const SONGS: Record<string, Song> = {
     ],
   },
 };
+
+/** songs that take turns for the same mood */
+export const SETS: Record<string, string[]> = {
+  spring: ['spring', 'spring2'], summer: ['summer', 'summer2'], autumn: ['autumn', 'autumn2'], winter: ['winter', 'winter2'],
+  night: ['night', 'night2'], rain: ['rain'], crisis: ['crisis'],
+};
+
+/**
+ * The same tune grows with the town: folk instruments in the first era, then a clarinet and harp,
+ * strings and horns in the industrial age, electric piano and vibraphone in the modern city.
+ */
+export function orchestrate(song: Song, era: number): Song {
+  if (song.perc === 'timp') return song;
+  const o = { ...song };
+  if (era >= 2) {
+    if (o.sparkle === 'glockenspiel') o.sparkle = 'orchestral_harp';
+    o.counter = o.counter ?? 'clarinet';
+  }
+  if (era >= 3) {
+    o.pad = o.pad === 'accordion' || !o.pad ? 'string_ensemble_1' : o.pad;
+    if (o.bass === 'pizzicato_strings') o.bass = 'cello';
+    if (o.counter === 'clarinet') o.counter = 'french_horn';
+  }
+  if (era >= 4) {
+    if (o.comp === 'acoustic_guitar_nylon') o.comp = 'electric_piano_1';
+    if (o.sparkle === 'orchestral_harp' || o.sparkle === 'xylophone') o.sparkle = 'vibraphone';
+    if (o.lead === 'ocarina') o.lead = 'clarinet';
+  }
+  return o;
+}
 
 const SCALE = [0, 2, 4, 5, 7, 9, 11];
 const ROMAN: Record<string, number> = { I: 1, ii: 2, iii: 3, IV: 4, V: 5, vi: 6 };
@@ -154,18 +233,40 @@ export class Music {
   private next = 0;
   private gain: GainNode;
   private pending: string | null = null;
+  private group = '';
+  private era = 1;
+  private pass = 0;
+  private altLead: Inst | null = null;
   constructor(private ctx: AudioContext, private s: Sampler, private out: AudioNode, private noise: (t: number, vol: number, hp: number, dec: number) => void) {
     this.gain = ctx.createGain();
     this.gain.connect(out);
   }
   current() { return this.song?.name ?? ''; }
-  /** ask for a song; it starts at the next bar line after a short fade */
-  want(id: string) {
-    const song = SONGS[id];
-    if (!song || this.song === song || this.pending === id) return;
+  /**
+   * Ask for a mood (spring, night, crisis …). Songs of that mood take turns, and the
+   * arrangement follows the era. A new song starts after a short fade.
+   */
+  want(group: string, era = 1, _mood: 'calm' | 'tense' = 'calm') {
+    if (group === this.group && era === this.era) return;
+    const sameGroup = group === this.group;
+    this.group = group; this.era = era;
+    const list = SETS[group] ?? [group];
+    const id = sameGroup && this.song ? list.find(x => SONGS[x].name === this.song!.name) ?? list[0] : list[Math.floor(Math.random() * list.length)];
+    this.start(id);
+  }
+  private start(id: string) {
+    const base = SONGS[id];
+    if (!base) return;
+    const song = orchestrate(base, this.era);
+    if (this.song && this.song.name === song.name && this.song.comp === song.comp && this.song.pad === song.pad) return;
     this.pending = id;
+    // on alternate passes another instrument takes the tune
+    this.altLead = this.era >= 4 ? 'vibraphone' : this.era >= 3 ? 'clarinet' : this.era >= 2 ? 'orchestral_harp' : null;
+    if (this.altLead === song.lead) this.altLead = null;
     const insts: Inst[] = [song.lead, song.comp, song.bass, ...(song.pad ? [song.pad] : []), ...(song.sparkle ? [song.sparkle] : []), ...(song.counter ? [song.counter] : [])];
+    if (this.altLead) insts.push(this.altLead);
     if (song.perc === 'market') insts.push('woodblock');
+    if (song.perc === 'timp') insts.push('timpani');
     Promise.all(insts.map(i => this.s.load(i))).then(() => {
       if (this.pending !== id) return;
       const t = this.ctx.currentTime;
@@ -178,7 +279,7 @@ export class Music {
           const mel = parseMelody(song.key, sec.mel, song.leadOct);
           sec.chords.forEach((c, i) => this.bars.push({ chords: c, notes: mel[i] ?? [] }));
         }
-        this.bar = 0; this.step = 0;
+        this.bar = 0; this.step = 0; this.pass = 0;
         this.next = this.ctx.currentTime + 0.1;
         this.gain.gain.cancelScheduledValues(this.ctx.currentTime);
         this.gain.gain.setValueAtTime(0.0001, this.ctx.currentTime);
@@ -202,7 +303,19 @@ export class Music {
       this.playStep(song, this.bars[this.bar], this.step, this.next, st);
       this.next += st * (this.step % 2 === 0 ? 1.08 : 0.92) ; // gentle swing
       this.step++;
-      if (this.step === 16) { this.step = 0; this.bar = (this.bar + 1) % this.bars.length; }
+      if (this.step === 16) {
+        this.step = 0;
+        this.bar = (this.bar + 1) % this.bars.length;
+        if (this.bar === 0) {
+          this.pass++;
+          // after a few times round, let the other song of this mood have a turn
+          const list = SETS[this.group] ?? [];
+          if (this.pass >= 3 && list.length > 1) {
+            const cur = list.findIndex(x => SONGS[x].name === song.name);
+            this.start(list[(cur + 1) % list.length]);
+          }
+        }
+      }
     }
   }
 
@@ -210,10 +323,16 @@ export class Music {
     const out = this.gain, P = this.s;
     const tones = chordTones(song.key, bar.chords);
     const root = tones[0];
-    // melody
-    for (const n of bar.notes) if (n.step === s) P.play(song.lead, n.midi, t, song.leadVol * (0.9 + Math.random() * 0.15), out, n.dur * st * 1.1, 0.1);
-    // counter melody: chord tone an octave up on the off-bars
-    if (song.counter && this.bar % 2 === 1 && (s === 4 || s === 12)) P.play(song.counter, tones[s === 4 ? 2 : 1] + 12, t, 0.16, out, st * 6, -0.2);
+    const pass = this.pass, intro = pass === 0 && this.bar < 4;
+    // melody: alternate passes are played by another instrument, with the odd grace note
+    const lead = pass % 2 === 1 && this.altLead ? this.altLead : song.lead;
+    const lv = song.leadVol * (lead === song.lead ? 1 : 0.85);
+    for (const n of bar.notes) if (n.step === s) {
+      if (n.dur >= 4 && pass > 0 && Math.random() < 0.18) P.play(lead, n.midi + (Math.random() < 0.5 ? 2 : -1), t - st * 0.35, lv * 0.5, out, st * 0.4, 0.1);
+      P.play(lead, n.midi, t, lv * (0.9 + Math.random() * 0.15), out, n.dur * st * 1.1, 0.1);
+    }
+    // counter melody: chord tone an octave up on the off-bars (not in the opening bars)
+    if (song.counter && !intro && this.bar % 2 === 1 && (s === 4 || s === 12)) P.play(song.counter, tones[s === 4 ? 2 : 1] + (song.counter === 'french_horn' || song.counter === 'cello' ? 0 : 12), t, 0.16, out, st * 6, -0.2);
     // accompaniment
     if (song.style === 'arp') {
       if (s % 2 === 0) {
@@ -232,12 +351,13 @@ export class Music {
     // pad holds the chord through the bar
     if (song.pad && s === 0) tones.forEach(m => P.play(song.pad!, m - 12, t, 0.06, out, st * 15, 0.15));
     // sparkle
-    if (song.sparkle && s === 0 && this.bar % 2 === 0) tones.forEach((m, i) => P.play(song.sparkle!, m + 24, t + i * st, 0.09, out, st * 2, 0.3));
+    if (song.sparkle && !intro && s === 0 && this.bar % 2 === 0) tones.forEach((m, i) => P.play(song.sparkle!, m + (song.sparkle === 'orchestral_harp' ? 12 : 24), t + i * st, song.sparkle === 'orchestral_harp' ? 0.14 : 0.09, out, st * 2, 0.3));
     // percussion
     if (song.perc === 'shaker' || song.perc === 'market') {
       if (s % 2 === 1) this.noise(t, s % 4 === 3 ? 0.03 : 0.018, 7000, 0.05);
     }
     if (song.perc === 'market' && (s === 6 || s === 14 || s === 11)) P.play('woodblock', s === 11 ? 84 : 78, t, 0.12, out, 0.2, 0.2);
     if (song.perc === 'soft' && s % 4 === 2) this.noise(t, 0.015, 6000, 0.08);
+    if (song.perc === 'timp' && (s === 0 || (s === 12 && this.bar % 2 === 1))) P.play('timpani', root - 24 + (s === 12 ? 7 : 0), t, s === 0 ? 0.35 : 0.22, out, st * 6, 0);
   }
 }

@@ -64,14 +64,16 @@ async function boot() {
     demolish: b => { game.demolish(b.x, b.z); select(null); },
     close: () => select(null),
     focus: b => { const c = game.center(b); view.rig.jumpTo(c.x - view.half, c.z - view.half); },
+    lookAt: (x, z) => { view.rig.jumpTo(x - view.half, z - view.half); view.ping(x, z); },
     audio: p => sound.set(p),
     rotateMode: m => { view.rig.mode = m; try { localStorage.setItem('cozy-harbor-rotate2', m); } catch { /* ignore */ } },
     click: () => sound.play('click'),
+    sound: n => sound.play(n),
     research: t => { if (game.research.current === t) return; game.setResearch(t); },
     trade: (g, n) => { n > 0 ? game.buy(g, n) : game.sell(g, -n); },
     overlay: on => view.setPollutionView(on),
     pause: b => game.togglePause(b),
-    rotate: () => { rot = 1 - rot; updatePreview(); },
+    rotate: () => { rot = 1 - rot; updatePreview(); sound.play('rotate'); },
     seasonDays: n => { game.setSeasonDays(n); game.notify(`季节长度改为每季 ${n} 天`, 'info'); },
   }, makeThumbs(allTypes));
   hud.setAudio(sound.settings, rotMode);
@@ -91,7 +93,7 @@ async function boot() {
   function save(announce = false) {
     try {
       localStorage.setItem(SAVE_KEY, game.serialize());
-      if (announce) game.notify('已保存', 'good');
+      if (announce) game.notify('已保存', 'info');
     } catch {
       if (announce) game.notify('保存失败：浏览器不允许本地存储', 'warn');
     }
@@ -106,9 +108,11 @@ async function boot() {
     if (t !== 'select') select(null);
     document.body.dataset.tool = t;
   }
+  view.onMarkClick = id => { setTool('select'); select(id); };
   function select(id: number | null) {
     selected = id;
     const b = id ? game.buildings.get(id) ?? null : null;
+    if (b && id !== null) sound.play("select");
     hud.select(b);
     view.select(b);
   }
@@ -242,10 +246,11 @@ async function boot() {
     const k = e.key.toLowerCase();
     keys.add(k);
     if (k === 'escape') { if (hud.panelOpen) { hud.closePanels(); return; } setTool('select'); select(null); }
-    if (k === 'f' && tool !== 'select' && tool !== 'demolish' && tool !== 'road') { rot = 1 - rot; updatePreview(); }
+    if (k === 'f' && tool !== 'select' && tool !== 'demolish' && tool !== 'road') { rot = 1 - rot; updatePreview(); sound.play('rotate'); }
     if (k === 't') hud.togglePanel('research');
     if (k === 'g') hud.togglePanel('goods');
     if (k === 'l') hud.togglePanel('ledger');
+    if (k === 'm') hud.togglePanel('log');
     if (k === 'p') hud.setOverlay(!hud.overlay);
     if (k === ' ') { e.preventDefault(); game.speed = game.speed === 0 ? 1 : 0; }
     if (k === 'x') setTool(tool === 'demolish' ? 'select' : 'demolish');
@@ -257,6 +262,7 @@ async function boot() {
   // ---------- loop ----------
   let last = performance.now();
   let mixT = 0;
+  let townT = 0;
   let lastHour = -1;
   function frame(now: number) {
     requestAnimationFrame(frame);
@@ -273,7 +279,9 @@ async function boot() {
     for (const s of game.sfx.splice(0)) sound.play(s);
     if (game.events.length) sound.play('produce');
     mixT -= dt;
-    if (mixT <= 0) { mixT = 0.5; sound.setScene(view.weatherMix(), game.season); }
+    if (mixT <= 0) { mixT = 0.5; sound.setScene(view.weatherMix(), game.season, game.era, game.crisis); }
+    townT -= dt;
+    if (townT <= 0) { townT = 0.25; sound.setTown(view.soundSources()); }
     const hourNow = Math.floor(game.hour);
     if (hourNow !== lastHour) { if (hourNow === 6 && lastHour === 5) sound.play('bell'); lastHour = hourNow; }
     if (selected && !game.buildings.has(selected)) select(null);
@@ -282,7 +290,7 @@ async function boot() {
   }
   requestAnimationFrame(frame);
   // test hook
-  (window as any).__cozy = { get game() { return game; }, view, setTool, select, sound };
+  (window as any).__cozy = { get game() { return game; }, view, hud, setTool, select, sound };
 }
 
 boot();

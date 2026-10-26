@@ -44,7 +44,13 @@ export interface Bld {
 }
 
 export interface ProdEvent { id: number; good: GoodId; n: number }
-export interface Toast { text: string; kind: 'info' | 'warn' | 'good' }
+/**
+ * cat decides where a message shows: 'action' answers what the player just did (near the build bar),
+ * 'alert' is something happening in town (right-hand stack, click to look), 'milestone' is a big banner,
+ * 'report' goes to the message log with a quiet line on the right.
+ */
+export type ToastCat = 'action' | 'alert' | 'milestone' | 'report';
+export interface Toast { text: string; kind: 'info' | 'warn' | 'good'; cat: ToastCat; at?: { x: number; z: number }; icon?: string; day?: number; hour?: number }
 
 export interface Quest { text: string; reward: Cost; done: (g: Game) => boolean }
 export const QUESTS: Quest[] = [
@@ -465,6 +471,34 @@ export class Game {
     if (m) return m;
     return null;
   }
+  /**
+   * The one problem worth a bubble over this building, most urgent first:
+   * bad = something is going wrong, warn = it is stuck, good = good news (a house can upgrade).
+   */
+  alertOf(b: Bld): { icon: string; level: 'bad' | 'warn' | 'good'; tip: string } | null {
+    if (b.type === 'depot') return null;
+    if (b.fire > 0) return { icon: 'fire', level: 'bad', tip: '着火了' };
+    if (b.type === 'house') {
+      if (!b.residents && b.connected) return null;
+      if (b.plague > 0) return { icon: 'sick', level: 'bad', tip: '闹瘟疫' };
+      if (!b.connected) return { icon: 'noroad', level: 'warn', tip: '没有连上道路' };
+      if (b.hungerT > HUNGER.hungrySecs) return { icon: 'hungry', level: 'bad', tip: '吃不饱' };
+      if (b.sick > 0 && b.coldT > 0) return { icon: 'sick', level: 'warn', tip: '冻病了' };
+      if (this.heatingOn && b.warm < 0.5) return { icon: 'cold', level: 'warn', tip: '没有燃料取暖' };
+      if (TIERS[b.tier].upgrade && !this.upgradeBlock(b)) return { icon: 'up', level: 'good', tip: '可以升级' };
+      return null;
+    }
+    const d = BUILDINGS[b.type];
+    if (b.strike > 0) return { icon: 'strike', level: 'bad', tip: '罢工' };
+    if (b.paused) return { icon: 'paused', level: 'warn', tip: '已暂停' };
+    if (!b.connected) return { icon: 'noroad', level: 'warn', tip: '没有连上道路' };
+    if (d.workers && b.staff === 0) return { icon: 'noworkers', level: 'warn', tip: b.status };
+    const st = b.status;
+    if (st === '仓库已满') return { icon: 'full', level: 'warn', tip: st };
+    if (st === '没有电' || st.startsWith('电力不足')) return { icon: 'nopower', level: 'warn', tip: st };
+    if (st.startsWith('缺少') || st === '附近树木太少') return { icon: 'noinput', level: 'warn', tip: st };
+    return null;
+  }
   upgrade(b: Bld, quiet = false) {
     const block = this.upgradeBlock(b);
     if (block) { if (!quiet) this.notify(block, 'warn'); return false; }
@@ -545,14 +579,22 @@ export class Game {
     this.mods = m;
   }
 
-  notify(text: string, kind: Toast['kind'] = 'info') {
-    this.toasts.push({ text, kind });
-    if (kind === 'warn') this.sfx.push('error');
+  notify(text: string, kind: Toast['kind'] = 'info', o: { cat?: ToastCat; at?: Bld | { x: number; z: number }; icon?: string } = {}) {
+    const at = o.at && 'w' in o.at ? this.center(o.at as Bld) : o.at as { x: number; z: number } | undefined;
+    this.toasts.push({ text, kind, cat: o.cat ?? 'action', at, icon: o.icon, day: this.day + 1, hour: this.hour });
+    if (kind === 'warn') this.sfx.push(o.cat === 'alert' ? 'alert' : 'error');
   }
-  private once(key: string, text: string, kind: Toast['kind'] = 'info') {
+  /** something is going badly wrong: the music turns tense */
+  get crisis() {
+    if (this.fires.size) return true;
+    for (const b of this.buildings.values()) if (b.plague > 0) return true;
+    for (const t of TIER_IDS) if (this.pop[t] > 8 && this.fedRatio[t] < 0.6) return true;
+    return this.debtDays >= STRIKE.debtDays;
+  }
+  private once(key: string, text: string, kind: Toast['kind'] = 'info', icon?: string) {
     if (this.flags.has(key)) return;
     this.flags.add(key);
-    this.notify(text, kind);
+    this.notify(text, kind, { cat: 'alert', icon });
   }
 
   // ---------- network & storage ----------
@@ -569,7 +611,7 @@ export class Game {
       if (this.isRoad(x, z) && !net[z * W + x]) { net[z * W + x] = 1; q.push(z * W + x); }
     };
     this.buildings.forEach(b => {
-      if (b.type !== 'depot' && b.type !== 'warehouse') return;
+      if (!BUILDINGS[b.type].storage) return;
       this.forEdge(b, seed);
     });
     while (q.length) {
@@ -578,9 +620,9 @@ export class Game {
     }
     this.netRoads = net;
     this.buildings.forEach(b => {
-      if (b.type === 'depot' || b.type === 'warehouse') { b.connected = true; return; }
+      if (BUILDINGS[b.type].storage) { b.connected = true; return; }
       let ok = false;
-      this.forEdge(b, (x, z) => { if (net[z * W + x]) ok = true; else { const o = this.at(x, z); if (o && (o.type === 'depot' || o.type === 'warehouse')) ok = true; } });
+      this.forEdge(b, (x, z) => { if (net[z * W + x]) ok = true; else { const o = this.at(x, z); if (o && BUILDINGS[o.type].storage) ok = true; } });
       b.connected = ok;
     });
     void hubs;
@@ -689,7 +731,7 @@ export class Game {
     TIER_IDS.forEach(t => { this.workforce[t] = { have: remain[t], need: 0 }; });
 
     const broke = this.gold < 0;
-    if (broke) this.once('broke', '金库空了！工人领不到工钱会不开心，拖久了会罢工。卖掉多余的货物或拆掉闲置的建筑', 'warn');
+    if (broke) this.once('broke', '金库空了！工人领不到工钱会不开心，拖久了会罢工。卖掉多余的货物或拆掉闲置的建筑', 'warn', 'gold');
     else this.flags.delete('broke');
     const powerRatio = this.power.ratio;
     let upkeep = 0, gen = 0, use = 0, rp = 0;
@@ -857,7 +899,7 @@ export class Game {
     }
 
     this.power = { gen, use, ratio: use > 0 ? Math.min(1, gen / use) : 1 };
-    if (use > gen + 0.01 && use > 0) this.once('power', '电力不足：用电建筑只能按比例运转，多建发电站吧', 'warn');
+    if (use > gen + 0.01 && use > 0) this.once('power', '电力不足：用电建筑只能按比例运转，多建发电站吧', 'warn', 'power');
     else this.flags.delete('power');
 
     // ---- houses: happiness, growth, sickness, tax
@@ -938,7 +980,7 @@ export class Game {
     this.happyAvg = houses ? happySum / houses : 0;
     this.stepDisasters(dt);
     this.stepDay();
-    if (coldHouses > 0) this.once('cold' + this.year, `有 ${coldHouses} 户人家没有燃料取暖！快补充${this.era >= 3 ? '柴火或煤' : '柴火'}`, 'warn');
+    if (coldHouses > 0) this.once('cold' + this.year, `有 ${coldHouses} 户人家没有燃料取暖！快补充${this.era >= 3 ? '柴火或煤' : '柴火'}`, 'warn', 'cold');
 
     // ---- research
     this.research.rate = rp;
@@ -950,7 +992,7 @@ export class Game {
         this.research.levels[cur] = this.techLevel(cur) + 1;
         this.recomputeMods(); this.refresh();
         this.sfx.push('quest');
-        this.notify(`研究完成：${TECHS[cur].name}${TECHS[cur].infinite ? ` ${this.techLevel(cur)} 级` : ''} — ${TECHS[cur].desc}`, 'good');
+        this.notify(`研究完成：${TECHS[cur].name}${TECHS[cur].infinite ? ` ${this.techLevel(cur)} 级` : ''} — ${TECHS[cur].desc}`, 'good', { cat: 'milestone', icon: 'research' });
         if (!TECHS[cur].infinite) this.research.current = null;
         this.bVersion++;
       }
@@ -982,10 +1024,10 @@ export class Game {
   }
 
   /** a toast at most once every `gap` game seconds per key */
-  private throttle(key: string, gap: number, text: string, kind: Toast['kind'] = 'warn') {
+  private throttle(key: string, gap: number, text: string, kind: Toast['kind'] = 'warn', at?: Bld, icon?: string) {
     if ((this.toastAt[key] ?? -1e9) + gap > this.time) return false;
     this.toastAt[key] = this.time;
-    this.notify(text, kind);
+    this.notify(text, kind, { cat: 'alert', at, icon });
     return true;
   }
   private houseNear(b: Bld, r: number) {
@@ -1012,14 +1054,14 @@ export class Game {
       if (b.type === 'depot') continue;
       if (b.fire > 0) {
         b.fire += dt * (wet ? 0.7 : 1);
-        if (b.protect.has('fire') && b.fire > FIRE.putOutSecs) { b.fire = 0; this.throttle('putout', 10, `消防队扑灭了${b.type === 'house' ? '住宅' : d.name}的火`, 'good'); continue; }
+        if (b.protect.has('fire') && b.fire > FIRE.putOutSecs) { b.fire = 0; this.throttle('putout', 10, `消防队扑灭了${b.type === 'house' ? '住宅' : d.name}的火`, 'good', b, 'fire'); continue; }
         if (Math.random() < FIRE.spread * dt / FIRE.burnSecs) {
           const nb = this.houseNear(b, Math.max(b.w, b.h) / 2 + 2.2).filter(o => o.fire === 0 && o.type !== 'depot');
-          if (nb.length) { const o = nb[Math.floor(Math.random() * nb.length)]; o.fire = 0.01; this.throttle('spread', 8, '火势蔓延到了隔壁！'); }
+          if (nb.length) { const o = nb[Math.floor(Math.random() * nb.length)]; o.fire = 0.01; this.throttle('spread', 8, '火势蔓延到了隔壁！', 'warn', o, 'fire'); }
         }
         if (b.fire > FIRE.burnSecs) {
           if (b.type === 'house') this.flowLeft.fire += b.residents;
-          this.notify(`${b.type === 'house' ? TIERS[b.tier].name + '的住宅' : d.name}被烧毁了${b.protect.has('fire') ? '' : '——那里没有消防队'}`, 'warn');
+          this.notify(`${b.type === 'house' ? TIERS[b.tier].name + '的住宅' : d.name}被烧毁了${b.protect.has('fire') ? '' : '——那里没有消防队'}`, 'warn', { cat: 'alert', at: b, icon: 'fire' });
           this.sfx.push('demolish');
           this.remove(b);
           continue;
@@ -1031,7 +1073,7 @@ export class Game {
         if (Math.random() < base * fireMul * (b.protect.has('fire') ? FIRE.coverMul : 1) * day) {
           b.fire = 0.01;
           this.fires.add(b.id);
-          this.notify(`${b.type === 'house' ? TIERS[b.tier].name + '的住宅' : d.name}着火了！${b.protect.has('fire') ? '消防队正在赶来' : '附近没有消防队，快想办法'}`, 'warn');
+          this.notify(`${b.type === 'house' ? TIERS[b.tier].name + '的住宅' : d.name}着火了！${b.protect.has('fire') ? '消防队正在赶来' : '附近没有消防队，快想办法'}`, 'warn', { cat: 'alert', at: b, icon: 'fire' });
           this.sfx.push('bell');
         }
       }
@@ -1044,10 +1086,12 @@ export class Game {
       if (Math.random() < PLAGUE.perDay * (this.season === 'winter' ? PLAGUE.winterMul : 1) * dense * day) {
         const h = houses[Math.floor(Math.random() * houses.length)];
         h.plague = 0.01;
-        this.notify(`瘟疫爆发了！病人会传染给邻居。${h.protect.has('health') ? '草药铺正在治疗' : '那一带没有医疗覆盖'}`, 'warn');
+        this.notify(`瘟疫爆发了！病人会传染给邻居。${h.protect.has('health') ? '草药铺正在治疗' : '那一带没有医疗覆盖'}`, 'warn', { cat: 'alert', at: h, icon: 'sick' });
         this.sfx.push('error');
       }
     }
+    // an emptied house airs out: nobody left to be ill, so the plague there is over
+    for (const h of this.buildings.values()) if (h.type === 'house' && h.plague > 0 && h.residents <= 0) h.plague = 0;
     for (const h of houses) {
       if (h.plague <= 0) continue;
       h.plague += dt;
@@ -1070,12 +1114,12 @@ export class Game {
           const n = Math.ceil(this.storage[g] * (0.05 + Math.random() * 0.1));
           this.storage[g] -= n;
           this.ledger.add(g, 'out', '被偷走', n);
-          this.throttle('theft', 30, `小偷从仓库偷走了 ${n} ${GOODS[g].name}${h.protect.has('police') ? '' : '（那一带没有巡警）'}`);
+          this.throttle('theft', 30, `小偷从仓库偷走了 ${n} ${GOODS[g].name}${h.protect.has('police') ? '' : '（那一带没有巡警）'}`, 'warn', h, 'thief');
         } else if (this.gold > 0) {
           const n = Math.min(this.gold, 20 + Math.round(Math.random() * 40));
           this.gold -= n;
           this.ledger.add('gold', 'out', '被偷走', n);
-          this.throttle('theft', 30, `有人撬开了钱箱，丢了 ${n} 金币`);
+          this.throttle('theft', 30, `有人撬开了钱箱，丢了 ${n} 金币`, 'warn', h, 'thief');
         }
       }
     }
@@ -1091,11 +1135,17 @@ export class Game {
       if (!unpaid && avg >= STRIKE.below) continue;
       if (Math.random() < 0.6 * day) {
         b.strike = STRIKE.secs;
-        this.throttle('strike', 20, `${BUILDINGS[b.type].name}的${TIERS[wk.tier].name}罢工了：${unpaid ? '已经好几天领不到工钱' : '日子过得太苦'}`);
+        this.throttle('strike', 20, `${BUILDINGS[b.type].name}的${TIERS[wk.tier].name}罢工了：${unpaid ? '已经好几天领不到工钱' : '日子过得太苦'}`, 'warn', b, 'strike');
       }
     }
+    // full storage stops workshops
+    const stuck = [...this.buildings.values()].find(b => b.status === '仓库已满');
+    if (stuck) {
+      const out = BUILDINGS[stuck.type].output;
+      this.throttle('full', 90, `${out ? GOODS[out].name : '货物'}堆满了仓库，${BUILDINGS[stuck.type].name}只好停工。多建仓库${this.era >= 2 ? '（或大型仓库）' : ''}，或者卖给商船`, 'warn', stuck, 'full');
+    }
     // hunger and cold warnings
-    for (const t of TIER_IDS) if (this.pop[t] && this.fedRatio[t] < 0.8) this.throttle('hunger', 40, `${TIERS[t].name}吃不饱了！多建渔场、菜园，或者向商船买食物`);
+    for (const t of TIER_IDS) if (this.pop[t] && this.fedRatio[t] < 0.8) this.throttle('hunger', 40, `${TIERS[t].name}吃不饱了！多建渔场、菜园，或者向商船买食物`, 'warn', undefined, 'hungry');
   }
 
   /** at dawn of each new day: a short report and the debt clock */
@@ -1109,9 +1159,9 @@ export class Game {
     const left = this.flowLeft, lost = left.hunger + left.cold + left.plague + left.fire;
     const why = [left.hunger && `饿走 ${left.hunger}`, left.cold && `冻走 ${left.cold}`, left.plague && `病倒 ${left.plague}`, left.fire && `火灾 ${left.fire}`].filter(Boolean).join('，');
     const fd = this.foodDays();
-    this.notify(`第 ${this.lastDay + 1} 天结束：金币 ${dg >= 0 ? '+' : ''}${dg}，人口 ${pop}（${dp >= 0 ? '+' : ''}${dp}）${lost ? `，离开 ${lost} 人（${why}）` : ''}。食物${fd === Infinity ? '充足' : `还够吃 ${fd.toFixed(1)} 天`}`, lost || dg < 0 ? 'warn' : 'info');
+    this.notify(`第 ${this.lastDay + 1} 天结束：金币 ${dg >= 0 ? '+' : ''}${dg}，人口 ${pop}（${dp >= 0 ? '+' : ''}${dp}）${lost ? `，离开 ${lost} 人（${why}）` : ''}。食物${fd === Infinity ? '充足' : `还够吃 ${fd.toFixed(1)} 天`}`, lost || dg < 0 ? 'warn' : 'info', { cat: 'report', icon: 'ledger' });
     this.debtDays = this.gold < 0 ? this.debtDays + 1 : 0;
-    if (this.debtDays >= 1) this.notify(`金库已经亏空 ${this.debtDays} 天：大家越来越不满${this.debtDays >= STRIKE.debtDays ? '，工人开始罢工' : '，明天起工人会罢工'}`, 'warn');
+    if (this.debtDays >= 1) this.notify(`金库已经亏空 ${this.debtDays} 天：大家越来越不满${this.debtDays >= STRIKE.debtDays ? '，工人开始罢工' : '，明天起工人会罢工'}`, 'warn', { cat: 'alert', icon: 'strike' });
     this.flowLeft = { hunger: 0, cold: 0, plague: 0, fire: 0 };
     this.dayStart = { gold: this.gold, pop };
     this.lastDay = d;
@@ -1162,8 +1212,8 @@ export class Game {
     const g = this.eraGoal();
     if (!g || !g.done) return;
     this.era = g.era;
-    this.sfx.push('season');
-    this.notify(`进入${ERAS[g.era].name}！${ERAS[g.era].desc}`, 'good');
+    this.sfx.push('era');
+    this.notify(`进入${ERAS[g.era].name}！${ERAS[g.era].desc}`, 'good', { cat: 'milestone', icon: 'star' });
     this.bVersion++;
   }
   private checkQuest() {
@@ -1173,17 +1223,17 @@ export class Game {
     this.questIndex++;
     this.sfx.push('quest');
     const reward = [q.reward.gold ? `${q.reward.gold} 金币` : '', ...GOOD_IDS.filter(k => q.reward[k]).map(k => `${q.reward[k]} ${GOODS[k].name}`)].filter(Boolean).join('、');
-    this.notify(reward ? `目标完成：${q.text}　奖励 ${reward}` : `目标完成：${q.text}`, 'good');
+    this.notify(reward ? `目标完成：${q.text}　奖励 ${reward}` : `目标完成：${q.text}`, 'good', { cat: 'milestone', icon: 'check' });
   }
 
   private lastSeason: SeasonId | null = null;
   private stepWeather(dt: number) {
     const s = this.season;
     if (this.lastSeason && s !== this.lastSeason) {
-      this.notify(`${s === 'spring' ? `第 ${this.year} 年，` : ''}${SEASONS[s].name}天到了：${SEASONS[s].effect}`, 'good');
+      this.notify(`${s === 'spring' ? `第 ${this.year} 年，` : ''}${SEASONS[s].name}天到了：${SEASONS[s].effect}`, 'good', { cat: 'milestone', icon: s });
       if (s === 'autumn') {
         const winterNeed = this.foodNeed() * this.seasonDays;
-        this.notify(`冬天快到了：菜园和麦田会停产，渔场减产。三天冬天全城要吃约 ${Math.ceil(winterNeed)} 份饱食（现在库存 ${Math.floor(this.foodStock())}），还要烧约 ${Math.ceil(this.winterFuelEstimate())} 份燃料`, 'warn');
+        this.notify(`冬天快到了：菜园和麦田会停产，渔场减产。${this.seasonDays} 天冬天全城要吃约 ${Math.ceil(winterNeed)} 份饱食（现在库存 ${Math.floor(this.foodStock())}），还要烧约 ${Math.ceil(this.winterFuelEstimate())} 份燃料`, 'warn', { cat: 'alert', icon: 'cold' });
       }
       this.sfx.push('season');
       const mapped = SEASONS[s].weather[this.weather.cur];
@@ -1220,7 +1270,7 @@ export class Game {
     if (next === w.cur) return;
     w.prev = w.cur; w.cur = next; w.blend = 0;
     const d = WEATHER[next];
-    this.notify(`天气转为${d.name}${d.effect !== '一切正常' ? `：${d.effect}` : ''}`, 'info');
+    this.notify(`天气转为${d.name}${d.effect !== '一切正常' ? `：${d.effect}` : ''}`, 'info', { cat: 'report', icon: this.weather.cur });
   }
 
   // ---------- save ----------

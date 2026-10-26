@@ -1,5 +1,5 @@
 // DOM interface: resource bar, era card, build menu, info panel, research and warehouse panels, toasts, menu.
-import { Game, Bld, QUESTS } from '../sim/game';
+import { Game, Bld, QUESTS, Toast } from '../sim/game';
 import {
   BUILDINGS, BUILD_MENU, BuildingId, GOOD_IDS, GoodId, GOODS, TIERS, TIER_IDS, WEATHER, SEASONS, ERAS, Era,
   TECHS, TECH_IDS, TechId, BRANCHES, Cost, menuItems, SERVICES,
@@ -31,7 +31,12 @@ export interface HudHooks {
   pause(b: Bld): void;
   seasonDays(n: number): void;
   rotate(): void;
+  lookAt(x: number, z: number): void;
+  sound(name: string): void;
 }
+type PanelId = 'research' | 'goods' | 'ledger' | 'log';
+const PANELS: PanelId[] = ['research', 'goods', 'ledger', 'log'];
+interface Alert { t: Toast; el: HTMLElement; life: number; n: number }
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string, root: ParentNode = document) => root.querySelector(sel) as T;
 const fmt = (n: number) => Math.floor(n).toLocaleString('zh-CN');
@@ -66,6 +71,7 @@ export class Hud {
           <button data-speed="2">2×</button>
           <button data-speed="4">4×</button>
         </div>
+        <button class="menu-btn icon-btn log-btn" id="logBtn" title="消息记录 (M)" aria-label="消息记录">${icon('bell')}<span class="badge" id="logBadge" hidden></span></button>
         <button class="menu-btn icon-btn" id="muteBtn" aria-label="静音"></button>
         <button class="menu-btn" id="menuBtn" aria-haspopup="true">菜单</button>
       </div>
@@ -87,7 +93,10 @@ export class Hud {
       <div class="panel card" id="research" hidden role="dialog" aria-label="研究"></div>
       <div class="panel card" id="goods" hidden role="dialog" aria-label="仓库与商船"></div>
       <div class="panel card" id="ledger" hidden role="dialog" aria-label="收支账本"></div>
-      <div class="toasts" id="toasts" aria-live="polite"></div>
+      <div class="panel card" id="log" hidden role="dialog" aria-label="消息记录"></div>
+      <div class="alerts" id="alerts" aria-live="polite"></div>
+      <div class="banner" id="banner" aria-live="polite" hidden></div>
+      <div class="actmsg" id="actmsg" aria-live="polite"></div>
       <div class="menu card" id="menu" hidden>
         <h3>暖港</h3>
         <button data-m="save">保存游戏</button>
@@ -113,6 +122,21 @@ export class Hud {
         </div>
       </div>`;
     root.addEventListener('click', e => { if ((e.target as HTMLElement).closest('button')) hooks.click(); });
+    $('#logBtn', root).addEventListener('click', () => this.togglePanel('log'));
+    $('#log', root).addEventListener('click', e => {
+      const el = e.target as HTMLElement;
+      if (el.closest('[data-a="close"]')) { this.togglePanel('log', false); return; }
+      const row = el.closest<HTMLElement>('[data-at]');
+      if (row) { const [x, z] = row.dataset.at!.split(',').map(Number); hooks.lookAt(x, z); }
+    });
+    $('#alerts', root).addEventListener('click', e => {
+      const el = (e.target as HTMLElement).closest<HTMLElement>('.alert');
+      if (!el) return;
+      const a = this.alerts.find(a => a.el === el);
+      if (!a) return;
+      if (a.t.at && !(e.target as HTMLElement).closest('.x')) hooks.lookAt(a.t.at.x, a.t.at.z);
+      a.life = Math.min(a.life, 0.01);
+    });
     // sound
     $('#muteBtn', root).addEventListener('click', () => { this.audio.muted = !this.audio.muted; hooks.audio({ muted: this.audio.muted }); this.renderAudio(); });
     $<HTMLInputElement>('#volMusic', root).addEventListener('input', e => { this.audio.music = Number((e.target as HTMLInputElement).value); hooks.audio({ music: this.audio.music }); });
@@ -246,18 +270,22 @@ export class Hud {
   }
   get overlay() { return this.overlayOn; }
   /** open/close a centred panel; only one at a time */
-  togglePanel(id: 'research' | 'goods' | 'ledger', force?: boolean) {
+  togglePanel(id: PanelId, force?: boolean) {
     const el = $('#' + id, this.root);
     const open = force ?? el.hidden;
-    for (const p of ['research', 'goods', 'ledger']) $('#' + p, this.root).hidden = true;
+    const was = this.panelOpen;
+    for (const p of PANELS) $('#' + p, this.root).hidden = true;
+    if (open || was) this.hooks.sound(open ? 'open' : 'close');
+    $('#logBtn', this.root).classList.toggle('on', id === 'log' && open);
+    if (id === 'log' && open) { this.unread = 0; this.renderLog(); }
     el.hidden = !open;
     $('#tResearch', this.root).classList.toggle('on', id === 'research' && open);
     $('#tGoods', this.root).classList.toggle('on', id === 'goods' && open);
     $('#tLedger', this.root).classList.toggle('on', id === 'ledger' && open);
-    if (open) id === 'research' ? this.renderResearch() : id === 'goods' ? this.renderGoods() : this.renderLedger();
+    if (open && id !== 'log') id === 'research' ? this.renderResearch() : id === 'goods' ? this.renderGoods() : this.renderLedger();
   }
   closePanels() { this.togglePanel('research', false); }
-  get panelOpen() { return ['research', 'goods', 'ledger'].some(p => !$('#' + p, this.root).hidden); }
+  get panelOpen() { return PANELS.some(p => !$('#' + p, this.root).hidden); }
 
   private renderItems() {
     const g = this.game;
@@ -282,7 +310,8 @@ export class Hud {
   // ---------- per-frame updates (throttled) ----------
   update(dt: number) {
     const g = this.game;
-    for (const t of g.toasts.splice(0)) this.toast(t.text, t.kind);
+    for (const t of g.toasts.splice(0)) this.toast(t);
+    this.stepMessages(dt);
     this.toastT += dt;
     if (this.toastT < 0.25) return;
     this.toastT = 0;
@@ -304,10 +333,16 @@ export class Hud {
       this.renderLedger(); box.scrollTop = st;
     }
     const top = (this.root.querySelector('.topbar') as HTMLElement).getBoundingClientRect().bottom + 10;
-    if (innerWidth > 720) {
-      $('#quest', this.root).style.top = `${top}px`;
-      $('#info', this.root).style.top = `${top}px`;
-    } else $('#quest', this.root).style.top = `${top}px`;
+    const quest = $('#quest', this.root);
+    quest.style.top = `${top}px`;
+    if (innerWidth > 720) $('#info', this.root).style.top = `${top}px`;
+    // the town's news stacks under the era card on the left; milestones sit centred under the bar
+    $('#alerts', this.root).style.top = `${quest.getBoundingClientRect().bottom + 10}px`;
+    $('#banner', this.root).style.top = `${top}px`;
+    $('#actmsg', this.root).style.bottom = `${innerHeight - $('#build', this.root).getBoundingClientRect().top + 10}px`;
+    const badge = $('#logBadge', this.root);
+    badge.hidden = !this.unread;
+    badge.textContent = this.unread > 9 ? '9+' : String(this.unread);
   }
 
   /** the goods that matter right now: what people eat, burn and build with */
@@ -385,14 +420,86 @@ export class Hud {
       ${q ? `<div class="task" title="点击卡片可以收起"><span class="eyebrow soft">目标</span><span>${q.text}</span><span class="reward">${costHtml(q.reward)}</span></div>` : ''}`;
   }
 
-  private toast(text: string, kind: string) {
-    const box = $('#toasts', this.root);
+  // ---------- messages ----------
+  // Four places, one per kind of message:
+  //  action    – the answer to what you just did, one line above the build bar, replaced by the next
+  //  alert     – something happening in town, a card in the left stack; click to look at it
+  //  milestone – a banner under the top bar, one at a time
+  //  report    – a quiet card in the left stack
+  // Everything except quick action replies also lands in the message log (bell, M).
+  private alerts: Alert[] = [];
+  private banners: Toast[] = [];
+  private bannerT = 0;
+  private actT = 0;
+  private log: Toast[] = [];
+  private unread = 0;
+  private toast(t: Toast) {
+    if (t.cat !== 'action') {
+      this.log.unshift(t);
+      if (this.log.length > 80) this.log.pop();
+      if ($('#log', this.root).hidden) this.unread++; else this.renderLog();
+    }
+    if (t.cat === 'action') {
+      const box = $('#actmsg', this.root);
+      box.className = `actmsg show k-${t.kind}`;
+      box.innerHTML = `${t.icon ? icon(t.icon) : ''}<span>${t.text}</span>`;
+      this.actT = t.kind === 'warn' ? 3.2 : 2.6;
+      return;
+    }
+    if (t.cat === 'milestone') { this.banners.push(t); return; }
+    // alert or report: merge repeats into one card
+    const same = this.alerts.find(a => a.t.text === t.text || (a.t.icon && a.t.icon === t.icon && a.t.kind === t.kind && a.t.cat === t.cat && t.cat === 'alert' && a.life > 1));
+    if (same) {
+      same.n++; same.t = t; same.life = Math.max(same.life, 8);
+      this.fillAlert(same);
+      same.el.classList.remove('bump'); void same.el.offsetWidth; same.el.classList.add('bump');
+      return;
+    }
     const el = document.createElement('div');
-    el.className = `toast ${kind}`;
-    el.textContent = text;
-    box.appendChild(el);
-    while (box.children.length > 4) box.firstElementChild!.remove();
-    setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 400); }, kind === 'good' ? 4600 : kind === 'warn' ? 3800 : 2800);
+    const a: Alert = { t, el, life: t.cat === 'report' ? 7 : t.kind === 'warn' ? 10 : 7, n: 1 };
+    this.fillAlert(a);
+    $('#alerts', this.root).prepend(el);
+    this.alerts.unshift(a);
+    while (this.alerts.length > 4) { const o = this.alerts.pop()!; o.el.remove(); }
+  }
+  private fillAlert(a: Alert) {
+    const t = a.t;
+    a.el.className = `alert k-${t.kind} c-${t.cat}${t.at ? ' go' : ''}`;
+    a.el.title = t.at ? '点击查看位置' : '';
+    a.el.innerHTML = `<span class="ai">${icon(t.icon ?? (t.kind === 'warn' ? 'bell' : t.kind === 'good' ? 'check' : 'ledger'))}</span>
+      <span class="at">${t.text}${a.n > 1 ? ` <b class="cnt">×${a.n}</b>` : ''}</span>${t.at ? `<span class="pin">${icon('pin')}</span>` : ''}<button class="x" aria-label="关闭">×</button>`;
+  }
+  private stepMessages(dt: number) {
+    // timers run on real time so messages don't freeze while paused
+    if (this.actT > 0) { this.actT -= dt; if (this.actT <= 0) $('#actmsg', this.root).classList.remove('show'); }
+    for (const a of this.alerts) {
+      if (a.el.matches(':hover')) continue;
+      a.life -= dt;
+      if (a.life <= 0 && !a.el.classList.contains('out')) { a.el.classList.add('out'); setTimeout(() => a.el.remove(), 350); }
+    }
+    this.alerts = this.alerts.filter(a => a.life > 0);
+    const ban = $('#banner', this.root);
+    if (this.bannerT > 0) {
+      this.bannerT -= dt;
+      if (this.bannerT <= 0.4) ban.classList.add('out');
+      if (this.bannerT <= 0) ban.hidden = true;
+    } else if (this.banners.length) {
+      const t = this.banners.shift()!;
+      const [head, ...rest] = t.text.split(/[：！]/);
+      const tail = t.text.slice(head.length + 1);
+      ban.hidden = false;
+      ban.className = `banner i-${t.icon ?? "star"}`;
+      ban.innerHTML = `<span class="bi">${icon(t.icon ?? 'star')}</span><span class="bt"><b>${head}</b>${rest.length ? `<span>${tail}</span>` : ''}</span>`;
+      this.bannerT = this.banners.length ? 3.6 : 5.2;
+    }
+  }
+  private renderLog() {
+    const box = $('#log', this.root);
+    const hh = (h?: number) => h === undefined ? '' : `${String(Math.floor(h)).padStart(2, '0')}:00`;
+    box.innerHTML = `<header><h3>消息记录</h3><span class="sub">最近 ${this.log.length} 条</span><button class="x" data-a="close" aria-label="关闭">×</button></header>
+      <ul class="loglist">${this.log.length ? this.log.map(t => `<li class="k-${t.kind} c-${t.cat}${t.at ? ' go' : ''}" ${t.at ? `data-at="${t.at.x},${t.at.z}" title="点击查看位置"` : ''}>
+        <span class="ai">${icon(t.icon ?? (t.kind === 'warn' ? 'bell' : t.kind === 'good' ? 'check' : 'ledger'))}</span>
+        <span class="when">第${t.day}天 ${hh(t.hour)}</span><span class="at">${t.text}</span>${t.at ? `<span class="pin">${icon('pin')}</span>` : ''}</li>`).join('') : '<li class="empty">还没有消息</li>'}</ul>`;
   }
 
   // ---------- research panel ----------
@@ -542,14 +649,14 @@ export class Hud {
     } else if (d.heating) {
       body = `<div class="row"><span>${TIERS[d.workers!.tier].name}</span><b data-f="staff"></b></div><div class="row"><span>供暖半径</span><b>${d.radius} 格</b></div><div class="row"><span>供暖住宅</span><b data-f="cov"></b></div>`;
     } else if (d.service) {
-      body = `<div class="row"><span>覆盖范围</span><b>${g.usesRoads(b.type) ? `沿道路走 ${g.roadRange(b.type)} 格` : `半径 ${g.radiusOf(b)} 格`}</b></div><div class="row"><span>覆盖住宅</span><b data-f="cov"></b></div>`;
-    } else if (b.type === 'depot' || b.type === 'warehouse') {
+      body = `<div class="row"><span>覆盖范围</span><b>${g.usesRoads(b.type) ? `沿道路走 ${g.roadRange(b.type)} 格` : `半径 ${g.radiusOf(b)} 格`}</b></div><div class="row"><span>覆盖住宅</span><b data-f="cov"></b></div>${d.service ? `<div class="row"><span>全城缺少${SERVICES[d.service]}</span><b data-f="gap"></b></div>` : ''}`;
+    } else if (BUILDINGS[b.type].storage) {
       body = `<div class="row"><span>每种货物上限</span><b data-f="cap"></b></div><button class="ghost" data-a="goods">打开仓库与商船</button>`;
     } else if (d.workers) {
       body = `<div class="row"><span>${TIERS[d.workers.tier].name}</span><b data-f="staff"></b></div>`;
     }
     if (d.pollution) body += `<div class="row"><span>${d.pollution > 0 ? '污染' : '净化'}</span><b>${d.pollution > 0 ? '' : '-'}${Math.abs(d.pollution)}</b></div>`;
-    if (d.protects) body += `<div class="row"><span>${PROTECTS[d.protects]}覆盖</span><b>沿道路走 ${g.roadRange(b.type)} 格，覆盖 <span data-f="pcov"></span> 座建筑</b></div><p class="hint">和纪元一样，服务沿着道路走：门口的路连到哪，就能管到哪。</p>`;
+    if (d.protects) body += `<div class="row"><span>${PROTECTS[d.protects]}覆盖</span><b>沿道路走 ${g.roadRange(b.type)} 格，覆盖 <span data-f="pcov"></span> 座建筑</b></div><div class="row"><span>全城没有${PROTECTS[d.protects]}</span><b data-f="pgap"></b></div><p class="hint">和纪元一样，服务沿着道路走：门口的路连到哪，就能管到哪。地图上会同时显示所有同类建筑的范围：黄色是这一座，橙色是其他几座，红色是没覆盖到的。</p>`;
     if (b.type !== 'depot') body += `<div class="safety" data-f="safety"></div>`;
     box.innerHTML = `
       <header><h3>${title}</h3><button class="x" data-a="close" aria-label="关闭">×</button></header>
@@ -622,6 +729,8 @@ export class Hud {
       g.buildings.forEach(h => { if (h.type === 'house' && (d.heating ? h.heaters.includes(b) : g.covered(h, d.service!))) n++; });
       f('cov')!.textContent = b.connected ? `${n} 座` : '没有连上道路，无法服务';
     } else if (f('cap')) f('cap')!.textContent = String(g.cap);
+    if (f('pgap')) { let n = 0; g.buildings.forEach(o => { if (o.type !== 'depot' && !BUILDINGS[o.type].protects && !o.protect.has(d.protects!)) n++; }); f('pgap')!.textContent = n ? `${n} 座建筑` : '全部覆盖'; }
+    if (f('gap') && d.service) { let n = 0; g.buildings.forEach(o => { if (o.type === 'house' && o.residents && TIERS[o.tier].services.includes(d.service!) && !o.cover.has(d.service!)) n++; }); f('gap')!.textContent = n ? `${n} 户` : '没有'; }
     if (f('pcov')) { let n = 0; g.buildings.forEach(o => { if (o !== b && o.protect.has(d.protects!)) n++; }); f('pcov')!.textContent = String(n); }
     if (f('safety')) {
       const ps = (['fire', 'health', 'police'] as ProtectId[]).filter(p => p !== 'police' || g.era >= 2).filter(p => b.type === 'house' || p === 'fire');

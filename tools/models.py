@@ -748,6 +748,7 @@ for f in (depot, warehouse, lumberjack, sawmill, fishery, farm, mill, bakery, ma
           factory_small, windturbine, solar, hydro, purifier, recycler, hospital, theatre, lab, ore_iron, ore_coal, bridge, bridge_plain, garden, herbalist, firestation, police):
     f()
 exec(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models_resize.py'), encoding='utf-8').read())
+exec(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models_anim.py'), encoding='utf-8').read())
 # chimney smoke markers on the older houses
 for o in list(bpy.data.objects):
     if o.parent is None and o.name.startswith('house_peasant_'):
@@ -765,3 +766,4 @@ bpy.ops.export_scene.gltf(filepath=OUT, export_format='GLB', export_apply=True, 
 names = [o.name for o in bpy.data.objects if o.parent is None]
 print('roots:', ' '.join(sorted(names)))
 print('exported', OUT, os.path.getsize(OUT) // 1024, 'KB')
+print('next: node tools/compress-models.mjs public/models/town.glb public/models/town.glb')

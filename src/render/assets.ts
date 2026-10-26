@@ -11,11 +11,15 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 export interface ModelGeo { body: THREE.BufferGeometry; line: THREE.BufferGeometry }
-export interface AnimPart { geo: ModelGeo; at: [number, number, number]; kind: 'spinZ' | 'spinX' | 'bob' }
+export type AnimKind = 'spinZ' | 'spinX' | 'spinY' | 'swingX' | 'swingZ' | 'flag' | 'bob';
+/** name: what the part is (crane, axe, bell …); the view picks its rhythm from it */
+export interface AnimPart { geo: ModelGeo; at: [number, number, number]; kind: AnimKind; name: string }
 /** smoke: chimney tops (model space) where the game puffs smoke while the building works */
 export interface Model extends ModelGeo { anims: AnimPart[]; height: number; smoke: [number, number, number][] }
 
 const models = new Map<string, Model>();
+const ANIM_RE = /^(spinz|spinx|spiny|swingx|swingz|flag|bob)_/;
+const KINDS: Record<string, AnimKind> = { spinz: 'spinZ', spinx: 'spinX', spiny: 'spinY', swingx: 'swingX', swingz: 'swingZ', flag: 'flag', bob: 'bob' };
 
 export function getModel(name: string): Model {
   const m = models.get(name);
@@ -24,11 +28,17 @@ export function getModel(name: string): Model {
 }
 export function hasModel(name: string) { return models.has(name); }
 
+function toFloat(a: THREE.BufferAttribute | THREE.InterleavedBufferAttribute) {
+  const out = new Float32Array(a.count * 3);
+  for (let i = 0; i < a.count; i++) { out[i * 3] = a.getX(i); out[i * 3 + 1] = a.getY(i); out[i * 3 + 2] = a.getZ(i); }
+  return new THREE.BufferAttribute(out, 3);
+}
 function prepare(mesh: THREE.Mesh, rel: THREE.Matrix4): THREE.BufferGeometry {
   const src = mesh.geometry;
   const g = new THREE.BufferGeometry();
-  g.setAttribute('position', src.getAttribute('position').clone());
-  g.setAttribute('normal', src.getAttribute('normal').clone());
+  // the file stores positions and normals as small integers; unpack to floats before transforming
+  g.setAttribute('position', toFloat(src.getAttribute('position')));
+  g.setAttribute('normal', toFloat(src.getAttribute('normal')));
   if (src.index) g.setIndex(src.index.clone());
   g.applyMatrix4(rel);
   const n = g.getAttribute('position').count;
@@ -101,14 +111,14 @@ export async function loadModels(url: string) {
     const anims: AnimPart[] = [];
     // animated sub-groups are empties named spinz_*, spinx_*, bob_*
     const animRoots = new Set<THREE.Object3D>();
-    rootObj.traverse(o => { if (/^(spinz|spinx|bob)_/.test(o.name)) animRoots.add(o); });
+    rootObj.traverse(o => { if (ANIM_RE.test(o.name)) animRoots.add(o); });
     for (const a of animRoots) {
       const ainv = new THREE.Matrix4().copy(a.matrixWorld).invert();
       const parts: { mesh: THREE.Mesh; rel: THREE.Matrix4 }[] = [];
       a.traverse(o => { if ((o as THREE.Mesh).isMesh) parts.push({ mesh: o as THREE.Mesh, rel: new THREE.Matrix4().multiplyMatrices(ainv, o.matrixWorld) }); });
       const p = new THREE.Vector3().setFromMatrixPosition(new THREE.Matrix4().multiplyMatrices(inv, a.matrixWorld));
-      const kind = a.name.startsWith('spinz') ? 'spinZ' : a.name.startsWith('spinx') ? 'spinX' : 'bob';
-      if (parts.length) anims.push({ geo: build(parts), at: [p.x, p.y, p.z], kind });
+      const [pre, rest] = [a.name.slice(0, a.name.indexOf('_')), a.name.slice(a.name.indexOf('_') + 1)];
+      if (parts.length) anims.push({ geo: build(parts), at: [p.x, p.y, p.z], kind: KINDS[pre], name: rest.replace(/[._]\d+$/, '') });
     }
     rootObj.traverse(o => {
       if (!(o as THREE.Mesh).isMesh) return;

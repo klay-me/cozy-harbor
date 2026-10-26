@@ -14,9 +14,14 @@ const PICK = {
   pizzicato_strings: [43, 79], acoustic_bass: [28, 55], celesta: [60, 96], kalimba: [60, 93],
   ocarina: [60, 93], xylophone: [69, 102], music_box: [69, 102], accordion: [48, 81],
   woodblock: [72, 84], tubular_bells: [60, 72],
+  // added for richer arrangements per era
+  orchestral_harp: [48, 90], string_ensemble_1: [43, 79], french_horn: [41, 72], clarinet: [52, 84],
+  cello: [36, 64], vibraphone: [60, 93], electric_piano_1: [48, 84], timpani: [38, 50], trumpet: [55, 82],
 };
 for (const [inst, [lo, hi]] of Object.entries(PICK)) {
-  const text = fs.readFileSync(path.join(src, `${inst}-mp3.js`), 'utf8');
+  const file = path.join(src, `${inst}-mp3.js`);
+  if (!fs.existsSync(file)) continue;
+  const text = fs.readFileSync(file, 'utf8');
   const all = {};
   for (const m of text.matchAll(/"([A-G]b?\d)":\s*"data:audio\/mp3;base64,([^"]+)"/g)) all[m[1]] = m[2];
   const keep = {};
