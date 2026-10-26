@@ -2,7 +2,7 @@
 // stands on screen and louder the closer you zoom in. All synthesised, no sample files.
 //   beds   – continuous layers whose volume follows how much of it is nearby (crowd, industry, water, fire)
 //   events – short sounds on a timer per building type (axe, saw, anvil, sheep, splash, horn …)
-import type { BuildingId } from '../sim/data';
+import { familyOf, type BuildingId } from '../sim/data';
 
 export interface Source { type: BuildingId; w: number; pan: number; working: boolean; fire: boolean }
 
@@ -135,7 +135,7 @@ export class TownSounds {
     const t = this.ctx.currentTime;
     const acc = new Map<Bed, { w: number; pan: number }>();
     for (const s of srcs) {
-      const bed: Bed | undefined = s.fire ? 'fire' : s.working ? BED_OF[s.type] : undefined;
+      const bed: Bed | undefined = s.fire ? 'fire' : s.working ? (BED_OF[s.type] ?? BED_OF[familyOf(s.type)]) : undefined;
       if (!bed) continue;
       const a = acc.get(bed) ?? { w: 0, pan: 0 };
       a.w += s.w; a.pan += s.pan * s.w;
@@ -169,7 +169,7 @@ export class TownSounds {
     // per type
     const best = new Map<Ev, Source[]>();
     for (const s of this.srcs) {
-      const e = EV_OF[s.type];
+      const e = EV_OF[s.type] ?? EV_OF[familyOf(s.type)];
       if (!e || !s.working || s.fire) continue;
       (best.get(e[0]) ?? best.set(e[0], []).get(e[0])!).push(s);
     }
@@ -177,7 +177,7 @@ export class TownSounds {
       let tm = this.timers.get(ev) ?? Math.random() * 2;
       tm -= dt * Math.min(3, 0.6 + list.length * 0.4);   // more of them, more often
       if (tm <= 0) {
-        const typ = list[0].type, e = EV_OF[typ]!;
+        const typ = list[0].type, e = (EV_OF[typ] ?? EV_OF[familyOf(typ)])!;
         tm = e[1] + Math.random() * (e[2] - e[1]);
         // pick one of them, louder ones more often
         let r = Math.random() * list.reduce((a, s) => a + s.w, 0), s = list[0];

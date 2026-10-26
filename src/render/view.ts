@@ -7,7 +7,7 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { Game, Bld } from '../sim/game';
 import { Tile } from '../sim/world';
-import { BUILDINGS, BuildingId, GOODS, TIERS } from '../sim/data';
+import { BUILDINGS, BuildingId, GOODS, TIERS, familyOf } from '../sim/data';
 import { outlineMat, ramp } from './toon';
 import { model, ModelGeo } from './models';
 import { getModel, AnimKind } from './assets';
@@ -21,7 +21,7 @@ import { Smoke } from './smoke';
 import { icon } from '../ui/icons';
 
 interface Part { o: THREE.Object3D; kind: AnimKind; name: string; t: number; amp: number }
-interface BView { group: THREE.Group; tier: string; smoke: THREE.Vector3[]; smokeT: number; parts: Part[]; born: number; b: Bld }
+interface BView { group: THREE.Group; tier: string; type: BuildingId; smoke: THREE.Vector3[]; smokeT: number; parts: Part[]; born: number; b: Bld }
 
 export class View {
   renderer: THREE.WebGLRenderer;
@@ -337,7 +337,7 @@ export class View {
       [Math.PI, Array.from({ length: b.w }, (_, i) => [b.x + i, b.z - 1])],
       [-Math.PI / 2, Array.from({ length: b.h }, (_, j) => [b.x - 1, b.z + j])],
     ];
-    const wantWater = b.type === 'fishery' || b.type === 'depot';
+    const wantWater = familyOf(b.type) === 'fishery' || b.type === 'depot';
     let best = 0, bestScore = -1;
     for (const [yaw, cells] of sides) {
       if (!allowed(yaw)) continue;
@@ -373,7 +373,7 @@ export class View {
     const body = new THREE.Mesh(m.body, this.worldMat);
     body.castShadow = true; body.receiveShadow = true;
     group.add(body, new THREE.Mesh(m.line, outlineMat(0.022)));
-    const v: BView = { group, tier: b.tier, born: this.time, b, parts: [], smoke: m.smoke.map(p => new THREE.Vector3(...p)), smokeT: Math.random() };
+    const v: BView = { group, tier: b.tier, type: b.type, born: this.time, b, parts: [], smoke: m.smoke.map(p => new THREE.Vector3(...p)), smokeT: Math.random() };
     for (const a of m.anims) {
       const o = new THREE.Group();
       const ab = new THREE.Mesh(a.geo.body, this.worldMat);
@@ -395,7 +395,7 @@ export class View {
     for (const [id, v] of this.views) {
       const b = g.buildings.get(id);
       if (!b) { this.scene.remove(v.group); this.views.delete(id); continue; }
-      if (b.tier !== v.tier) { this.scene.remove(v.group); this.views.set(id, this.makeView(b)); }
+      if (b.tier !== v.tier || b.type !== v.type) { this.scene.remove(v.group); this.views.set(id, this.makeView(b)); }
     }
     for (const b of g.buildings.values()) if (!this.views.has(b.id)) this.views.set(b.id, this.makeView(b));
   }

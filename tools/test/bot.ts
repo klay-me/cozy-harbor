@@ -104,8 +104,16 @@ function build(type: BuildingId) {
 const n = (t: BuildingId) => g.count(t);
 const houses = () => [...g.buildings.values()].filter(b => b.type === 'house');
 
-const producerOf: Partial<Record<string, BuildingId>> = {};
-for (const [k, d] of Object.entries(BUILDINGS)) if (d.output && k !== 'recycler') producerOf[d.output] = k as BuildingId;
+// the producer of a good the player would pick: the highest unlocked level of its line
+const producersOf: Record<string, BuildingId[]> = {};
+for (const [k, d] of Object.entries(BUILDINGS)) if (d.output && k !== 'recycler') (producersOf[d.output] ??= []).push(k as BuildingId);
+const producerOf = new Proxy({} as Partial<Record<string, BuildingId>>, {
+  get: (_t, good: string) => {
+    const list = producersOf[good];
+    if (!list) return undefined;
+    return list.find(b => g.unlocked(b) && !(BUILDINGS[b].upgrade && g.unlocked(BUILDINGS[b].upgrade!.to))) ?? list[0];
+  },
+});
 function rates() {
   const prod: Record<string, number> = {}, dem: Record<string, number> = {};
   for (const b of g.buildings.values()) {
@@ -124,7 +132,7 @@ import { TIERS, FOODS, TIER_IDS as TIER_IDS_ } from '../../src/sim/data';
 const plain: [BuildingId, () => number][] = [
   ['study', () => 1],
   ['firestation', () => houses().length >= 6 ? 1 + Math.floor(houses().length / 16) : 0],
-  ['herbalist', () => houses().length >= 8 ? 1 + Math.floor(houses().length / 18) : 0],
+  ['herbalist', () => houses().length >= 8 && g.era < 3 ? 1 + Math.floor(houses().length / 18) : 0],
   ['police', () => g.era >= 2 ? Math.floor(houses().length / 20) : 0],
   ['church', () => g.pop.peasant >= 50 && g.gold > 700 ? 1 : 0],
   ['market', () => 1 + Math.floor(houses().length / 14)],
@@ -134,7 +142,8 @@ const plain: [BuildingId, () => number][] = [
   ['smithy', () => g.pop.worker > 30 ? 1 : 0],
   ['park', () => g.era >= 3 ? Math.floor(houses().length / 12) : 0],
   ['school', () => g.era >= 3 ? 1 + Math.floor(houses().length / 25) : 0],
-  ['clinic', () => g.era >= 3 ? 1 + Math.floor(houses().length / 25) : 0],
+  ['clinic', () => g.era === 3 ? 1 + Math.floor(houses().length / 25) - n('herbalist') : 0],
+  ['greenhouse', () => g.era >= 3 ? Math.floor(houses().length / 20) : 0],
   ['university', () => g.pop.technician > 20 ? 1 : 0],
   ['heatplant', () => g.pop.technician > 40 ? Math.floor(houses().length / 20) : 0],
   ['townhall', () => g.pop.technician > 100 ? 1 : 0],
@@ -143,6 +152,7 @@ const plain: [BuildingId, () => number][] = [
   ['purifier', () => g.pollutionAvg > 10 ? 1 + Math.floor(g.pop.citizen / 100) : 0],
   ['lab', () => g.pop.citizen > 50 ? 1 : 0],
   ['ironmine', () => g.era >= 2 && g.pop.worker > 10 ? 1 : 0],
+  ['compost', () => g.era >= 2 ? Math.floor((n('garden') + n('vegfield') + n('farm') + n('greenhouse')) / 4) : 0],
 ];
 function demandRates() {
   const { prod, dem } = rates();
@@ -217,6 +227,12 @@ for (let t = 0; t < minutes * 60; t += 10) {
       const wf = g.workforce[b.tier];
       if (wf.have - b.residents >= wf.need + 4) g.upgrade(b, true);
     }
+  }
+  // upgrade workplaces and public buildings when rich
+  if (g.gold > 900) for (const b of g.buildings.values()) if (b.type !== 'house' && BUILDINGS[b.type].upgrade && !g.upgradeBlock(b)) {
+    const wk = BUILDINGS[BUILDINGS[b.type].upgrade!.to].workers;
+    if (wk && g.workforce[wk.tier].have - g.workforce[wk.tier].need < wk.n) continue;
+    if (g.upgrade(b, true)) { built[g.at(b.x, b.z)!.type] = 1; break; }
   }
   // expand roads when out of space
   if (spots('house').length < 3 && ringR < 6) { ringR++; gridRoads(ringR); }

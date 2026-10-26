@@ -45,6 +45,8 @@ export type ServiceId = 'market' | 'tavern' | 'church' | 'school' | 'clinic' | '
 export const SERVICES: Record<ServiceId, string> = {
   market: '集市', tavern: '酒馆', church: '教堂', school: '学校', clinic: '诊所', hospital: '医院', park: '公园', theatre: '剧院',
 };
+/** a higher service also counts as the lower ones (a hospital is a clinic too) */
+export const SERVICE_ALSO: Partial<Record<ServiceId, ServiceId[]>> = { hospital: ['clinic'] };
 /** protection a building can give its surroundings (not a happiness need, but it keeps disasters small) */
 export type ProtectId = 'health' | 'fire' | 'police';
 export const PROTECTS: Record<ProtectId, string> = { health: '医疗', fire: '消防', police: '治安' };
@@ -79,10 +81,13 @@ export type BuildingId =
   | 'lumberjack' | 'sawmill' | 'fishery' | 'garden' | 'farm' | 'sheepfarm' | 'market' | 'church' | 'study' | 'herbalist' | 'firestation'
   // era 2
   | 'firewood' | 'police' | 'claypit' | 'brickworks' | 'mill' | 'bakery' | 'weaver' | 'tailor' | 'ironmine' | 'smithy' | 'tavern' | 'park' | 'guild'
+  | 'fishpier' | 'vegfield' | 'compost'
   // era 3
   | 'coalmine' | 'steelworks' | 'cannery' | 'brewery' | 'coalplant' | 'heatplant' | 'school' | 'clinic' | 'townhall' | 'university'
+  | 'fishport' | 'greenhouse' | 'mechfarm'
   // era 4
-  | 'cementworks' | 'appliances' | 'windturbine' | 'solar' | 'hydro' | 'purifier' | 'recycler' | 'hospital' | 'theatre' | 'lab';
+  | 'cementworks' | 'appliances' | 'windturbine' | 'solar' | 'hydro' | 'purifier' | 'recycler' | 'hospital' | 'theatre' | 'lab'
+  | 'hydroponic';
 
 export type Category = 'road' | 'home' | 'raw' | 'craft' | 'power' | 'public';
 export type Need = 'water' | 'river' | 'forest' | 'iron' | 'coal';
@@ -115,6 +120,14 @@ export interface BuildingDef {
   storage?: number;
   needs?: Need;
   buildable?: boolean;
+  /** upgrade in place to the next building of the same line (the footprint may grow) */
+  upgrade?: { to: BuildingId; cost: Cost };
+  /** the line a building belongs to, named after its first level (fishpier -> fishery) */
+  family?: BuildingId;
+  /** production bonus given to farms, gardens and greenhouses within radius */
+  boost?: number;
+  /** coal burnt per production cycle while it is cold, unless a heating plant covers it */
+  winterFuel?: number;
 }
 
 const B = (d: BuildingDef) => d;
@@ -128,18 +141,18 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
   // ---- era 1 ----
   lumberjack: B({ name: '伐木场', desc: '砍伐附近的树木，周围树越多效率越高，还会慢慢补种树苗。只要金币就能建。', era: 1, size: [2, 2], cost: { gold: 60 }, upkeep: 5, category: 'raw', model: 'lumberjack', workers: { tier: 'peasant', n: 4 }, cycle: 15, output: 'wood', radius: 3, needs: 'forest' }),
   sawmill: B({ name: '锯木厂', desc: '把木材加工成木板。', era: 1, size: [3, 2], cost: { gold: 100, planks: 4 }, upkeep: 10, category: 'craft', model: 'sawmill', workers: { tier: 'peasant', n: 6 }, cycle: 15, input: { wood: 1 }, output: 'planks' }),
-  fishery: B({ name: '渔场', desc: '必须紧挨水边。为居民提供鱼。', era: 1, size: [3, 2], cost: { gold: 80, planks: 2 }, upkeep: 5, category: 'raw', model: 'fishery', workers: { tier: 'peasant', n: 3 }, cycle: 20, output: 'fish', needs: 'water' }),
-  garden: B({ name: '菜园', desc: '种蔬菜，和鱼一样能填饱肚子。冬天不长菜，记得秋天多囤一些。', era: 1, size: [3, 3], cost: { gold: 80, planks: 3 }, upkeep: 4, category: 'raw', model: 'garden', workers: { tier: 'peasant', n: 4 }, cycle: 15, output: 'veg' }),
-  herbalist: B({ name: '草药铺', desc: '医疗覆盖：范围内的病人好得快，瘟疫不容易扩散。', era: 1, size: [2, 2], cost: { gold: 120, planks: 6 }, upkeep: 5, category: 'public', model: 'herbalist', workers: { tier: 'peasant', n: 2 }, radius: 8, protects: 'health' }),
-  firestation: B({ name: '消防队', desc: '消防覆盖：范围内着火的建筑很快就能扑灭；没有覆盖的火会把房子烧光。', era: 1, size: [3, 2], cost: { gold: 150, planks: 8 }, upkeep: 5, category: 'public', model: 'firestation', workers: { tier: 'peasant', n: 3 }, radius: 9, protects: 'fire' }),
-  farm: B({ name: '麦田', desc: '种植小麦。冬天休耕。', era: 1, size: [4, 4], cost: { gold: 100, planks: 4 }, upkeep: 10, category: 'raw', model: 'farm', workers: { tier: 'peasant', n: 4 }, cycle: 30, output: 'grain' }),
+  fishery: B({ name: '渔场', desc: '必须紧挨水边。为居民提供鱼。手工业时代可以升级为渔码头。', era: 1, size: [3, 2], cost: { gold: 80, planks: 2 }, upkeep: 5, category: 'raw', model: 'fishery', workers: { tier: 'peasant', n: 3 }, cycle: 20, output: 'fish', needs: 'water', upgrade: { to: 'fishpier', cost: { gold: 150, planks: 6, bricks: 6 } } }),
+  garden: B({ name: '菜园', desc: '种蔬菜，和鱼一样能填饱肚子。冬天不长菜，记得秋天多囤一些。手工业时代可以升级为菜田。', era: 1, size: [3, 3], cost: { gold: 80, planks: 3 }, upkeep: 4, category: 'raw', model: 'garden', workers: { tier: 'peasant', n: 4 }, cycle: 15, output: 'veg', upgrade: { to: 'vegfield', cost: { gold: 120, planks: 4, bricks: 4 } } }),
+  herbalist: B({ name: '草药铺', desc: '医疗覆盖：范围内的病人好得快，瘟疫不容易扩散。工业时代可以升级为诊所。', era: 1, size: [2, 2], cost: { gold: 120, planks: 6 }, upkeep: 5, category: 'public', model: 'herbalist', workers: { tier: 'peasant', n: 2 }, radius: 11, protects: 'health', upgrade: { to: 'clinic', cost: { gold: 300, bricks: 10, steel: 2 } } }),
+  firestation: B({ name: '消防队', desc: '消防覆盖：范围内着火的建筑很快就能扑灭；没有覆盖的火会把房子烧光。', era: 1, size: [3, 2], cost: { gold: 150, planks: 8 }, upkeep: 5, category: 'public', model: 'firestation', workers: { tier: 'peasant', n: 3 }, radius: 12, protects: 'fire' }),
+  farm: B({ name: '麦田', desc: '种植小麦。冬天休耕。工业时代可以升级为机械农场。', era: 1, size: [4, 4], cost: { gold: 100, planks: 4 }, upkeep: 10, category: 'raw', model: 'farm', workers: { tier: 'peasant', n: 4 }, cycle: 30, output: 'grain', upgrade: { to: 'mechfarm', cost: { gold: 300, tools: 4, steel: 4 } } }),
   sheepfarm: B({ name: '牧羊场', desc: '养羊产羊毛，织布的原料。', era: 1, size: [4, 3], cost: { gold: 120, planks: 4 }, upkeep: 8, category: 'raw', model: 'sheepfarm', workers: { tier: 'peasant', n: 3 }, cycle: 30, output: 'wool' }),
-  market: B({ name: '集市', desc: '覆盖范围内的住宅满足"集市"需求。', era: 1, size: [3, 3], cost: { gold: 120, planks: 6 }, upkeep: 6, category: 'public', model: 'market', radius: 9, service: 'market' }),
-  church: B({ name: '教堂', desc: '小镇的精神中心。工人需要它；建成后才能进入手工业时代。', era: 1, size: [3, 4], cost: { gold: 400, planks: 24 }, upkeep: 10, category: 'public', model: 'church', radius: 11, service: 'church' }),
+  market: B({ name: '集市', desc: '覆盖范围内的住宅满足"集市"需求。', era: 1, size: [3, 3], cost: { gold: 120, planks: 6 }, upkeep: 6, category: 'public', model: 'market', radius: 12, service: 'market' }),
+  church: B({ name: '教堂', desc: '小镇的精神中心。工人需要它；建成后才能进入手工业时代。', era: 1, size: [3, 4], cost: { gold: 400, planks: 24 }, upkeep: 10, category: 'public', model: 'church', radius: 15, service: 'church' }),
   study: B({ name: '村塾', desc: '产生研究点，解锁田园时代的研究。', era: 1, size: [2, 2], cost: { gold: 150, planks: 8 }, upkeep: 5, category: 'public', model: 'study', workers: { tier: 'peasant', n: 2 }, research_pts: 6 }),
 
   // ---- era 2 ----
-  police: B({ name: '巡警所', desc: '治安覆盖：住户不开心时容易有小偷和闹事，巡警能管住他们。', era: 2, size: [2, 2], cost: { gold: 250, planks: 6, bricks: 6 }, upkeep: 12, category: 'public', model: 'police', workers: { tier: 'worker', n: 2 }, radius: 10, protects: 'police' }),
+  police: B({ name: '巡警所', desc: '治安覆盖：住户不开心时容易有小偷和闹事，巡警能管住他们。', era: 2, size: [2, 2], cost: { gold: 250, planks: 6, bricks: 6 }, upkeep: 12, category: 'public', model: 'police', workers: { tier: 'worker', n: 2 }, radius: 14, protects: 'police' }),
   firewood: B({ name: '柴火坊', desc: '把木材劈成柴火。气温低于 8°C 住宅就要烧柴取暖。', era: 1, size: [2, 2], cost: { gold: 80, planks: 4 }, upkeep: 3, category: 'craft', model: 'woodshed', workers: { tier: 'peasant', n: 2 }, cycle: 20, input: { wood: 1 }, output: 'firewood', outQty: 2, pollution: 2 }),
   claypit: B({ name: '黏土坑', desc: '在河岸或湖边挖黏土。', era: 2, size: [3, 3], cost: { gold: 100, planks: 4 }, upkeep: 6, category: 'raw', model: 'claypit', workers: { tier: 'peasant', n: 4 }, cycle: 20, output: 'clay', needs: 'water', pollution: 2 }),
   brickworks: B({ name: '砖厂', desc: '把黏土烧成砖，手工业时代的主要建材。', era: 2, size: [3, 2], cost: { gold: 150, planks: 6 }, upkeep: 8, category: 'craft', model: 'brickworks', workers: { tier: 'peasant', n: 6 }, cycle: 20, input: { clay: 1 }, output: 'bricks', pollution: 10 }),
@@ -149,9 +162,12 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
   tailor: B({ name: '裁缝铺', desc: '用布做衣服。', era: 2, size: [2, 2], cost: { gold: 150, planks: 4, bricks: 4 }, upkeep: 8, category: 'craft', model: 'tailor', workers: { tier: 'worker', n: 4 }, cycle: 30, input: { cloth: 1 }, output: 'clothes' }),
   ironmine: B({ name: '铁矿', desc: '必须建在铁矿脉上。', era: 2, size: [2, 2], cost: { gold: 200, planks: 8 }, upkeep: 10, category: 'raw', model: 'mine', workers: { tier: 'worker', n: 6 }, cycle: 20, output: 'ore', needs: 'iron', pollution: 10 }),
   smithy: B({ name: '铁匠铺', desc: '用铁矿石和木材打造工具；建成后才能进入工业时代。', era: 2, size: [2, 2], cost: { gold: 250, planks: 6, bricks: 6 }, upkeep: 10, category: 'craft', model: 'smithy', workers: { tier: 'worker', n: 6 }, cycle: 30, input: { ore: 1, wood: 1 }, output: 'tools', pollution: 10 }),
-  tavern: B({ name: '酒馆', desc: '工人和技工下班后的去处。', era: 2, size: [3, 2], cost: { gold: 200, planks: 10 }, upkeep: 15, category: 'public', model: 'tavern', radius: 9, service: 'tavern' }),
+  tavern: B({ name: '酒馆', desc: '工人和技工下班后的去处。', era: 2, size: [3, 2], cost: { gold: 200, planks: 10 }, upkeep: 15, category: 'public', model: 'tavern', radius: 12, service: 'tavern' }),
   park: B({ name: '公园', desc: '减少附近的污染，让附近住户更开心。', era: 2, size: [3, 3], cost: { gold: 100, bricks: 2 }, upkeep: 5, category: 'public', model: 'park', radius: 4, service: 'park', pollution: -15 }),
   guild: B({ name: '工匠行会', desc: '产生研究点，解锁手工业时代的研究。', era: 2, size: [3, 2], cost: { gold: 300, planks: 10, bricks: 10 }, upkeep: 20, category: 'public', model: 'guild', workers: { tier: 'worker', n: 4 }, research_pts: 12 }),
+  fishpier: B({ name: '渔码头', desc: '渔场升级而来：石砌码头和更大的渔船，产量是渔场的两倍多，起雾影响也小一些。工业时代可以升级为远洋渔港。', era: 2, size: [3, 2], cost: { gold: 230, planks: 8, bricks: 6 }, upkeep: 9, category: 'raw', model: 'fishery', workers: { tier: 'peasant', n: 5 }, cycle: 17, output: 'fish', outQty: 2, needs: 'water', family: 'fishery', upgrade: { to: 'fishport', cost: { gold: 400, steel: 6, tools: 4 } } }),
+  vegfield: B({ name: '菜田', desc: '菜园升级而来：整片的菜畦和水渠，产量接近菜园的两倍。冬天照样不长菜。', era: 2, size: [3, 3], cost: { gold: 200, planks: 7, bricks: 4 }, upkeep: 7, category: 'raw', model: 'garden', workers: { tier: 'peasant', n: 5 }, cycle: 17, output: 'veg', outQty: 2, family: 'garden' }),
+  compost: B({ name: '堆肥场', desc: '把落叶和厩肥堆成肥料。半径内的菜园、菜田、麦田、温室产量 +25%。有点臭。', era: 2, size: [2, 2], cost: { gold: 120, planks: 4, bricks: 2 }, upkeep: 4, category: 'raw', model: 'woodshed', workers: { tier: 'peasant', n: 2 }, radius: 5, boost: 0.25, pollution: 3 }),
 
   // ---- era 3 ----
   coalmine: B({ name: '煤矿', desc: '必须建在煤矿脉上。', era: 3, size: [2, 2], cost: { gold: 300, bricks: 10, tools: 4 }, upkeep: 14, category: 'raw', model: 'mine', workers: { tier: 'worker', n: 8 }, cycle: 15, output: 'coal', needs: 'coal', pollution: 25 }),
@@ -160,10 +176,13 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
   brewery: B({ name: '啤酒厂', desc: '用小麦酿啤酒。', era: 3, size: [2, 2], cost: { gold: 300, bricks: 10, tools: 2 }, upkeep: 14, category: 'craft', model: 'brewery', workers: { tier: 'technician', n: 6 }, cycle: 30, input: { grain: 1 }, output: 'beer', pollution: 5 }),
   coalplant: B({ name: '燃煤电厂', desc: '烧煤发电，便宜稳定，但污染最重。', era: 3, research: 'steam', size: [4, 4], cost: { gold: 800, bricks: 20, tools: 6 }, upkeep: 30, category: 'power', model: 'powerplant', workers: { tier: 'worker', n: 6 }, cycle: 30, input: { coal: 1 }, powerGen: 20, powerKind: 'coal', pollution: 50 }),
   heatplant: B({ name: '煤炉房', desc: '集中供暖：半径内的住宅冬天不必各自烧燃料，比分散取暖省 30% 的煤。', era: 3, research: 'central', size: [2, 2], cost: { gold: 400, bricks: 12, steel: 4 }, upkeep: 20, category: 'power', model: 'heatplant', workers: { tier: 'technician', n: 4 }, radius: 6, heating: true, pollution: 20 }),
-  school: B({ name: '学校', desc: '技工和市民需要它。', era: 3, size: [3, 3], cost: { gold: 400, bricks: 12 }, upkeep: 20, category: 'public', model: 'school', radius: 10, service: 'school' }),
-  clinic: B({ name: '诊所', desc: '技工需要它；同时提供医疗覆盖。', era: 3, size: [2, 2], cost: { gold: 400, bricks: 10, steel: 2 }, upkeep: 20, category: 'public', model: 'clinic', radius: 9, service: 'clinic', protects: 'health' }),
+  school: B({ name: '学校', desc: '技工和市民需要它。', era: 3, size: [3, 3], cost: { gold: 400, bricks: 12 }, upkeep: 20, category: 'public', model: 'school', radius: 15, service: 'school' }),
+  clinic: B({ name: '诊所', desc: '技工需要它；同时提供医疗覆盖。现代可以升级为医院（需要周围有空地，医院占 4×3）。', era: 3, size: [2, 2], cost: { gold: 400, bricks: 10, steel: 2 }, upkeep: 20, category: 'public', model: 'clinic', radius: 14, service: 'clinic', protects: 'health', family: 'herbalist', upgrade: { to: 'hospital', cost: { gold: 700, cement: 10, steel: 4 } } }),
   townhall: B({ name: '市政厅', desc: '建成后才能进入现代城市时代。', era: 3, size: [4, 3], cost: { gold: 1200, bricks: 30, steel: 10 }, upkeep: 40, category: 'public', model: 'townhall' }),
   university: B({ name: '大学', desc: '产生研究点，解锁工业时代的研究。', era: 3, size: [4, 4], cost: { gold: 800, bricks: 20, steel: 6 }, upkeep: 35, category: 'public', model: 'university', workers: { tier: 'technician', n: 6 }, research_pts: 24 }),
+  fishport: B({ name: '远洋渔港', desc: '渔码头升级而来：蒸汽渔船去远海捕鱼，产量是渔场的四倍多。起雾不受影响，冬天只减产一点，雷雨天照样停航。', era: 3, size: [3, 2], cost: { gold: 630, planks: 8, bricks: 6, steel: 6, tools: 4 }, upkeep: 18, category: 'raw', model: 'fishery', workers: { tier: 'worker', n: 6 }, cycle: 30, output: 'fish', outQty: 7, needs: 'water', family: 'fishery' }),
+  greenhouse: B({ name: '温室', desc: '玻璃顶的暖房，一年四季都长菜，不受天气影响。冬天每轮要烧 0.5 煤保温；在煤炉房的供暖范围里就不用烧。现代可以升级为水培农场。', era: 3, size: [3, 3], cost: { gold: 400, bricks: 10, steel: 4 }, upkeep: 14, category: 'raw', model: 'garden', workers: { tier: 'worker', n: 4 }, cycle: 20, output: 'veg', outQty: 2, winterFuel: 0.5, upgrade: { to: 'hydroponic', cost: { gold: 600, cement: 6 } } }),
+  mechfarm: B({ name: '机械农场', desc: '麦田升级而来：用拖拉机和收割机，产量是麦田的两倍。冬天还是休耕。', era: 3, size: [4, 4], cost: { gold: 400, planks: 4, tools: 4, steel: 4 }, upkeep: 16, category: 'raw', model: 'farm', workers: { tier: 'worker', n: 4 }, cycle: 15, output: 'grain', family: 'farm' }),
 
   // ---- era 4 ----
   cementworks: B({ name: '水泥厂', desc: '用黏土和煤做水泥，现代建筑的建材。', era: 4, size: [3, 3], cost: { gold: 800, bricks: 20, steel: 10 }, upkeep: 24, category: 'craft', model: 'factory_small', workers: { tier: 'technician', n: 8 }, cycle: 30, input: { clay: 1, coal: 1 }, output: 'cement', power: 6, pollution: 30 }),
@@ -173,10 +192,15 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
   hydro: B({ name: '水电站', desc: '必须建在内陆河湖边，稳定无污染，造价高。', era: 4, research: 'hydro', size: [3, 3], cost: { gold: 1500, steel: 10, cement: 20 }, upkeep: 30, category: 'power', model: 'hydro', workers: { tier: 'technician', n: 4 }, powerGen: 30, powerKind: 'hydro', needs: 'river' }),
   purifier: B({ name: '净化厂', desc: '大幅降低周围的污染。', era: 4, research: 'purify', size: [3, 2], cost: { gold: 800, steel: 10, cement: 6 }, upkeep: 30, category: 'power', model: 'purifier', workers: { tier: 'technician', n: 4 }, radius: 6, power: 8, pollution: -40 }),
   recycler: B({ name: '回收站', desc: '回收垃圾，产出少量钢，顺便减少污染。', era: 4, size: [3, 3], cost: { gold: 600, steel: 6, cement: 6 }, upkeep: 18, category: 'craft', model: 'recycler', workers: { tier: 'citizen', n: 4 }, cycle: 60, output: 'steel', power: 4, pollution: -10 }),
-  hospital: B({ name: '医院', desc: '市民需要它；同时提供大范围医疗覆盖。', era: 4, size: [4, 3], cost: { gold: 1000, cement: 10, steel: 6 }, upkeep: 40, category: 'public', model: 'hospital', radius: 12, service: 'hospital', protects: 'health' }),
-  theatre: B({ name: '剧院', desc: '市民需要它。', era: 4, size: [4, 4], cost: { gold: 1200, cement: 12 }, upkeep: 40, category: 'public', model: 'theatre', radius: 12, service: 'theatre' }),
+  hospital: B({ name: '医院', desc: '市民需要它，也算作技工要的诊所；同时提供大范围医疗覆盖。', era: 4, size: [4, 3], cost: { gold: 1000, cement: 10, steel: 6 }, upkeep: 40, category: 'public', model: 'hospital', radius: 20, service: 'hospital', protects: 'health', family: 'herbalist' }),
+  theatre: B({ name: '剧院', desc: '市民需要它。', era: 4, size: [4, 4], cost: { gold: 1200, cement: 12 }, upkeep: 40, category: 'public', model: 'theatre', radius: 18, service: 'theatre' }),
   lab: B({ name: '研究所', desc: '产生大量研究点，包括无限研究。', era: 4, size: [2, 2], cost: { gold: 1500, cement: 10, steel: 10 }, upkeep: 50, category: 'public', model: 'lab', workers: { tier: 'citizen', n: 6 }, research_pts: 40 }),
+  hydroponic: B({ name: '水培农场', desc: '温室升级而来：用电照明和水泵，多层栽培，产量是温室的两倍，冬天不用烧煤。', era: 4, size: [3, 3], cost: { gold: 1000, bricks: 10, steel: 4, cement: 6 }, upkeep: 24, category: 'raw', model: 'garden', workers: { tier: 'citizen', n: 4 }, cycle: 15, output: 'veg', outQty: 3, power: 6, family: 'greenhouse' }),
 };
+/** the line a building belongs to (fishpier -> fishery); used for seasons, weather, research and looks */
+export const familyOf = (t: BuildingId): BuildingId => BUILDINGS[t].family ?? t;
+/** the buildings that can upgrade into t */
+export const upgradedFrom = (t: BuildingId) => (Object.keys(BUILDINGS) as BuildingId[]).filter(b => BUILDINGS[b].upgrade?.to === t);
 
 export const BUILD_MENU: { cat: Category; name: string }[] = [
   { cat: 'road', name: '道路' },
@@ -285,7 +309,7 @@ export const WEATHER: Record<WeatherId, WeatherDef> = {
   cloudy: { name: '多云', effect: '风力充足', duration: [60, 100], next: { sunny: 3.5, rain: 4, storm: 1, fog: 1.5 }, prod: {}, wind: 1, sun: 0.6 },
   rain: { name: '下雨', effect: '麦田 +25%，污染 -20%', duration: [50, 90], next: { cloudy: 4, storm: 2.5, sunny: 2, rain: 1.5 }, prod: { farm: 1.25 }, wind: 1, sun: 0.5 },
   storm: { name: '雷雨', effect: '麦田 +25%，渔船停航，风车停机', duration: [30, 50], next: { rain: 6, cloudy: 4 }, prod: { farm: 1.25, fishery: 0 }, wind: 0, sun: 0.3 },
-  fog: { name: '起雾', effect: '渔场 -40%，污染影响 +20%', duration: [40, 70], next: { sunny: 5, cloudy: 5 }, prod: { fishery: 0.6 }, wind: 0.4, sun: 0.5 },
+  fog: { name: '起雾', effect: '渔场 -40%，污染影响 +20%', duration: [40, 70], next: { sunny: 5, cloudy: 5 }, prod: { fishery: 0.6, fishpier: 0.75, fishport: 1 }, wind: 0.4, sun: 0.5 },
   snow: { name: '下雪', effect: '伐木场 -30%', duration: [50, 90], next: { cloudy: 4, sunny: 3, snow: 3 }, prod: { lumberjack: 0.7 }, wind: 0.8, sun: 0.4 },
 };
 
@@ -304,5 +328,5 @@ export const SEASONS: Record<SeasonId, SeasonDef> = {
   spring: { name: '春', effect: '万物生长', prod: {}, weather: { snow: 'rain' } },
   summer: { name: '夏', effect: '麦田和菜园 +20%，天干容易着火', prod: { farm: 1.2, garden: 1.2 }, weather: { snow: 'sunny' } },
   autumn: { name: '秋', effect: '丰收季，麦田和菜园 +40%，记得囤粮和燃料', prod: { farm: 1.4, garden: 1.4 }, weather: { snow: 'rain' } },
-  winter: { name: '冬', effect: '麦田、菜园和牧羊场停产，渔场 -30%，住宅要取暖', prod: { farm: 0, garden: 0, sheepfarm: 0, fishery: 0.7 }, weather: { rain: 'snow', storm: 'snow' } },
+  winter: { name: '冬', effect: '麦田、菜园和牧羊场停产，渔场 -30%（渔码头 -20%，远洋渔港 -10%），温室照常，住宅要取暖', prod: { farm: 0, garden: 0, sheepfarm: 0, fishery: 0.7, fishpier: 0.8, fishport: 0.9 }, weather: { rain: 'snow', storm: 'snow' } },
 };

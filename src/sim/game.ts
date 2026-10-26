@@ -5,7 +5,7 @@ import {
   START, REFUND, BUY_MARKUP, BRIDGE_COST, MAP_SIZE, WEATHER, WeatherId, Era, ERAS, TECHS, TECH_IDS, TechId, TechEffect,
   HEAT_PER_RESIDENT, POWER_HEAT_PER_RESIDENT, coldness, SEASON_TEMP, COLDER_PER_YEAR, COLDER_MAX, WEATHER_TEMP, POLLUTION_RADIUS,
   DAY_LENGTH, SEASON_DAYS, START_HOUR, SEASONS, SEASON_IDS, SeasonId,
-  FOODS, FoodId, ProtectId, FIRE, PLAGUE, CRIME, STRIKE, HUNGER, PER_DAY, DEBT,
+  SERVICE_ALSO, familyOf, FOODS, FoodId, ProtectId, FIRE, PLAGUE, CRIME, STRIKE, HUNGER, PER_DAY, DEBT,
 } from './data';
 
 export interface Bld {
@@ -113,6 +113,9 @@ export class Ledger {
   reset() { this.buckets = [new Map()]; this.age = 0; this.span = 0; }
 }
 const PROD_CATS = new Set(['raw', 'craft']);
+/** building lines a compost heap helps, and the ones where pollution spoils the harvest */
+const BOOSTED = new Set<BuildingId>(['garden', 'farm', 'greenhouse']);
+const POLLUTION_HURTS = new Set<BuildingId>(['farm', 'fishery', 'sheepfarm']);
 
 type Mods = Required<Omit<TechEffect, 'prod' | 'workersLess'>> & { prod: Partial<Record<BuildingId, number>>; workersLess: Partial<Record<BuildingId, number>> };
 const emptyMods = (): Mods => ({ prod: {}, workersLess: {}, prodAll: 0, heating: 0, storage: 0, happiness: 0, parkRadius: 0, pollution: 0, sickness: 0, forestNeed: 10 });
@@ -238,8 +241,22 @@ export class Game {
     return this.tempAt(this.seasonPos, this.hour) + wt;
   }
   prodFactor(type: BuildingId) {
-    return (WEATHER[this.weather.cur].prod[type] ?? 1) * (SEASONS[this.season].prod[type] ?? 1);
+    const f = familyOf(type), w = WEATHER[this.weather.cur].prod, s = SEASONS[this.season].prod;
+    return (w[type] ?? w[f] ?? 1) * (s[type] ?? s[f] ?? 1);
   }
+  /** research bonus for a building (upgraded buildings share their line's bonus) */
+  prodBonus(type: BuildingId) {
+    const def = BUILDINGS[type];
+    return (this.mods.prod[type] ?? this.mods.prod[familyOf(type)] ?? 0) + (PROD_CATS.has(def.category) ? this.mods.prodAll : 0);
+  }
+  /** compost heaps nearby (farms, gardens, greenhouses) */
+  boostAt(b: Bld) {
+    if (!BOOSTED.has(familyOf(b.type))) return 0;
+    const s = this.within(b, (o, d) => !!d.boost && o.working);
+    return s ? BUILDINGS[s.type].boost! * s.staff : 0;
+  }
+  /** a greenhouse keeps warm for free inside a heating plant's range */
+  heatedSite(b: Bld) { return !!this.within(b, (o, d) => !!d.heating && o.working); }
 
   // ---------- queries ----------
   count(type: BuildingId, connected = false) {
@@ -461,7 +478,7 @@ export class Game {
   }
 
   upgradeBlock(b: Bld): string | null {
-    if (b.type !== 'house') return '无法升级';
+    if (b.type !== 'house') return this.buildingUpgradeBlock(b);
     const up = TIERS[b.tier].upgrade;
     if (!up) return '已经是最高阶层';
     const next = TIERS[up.to];
@@ -501,9 +518,49 @@ export class Game {
     if (st.startsWith('缺少') || st === '附近树木太少') return { icon: 'noinput', level: 'warn', tip: st };
     return null;
   }
+  /** why a workplace or public building cannot be upgraded right now (null = it can) */
+  private buildingUpgradeBlock(b: Bld): string | null {
+    const up = BUILDINGS[b.type].upgrade;
+    if (!up) return '已经是最高级';
+    const next = BUILDINGS[up.to];
+    if (!this.unlocked(up.to)) return `${this.lockReason(up.to)}才能升级为${next.name}`;
+    if (b.fire > 0) return '着火了，先救火';
+    if (!this.upgradeFits(b, up.to)) return `${next.name}占 ${next.size[0]}×${next.size[1]}，周围要先空出地方`;
+    return this.missing(up.cost);
+  }
+  /** the bigger footprint of the next level, anchored at the same corner, with the same turn */
+  private upgradeFits(b: Bld, to: BuildingId) {
+    const [w, h] = this.sizeOf(to, b.rot);
+    for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
+      const tx = b.x + i, tz = b.z + j;
+      if (!this.world.inside(tx, tz)) return false;
+      const t = this.world.tile(tx, tz), o = this.occ[tz * this.W + tx];
+      if (t === Tile.Water || t === Tile.Rock || (o !== 0 && o !== b.id)) return false;
+    }
+    const d = BUILDINGS[to];
+    if (d.needs === 'water' && !this.touchesWater(b.x, b.z, w, h)) return false;
+    return true;
+  }
   upgrade(b: Bld, quiet = false) {
     const block = this.upgradeBlock(b);
     if (block) { if (!quiet) this.notify(block, 'warn'); return false; }
+    if (b.type !== 'house') {
+      const up = BUILDINGS[b.type].upgrade!, from = BUILDINGS[b.type].name;
+      this.pay(up.cost, '建筑升级');
+      for (let j = 0; j < b.h; j++) for (let i = 0; i < b.w; i++) this.occ[(b.z + j) * this.W + b.x + i] = 0;
+      const [w, h] = this.sizeOf(up.to, b.rot);
+      b.type = up.to; b.w = w; b.h = h; b.progress = 0; b.loaded = false;
+      for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
+        const k = (b.z + j) * this.W + b.x + i;
+        this.occ[k] = b.id;
+        if (this.world.trees[k]) { this.world.trees[k] = 0; this.tVersion++; }
+      }
+      this.bVersion++;
+      this.refresh();
+      this.sfx.push('upgrade');
+      if (!quiet) this.notify(`${from}升级为${BUILDINGS[up.to].name}`, 'good', { at: b });
+      return true;
+    }
     const up = TIERS[b.tier].upgrade!;
     this.pay(up.cost, '住宅升级');
     b.tier = up.to;
@@ -648,7 +705,7 @@ export class Game {
         const m = this.reach.get(s.id);
         if (m) { if (!this.touchesMask(b, m)) continue; }
         else { const sc = this.center(s); if (Math.hypot(sc.x - c.x, sc.z - c.z) > this.radiusOf(s)) continue; }
-        if (d.service) b.cover.add(d.service);
+        if (d.service) { b.cover.add(d.service); SERVICE_ALSO[d.service]?.forEach(x => b.cover.add(x)); }
         if (d.heating) b.heaters.push(s);
       }
     });
@@ -699,7 +756,7 @@ export class Game {
     }
     return undefined;
   }
-  covered(b: Bld, svc: ServiceId) { return b.type === 'house' ? b.cover.has(svc) : !!this.within(b, (_s, d) => d.service === svc); }
+  covered(b: Bld, svc: ServiceId) { return b.type === 'house' ? b.cover.has(svc) : !!this.within(b, (_s, d) => !!d.service && (d.service === svc || !!SERVICE_ALSO[d.service]?.includes(svc))); }
   heatedBy(b: Bld) { return b.heaters.find(s => s.working && this.buildings.has(s.id)); }
 
   // ---------- simulation ----------
@@ -795,29 +852,32 @@ export class Game {
       // ---- production cycle (coal plants are a cycle with no output)
       const wf = this.prodFactor(b.type);
       if (wf === 0) {
-        b.status = (SEASONS[this.season].prod[b.type] === 0) ? `${SEASONS[this.season].name}季休耕` : `${W.name}，暂停作业`;
+        const sp = SEASONS[this.season].prod;
+        b.status = ((sp[b.type] ?? sp[familyOf(b.type)]) === 0) ? `${SEASONS[this.season].name}季休耕` : `${W.name}，暂停作业`;
         b.working = false; continue;
       }
       if (def.needs === 'forest') {
         const t = this.treesAround(b, def.radius!);
         b.env = t < 3 ? 0 : Math.min(1, t / this.mods.forestNeed);
         if (b.env === 0) { b.status = '附近树木太少'; b.working = false; continue; }
-      } else if (b.type === 'farm' || b.type === 'fishery' || b.type === 'sheepfarm') {
+      } else if (POLLUTION_HURTS.has(familyOf(b.type))) {
         const c = this.center(b), p = this.pollutionAt(c.x, c.z);
         b.env = 1 - Math.min(0.5, Math.max(0, (p - 20) / 80));
       } else b.env = 1;
       const out = def.output;
       if (out && this.storage[out] >= this.cap - 0.001) { b.status = '仓库已满'; b.working = false; continue; }
       if (!b.loaded) {
-        const lack = Object.entries(def.input ?? {}).find(([g, n]) => this.storage[g as GoodId] < (n as number));
-        if (lack) { b.status = `缺少${GOODS[lack[0] as GoodId].name}`; b.working = false; continue; }
-        for (const [g, n] of Object.entries(def.input ?? {})) { this.storage[g as GoodId] -= n as number; this.ledger.add(g, 'out', def.name, n as number); }
+        const input: Partial<Record<GoodId, number>> = { ...def.input };
+        if (def.winterFuel && this.heatingOn && !this.heatedSite(b)) input.coal = (input.coal ?? 0) + def.winterFuel;
+        const lack = Object.entries(input).find(([g, n]) => this.storage[g as GoodId] < (n as number));
+        if (lack) { b.status = lack[0] === 'coal' && def.winterFuel && !def.input?.coal ? '天冷了，缺煤保温' : `缺少${GOODS[lack[0] as GoodId].name}`; b.working = false; continue; }
+        for (const [g, n] of Object.entries(input)) { this.storage[g as GoodId] -= n as number; this.ledger.add(g, 'out', def.name, n as number); }
         b.loaded = true;
       }
       let pf = 1;
       if (def.power) { use += def.power * b.staff; pf = powerRatio; if (pf < 0.05) { b.status = '没有电'; b.working = false; continue; } }
       if (def.powerGen) { b.gen = def.powerGen * b.staff; gen += b.gen; }
-      const mult = (1 + (this.mods.prod[b.type] ?? 0) + (PROD_CATS.has(def.category) ? this.mods.prodAll : 0));
+      const mult = 1 + this.prodBonus(b.type) + this.boostAt(b);
       b.progress += (dt / def.cycle) * b.staff * b.env * wf * pf * mult;
       if (b.progress >= 1) {
         b.progress -= 1;

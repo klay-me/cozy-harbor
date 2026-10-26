@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import type { Game, Bld } from '../sim/game';
 import type { GoodId } from '../sim/data';
-import { BUILDINGS } from '../sim/data';
+import { BUILDINGS, familyOf } from '../sim/data';
 import { getModel } from './assets';
 import { worldMaterial } from './shared';
 import { outlineMat } from './toon';
@@ -258,7 +258,7 @@ export class People {
     const g = this.game;
     const seen = new Set<number>();
     for (const f of g.buildings.values()) {
-      if (f.type !== 'fishery') continue;
+      if (familyOf(f.type) !== 'fishery') continue;
       seen.add(f.id);
       let b = this.boats.get(f.id);
       if (!b) {

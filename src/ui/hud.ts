@@ -7,7 +7,7 @@ import {
 import type { AudioSettings } from '../audio/sound';
 import type { RotateMode } from '../render/camera';
 import { icon } from './icons';
-import { SEASON_IDS, SEASON_DAYS, DAY_LENGTH, HEAT_BELOW, PER_DAY, FOODS, FoodId, PROTECTS, ProtectId } from '../sim/data';
+import { SEASON_IDS, SEASON_DAYS, DAY_LENGTH, HEAT_BELOW, PER_DAY, FOODS, FoodId, PROTECTS, ProtectId, familyOf } from '../sim/data';
 import { supplies, needs as chainNeeds, chainSummary, outPerDay } from './chain';
 
 export type Tool = 'select' | 'demolish' | BuildingId;
@@ -295,7 +295,9 @@ export class Hud {
     this.itemsKey = key;
     $('#tabs', this.root).querySelectorAll('button').forEach((b, i) => b.setAttribute('aria-selected', String(i === this.tab)));
     // show what is unlocked plus a peek at the next era
+    // a line shows only its highest unlocked level (old ones upgrade in place from the info panel)
     const items = menuItems(BUILD_MENU[this.tab].cat).filter(t => BUILDINGS[t].era <= g.era + 1)
+      .filter(t => { const up = BUILDINGS[t].upgrade; return !up || !g.unlocked(up.to); })
       .sort((a, b) => Number(!g.unlocked(a)) - Number(!g.unlocked(b)) || BUILDINGS[a].era - BUILDINGS[b].era);
     $('#items', this.root).innerHTML = items.map(t => {
       const d = BUILDINGS[t];
@@ -642,7 +644,7 @@ export class Hud {
         ${d.powerGen ? '<div class="row"><span>发电</span><b data-f="gen"></b></div>' : ''}
         ${d.power ? `<div class="row"><span>用电</span><b data-f="pow"></b></div>` : ''}
         ${d.needs === 'forest' ? '<div class="row"><span>附近树木</span><b data-f="trees"></b></div>' : ''}
-        ${b.type === 'farm' || b.type === 'fishery' || b.type === 'sheepfarm' ? '<div class="row"><span>环境</span><b data-f="env"></b></div>' : ''}`;
+        ${['farm', 'fishery', 'sheepfarm'].includes(familyOf(b.type)) ? '<div class="row"><span>环境</span><b data-f="env"></b></div>' : ''}`;
     } else if (d.research_pts) {
       body = `<div class="row"><span>${TIERS[d.workers!.tier].name}</span><b data-f="staff"></b></div><div class="row"><span>研究</span><b data-f="rp"></b></div>
         <button class="ghost" data-a="research">打开研究面板</button>`;
@@ -657,6 +659,10 @@ export class Hud {
     }
     if (d.pollution) body += `<div class="row"><span>${d.pollution > 0 ? '污染' : '净化'}</span><b>${d.pollution > 0 ? '' : '-'}${Math.abs(d.pollution)}</b></div>`;
     if (d.protects) body += `<div class="row"><span>${PROTECTS[d.protects]}覆盖</span><b>沿道路走 ${g.roadRange(b.type)} 格，覆盖 <span data-f="pcov"></span> 座建筑</b></div><div class="row"><span>全城没有${PROTECTS[d.protects]}</span><b data-f="pgap"></b></div><p class="hint">和纪元一样，服务沿着道路走：门口的路连到哪，就能管到哪。地图上会同时显示所有同类建筑的范围：黄色是这一座，橙色是其他几座，红色是没覆盖到的。</p>`;
+    if (!isHouse && d.upgrade) {
+      const nx = BUILDINGS[d.upgrade.to];
+      body += `<button class="primary" data-a="upgrade">升级为${nx.name} <small>${costHtml(d.upgrade.cost)}</small></button><p class="hint" data-f="block"></p><p class="hint">${nx.desc}</p>`;
+    }
     if (b.type !== 'depot') body += `<div class="safety" data-f="safety"></div>`;
     box.innerHTML = `
       <header><h3>${title}</h3><button class="x" data-a="close" aria-label="关闭">×</button></header>
@@ -714,7 +720,7 @@ export class Hud {
     } else if (d.cycle || d.powerGen) {
       if (f('prog')) f('prog')!.style.width = `${Math.round(b.progress * 100)}%`;
       if (f('rate')) {
-        const mult = 1 + (g.mods.prod[b.type] ?? 0) + g.mods.prodAll;
+        const mult = 1 + g.prodBonus(b.type) + g.boostAt(b);
         const now = outPerDay(b.type) * b.staff * b.env * mult * g.prodFactor(b.type);
         f('rate')!.textContent = `${now.toFixed(1)}（满员 ${outPerDay(b.type).toFixed(0)}）`;
       }
@@ -729,6 +735,10 @@ export class Hud {
       g.buildings.forEach(h => { if (h.type === 'house' && (d.heating ? h.heaters.includes(b) : g.covered(h, d.service!))) n++; });
       f('cov')!.textContent = b.connected ? `${n} 座` : '没有连上道路，无法服务';
     } else if (f('cap')) f('cap')!.textContent = String(g.cap);
+    if (b.type !== 'house') {
+      const up = box.querySelector<HTMLButtonElement>('[data-a="upgrade"]');
+      if (up) { const block = g.upgradeBlock(b); up.disabled = !!block; f('block')!.textContent = block ?? '可以升级'; }
+    }
     if (f('pgap')) { let n = 0; g.buildings.forEach(o => { if (o.type !== 'depot' && !BUILDINGS[o.type].protects && !o.protect.has(d.protects!)) n++; }); f('pgap')!.textContent = n ? `${n} 座建筑` : '全部覆盖'; }
     if (f('gap') && d.service) { let n = 0; g.buildings.forEach(o => { if (o.type === 'house' && o.residents && TIERS[o.tier].services.includes(d.service!) && !o.cover.has(d.service!)) n++; }); f('gap')!.textContent = n ? `${n} 户` : '没有'; }
     if (f('pcov')) { let n = 0; g.buildings.forEach(o => { if (o !== b && o.protect.has(d.protects!)) n++; }); f('pcov')!.textContent = String(n); }
