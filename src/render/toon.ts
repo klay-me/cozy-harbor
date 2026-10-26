@@ -1,12 +1,19 @@
-// Toon shading building blocks: 3-step ramp, outline shell, and a merge helper
+// Toon shading building blocks: soft 3-tone ramp, outline shell, and a merge helper
 // that bakes colour + outline directions into one geometry per model.
 import * as THREE from 'three';
 
 export const OUTLINE_COLOR = '#3b3346';
 
+// shade / half-tone / light, with soft terminators instead of hard steps (anime-style cel shading)
 export const ramp = (() => {
-  const t = new THREE.DataTexture(new Uint8Array([105, 190, 255]), 3, 1, THREE.RedFormat);
-  t.minFilter = t.magFilter = THREE.NearestFilter;
+  const N = 64, d = new Uint8Array(N);
+  const ss = (a: number, b: number, x: number) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+  for (let i = 0; i < N; i++) {
+    const x = i / (N - 1);
+    d[i] = Math.round(255 * (0.5 + 0.28 * ss(0.3, 0.42, x) + 0.22 * ss(0.56, 0.7, x)));
+  }
+  const t = new THREE.DataTexture(d, N, 1, THREE.RedFormat);
+  t.minFilter = t.magFilter = THREE.LinearFilter;
   t.generateMipmaps = false;
   t.needsUpdate = true;
   return t;

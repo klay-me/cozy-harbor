@@ -6,6 +6,7 @@ import {
 } from '../sim/data';
 import type { AudioSettings } from '../audio/sound';
 import type { RotateMode } from '../render/camera';
+import type { Quality } from '../render/post';
 import { icon } from './icons';
 import { SEASON_IDS, SEASON_DAYS, DAY_LENGTH, HEAT_BELOW, PER_DAY, FOODS, FoodId, PROTECTS, ProtectId, familyOf, ELEC_BOOST, COLD_STORE, DIFFICULTY, DIFFICULTY_IDS, DifficultyId } from '../sim/data';
 import { supplies, needs as chainNeeds, chainSummary, outPerDay } from './chain';
@@ -24,6 +25,7 @@ export interface HudHooks {
   focus(b: Bld): void;
   audio(p: Partial<AudioSettings>): void;
   rotateMode(m: RotateMode): void;
+  quality(q: Quality): void;
   click(): void;
   research(t: TechId): void;
   trade(g: GoodId, n: number): void;
@@ -113,6 +115,8 @@ export class Hud {
           <select id="seasonLen"><option value="3">每季 3 天（一年 48 分钟）</option><option value="4">每季 4 天（一年 64 分钟）</option><option value="6">每季 6 天（一年 96 分钟）</option></select>
           <label for="difficulty">难度</label>
           <select id="difficulty">${DIFFICULTY_IDS.map(d => `<option value="${d}">${DIFFICULTY[d].name}${DIFFICULTY[d].desc ? `（${DIFFICULTY[d].desc}）` : ''}</option>`).join('')}</select>
+          <label for="quality">画质</label>
+          <select id="quality"><option value="high">高（环境光遮蔽、景深、夜间灯光）</option><option value="low">低（电脑卡时用）</option></select>
           <label for="rotMode">转动方式</label>
           <select id="rotMode"><option value="orbit">旋转地图（绕画面中心）</option><option value="look">转动视角（镜头原地转）</option></select>
         </div>
@@ -152,6 +156,7 @@ export class Hud {
     $<HTMLSelectElement>('#seasonLen', root).addEventListener('change', e => hooks.seasonDays(Number((e.target as HTMLSelectElement).value)));
     $<HTMLSelectElement>('#difficulty', root).addEventListener('change', e => hooks.difficulty((e.target as HTMLSelectElement).value as DifficultyId));
     $<HTMLSelectElement>('#rotMode', root).addEventListener('change', e => hooks.rotateMode((e.target as HTMLSelectElement).value as RotateMode));
+    $<HTMLSelectElement>('#quality', root).addEventListener('change', e => hooks.quality((e.target as HTMLSelectElement).value as Quality));
     $('#speed', root).addEventListener('click', e => {
       const b = (e.target as HTMLElement).closest('button');
       if (b) hooks.speed(Number(b.dataset.speed));
@@ -252,8 +257,9 @@ export class Hud {
   }
 
   private audio: AudioSettings = { music: 0.6, sfx: 0.7, amb: 0.7, muted: false };
-  setAudio(a: AudioSettings, mode: RotateMode) {
+  setAudio(a: AudioSettings, mode: RotateMode, quality: Quality = 'high') {
     this.audio = { ...a };
+    $<HTMLSelectElement>('#quality', this.root).value = quality;
     $<HTMLInputElement>('#volMusic', this.root).value = String(a.music);
     $<HTMLInputElement>('#volSfx', this.root).value = String(a.sfx);
     $<HTMLInputElement>('#volAmb', this.root).value = String(a.amb);

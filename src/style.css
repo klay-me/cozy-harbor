@@ -388,3 +388,4 @@ button.chip:hover { border-color: var(--ink); }
 .info footer .acts { display: flex; gap: 6px; }
 .info .ghost.small { padding: 6px 10px; border-style: solid; border-color: #e6d8bd; }
 .settings label[for=seasonLen] { grid-column: 1 / -1; margin-top: 2px; }
+.settings label[for=quality] { grid-column: 1 / -1; margin-top: 2px; }

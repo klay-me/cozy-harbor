@@ -94,7 +94,8 @@ export class Env {
     scene.add(this.hemi);
     this.sun = new THREE.DirectionalLight(0xfff2dc, 2.3);
     this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(2048, 2048);
+    this.sun.shadow.mapSize.set(4096, 4096);
+    this.sun.shadow.radius = 3;
     Object.assign(this.sun.shadow.camera, { left: -22, right: 22, top: 22, bottom: -22, near: 1, far: 140 });
     this.sun.shadow.bias = -0.0008;
     this.sun.shadow.normalBias = 0.03;
@@ -201,6 +202,10 @@ export class Env {
       dir = new THREE.Vector3(Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az));
     } else dir = new THREE.Vector3(0.45, 0.75, -0.48).normalize();
     this.sun.position.copy(target).addScaledVector(dir, 60);
+    // shadows cover what the camera sees, so zoomed-out towns still sit on their shadows
+    const sh = Math.max(22, camDist * 1.05);
+    const sc = this.sun.shadow.camera;
+    if (Math.abs(sc.right - sh) > 0.5) { sc.left = sc.bottom = -sh; sc.right = sc.top = sh; sc.updateProjectionMatrix(); }
     this.sun.target.position.copy(target);
     this.sun.color.copy(sunC);
     this.hemi.color.copy(hs); this.hemi.groundColor.copy(hg);

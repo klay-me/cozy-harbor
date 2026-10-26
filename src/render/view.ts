@@ -1,10 +1,8 @@
 // Scene orchestration: buildings, roads, trees, lamps, placement preview, picking and
 // floating text. Terrain/water, sky/weather/seasons and people live in their own modules.
 import * as THREE from 'three';
-import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
-import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
+import { Post } from './post';
+import { Night } from './night';
 import { Game, Bld } from '../sim/game';
 import { Tile } from '../sim/world';
 import { BUILDINGS, BuildingId, GOODS, TIERS, familyOf } from '../sim/data';
@@ -60,8 +58,8 @@ export class View {
   onMarkClick: (id: number) => void = () => {};
   private raycaster = new THREE.Raycaster();
   private ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-  private composer: EffectComposer;
-  private bloom: UnrealBloomPass;
+  post: Post;
+  private night?: Night;
   private time = 0;
   private landmarks?: Landmarks;
   half = 0;
@@ -72,7 +70,7 @@ export class View {
     this.renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
     this.renderer.setSize(innerWidth, innerHeight);
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     container.appendChild(this.renderer.domElement);
     this.floatLayer = floatLayer;
     this.rig = new CameraRig(innerWidth / innerHeight);
@@ -86,15 +84,10 @@ export class View {
       sh.fragmentShader = 'uniform float uSnow, uWet;\n' + sh.fragmentShader.replace('#include <color_fragment>',
         '#include <color_fragment>\n diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.93,0.95,0.98), uSnow * 0.55);\n diffuseColor.rgb *= 1.0 - uWet * 0.2;');
     };
-    // glow at night
-    this.composer = new EffectComposer(this.renderer);
-    this.composer.addPass(new RenderPass(this.scene, this.rig.camera));
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.4, 0.4, 0.9);
-    this.composer.addPass(this.bloom);
-    this.composer.addPass(new OutputPass());
+    // screen effects: ambient occlusion, glow, tilt-shift and colour grade
+    this.post = new Post(this.renderer, this.scene, this.rig.camera);
     addEventListener('resize', () => {
       this.renderer.setSize(innerWidth, innerHeight);
-      this.composer.setSize(innerWidth, innerHeight);
       this.rig.camera.aspect = innerWidth / innerHeight;
       this.rig.camera.updateProjectionMatrix();
     });
@@ -117,6 +110,8 @@ export class View {
     this.buildDeposits();
     this.landmarks = new Landmarks(game.world, this.terrain, this.half);
     this.add(this.landmarks.group);
+    this.night = new Night(game, this.terrain, this.half);
+    this.add(this.night.group);
     this.smoke = new Smoke(this.scene);
     this.pVersion = -1;
     this.buildRoads();
@@ -319,6 +314,18 @@ export class View {
     this.lamps.count = this.lampLine.count = nl;
     this.lamps.instanceMatrix.needsUpdate = true;
     this.bridges.forEach((m, i) => { m.count = (m.userData.line as THREE.InstancedMesh).count = nb[i]; m.instanceMatrix.needsUpdate = true; });
+  }
+
+  /** light pools under the street lamps and around houses (lit windows spill onto the street) */
+  private syncNight() {
+    if (!this.night) return;
+    const houses: { x: number; z: number; r: number }[] = [];
+    for (const b of this.game.buildings.values()) {
+      if (b.type !== 'house') continue;
+      const w = b.w, h = b.h;
+      houses.push({ x: b.x + w / 2 - this.half, z: b.z + h / 2 - this.half, r: Math.max(w, h) + 0.6 });
+    }
+    this.night.sync(this.lamps, houses);
   }
 
   private buildGhost() {
@@ -617,7 +624,7 @@ export class View {
     }
     if (g.bVersion !== this.bVersion) { this.syncBuildings(); this.bVersion = g.bVersion; this.tVersion = -1; }
     if (g.rVersion !== this.rVersion) { this.syncRoads(); this.rVersion = g.rVersion; this.tVersion = -1; }
-    if (g.tVersion !== this.tVersion) { this.syncTrees(); this.tVersion = g.tVersion; }
+    if (g.tVersion !== this.tVersion) { this.syncTrees(); this.syncNight(); this.tVersion = g.tVersion; }
     if (g.pVersion !== this.pVersion) { this.terrain.setPollution(g.pollution); this.colorTrees(); this.pVersion = g.pVersion; }
     for (const ev of g.events.splice(0)) {
       const b = g.buildings.get(ev.id);
@@ -668,10 +675,8 @@ export class View {
       f.el.style.opacity = String(Math.min(1, (1.4 - f.t) * 2.5));
       return true;
     });
-    const glow = ENV.uGlow.value;
-    if (glow > 0.05) {
-      this.bloom.strength = 0.15 + glow * 0.3;
-      this.composer.render();
-    } else this.renderer.render(this.scene, this.rig.camera);
+    const warm = { spring: 0.6, summer: 1, autumn: 0.35, winter: 0 }[g.season];
+    this.night?.update(dt, ENV.uGlow.value, this.env.night, this.rig.target, warm, mx.rain, this.post.quality === 'high');
+    this.post.render(dt, ENV.uGlow.value, this.env.night, this.rig.dist);
   }
 }

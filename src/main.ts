@@ -8,6 +8,7 @@ import { makeThumbs } from './render/thumbs';
 import { Sound } from './audio/sound';
 import { loadModels } from './render/assets';
 import type { RotateMode } from './render/camera';
+import type { Quality } from './render/post';
 
 const SAVE_KEY = 'cozy-harbor-save-v2';
 
@@ -50,6 +51,9 @@ async function boot() {
   let rotMode: RotateMode = 'orbit';
   try { if (localStorage.getItem('cozy-harbor-rotate2') === 'look') rotMode = 'look'; } catch { /* ignore */ }
   view.rig.mode = rotMode;
+  let quality: Quality = 'high';
+  try { if (localStorage.getItem('cozy-harbor-quality') === 'low') quality = 'low'; } catch { /* ignore */ }
+  view.post.setQuality(quality);
   view.onThunder = d => sound.thunder(d);
 
   const allTypes = (Object.keys(BUILDINGS) as BuildingId[]).filter(t => t !== 'road' && BUILDINGS[t].buildable !== false);
@@ -66,6 +70,7 @@ async function boot() {
     lookAt: (x, z) => { view.rig.jumpTo(x - view.half, z - view.half); view.ping(x, z); },
     audio: p => sound.set(p),
     rotateMode: m => { view.rig.mode = m; try { localStorage.setItem('cozy-harbor-rotate2', m); } catch { /* ignore */ } },
+    quality: q => { view.post.setQuality(q); try { localStorage.setItem('cozy-harbor-quality', q); } catch { /* ignore */ } },
     click: () => sound.play('click'),
     sound: n => sound.play(n),
     research: t => { if (game.research.current === t) return; game.setResearch(t); },
@@ -78,7 +83,7 @@ async function boot() {
     turn: b => { if (game.turn(b)) hud.select(b); },
     seasonDays: n => { game.setSeasonDays(n); game.notify(`季节长度改为每季 ${n} 天`, 'info'); },
   }, makeThumbs(allTypes));
-  hud.setAudio(sound.settings, rotMode);
+  hud.setAudio(sound.settings, rotMode, quality);
 
   let game: Game;
   let tool: Tool = 'select';

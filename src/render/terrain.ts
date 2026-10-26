@@ -266,7 +266,7 @@ float tfbm(vec2 p){ return tn(p) * 0.6 + tn(p * 2.3 + 7.1) * 0.3 + tn(p * 5.1 + 
   grass = mix(grass, mix(uGrass, vec3(1.0, 0.98, 0.7), 0.35), step(0.965, th(cell + 17.0)) * step(length(fract(vWP.xz * 7.0) - 0.5), 0.16));
   vec3 sand = vec3(0.96, 0.87, 0.64) * (1.0 - 0.04 * step(0.8, sin(vWP.x * 3.0 + tn(vWP.xz * 1.5) * 4.0)));
   vec3 wetSand = vec3(0.86, 0.76, 0.55);
-  vec3 under = vec3(0.70, 0.80, 0.68);
+  vec3 under = vec3(0.88, 0.84, 0.66);
   // mountains: layered rock on the steep faces (warm sandstone low down, grey granite higher up),
   // moss and alpine grass on ledges and flat tops, snow on the high crests
   float ny = normalize(vWN).y;
@@ -381,7 +381,7 @@ float tfbm(vec2 p){ return tn(p) * 0.6 + tn(p * 2.3 + 7.1) * 0.3 + tn(p * 5.1 + 
     tex.needsUpdate = true;
     const uniforms = THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
       uDist: { value: null }, uTime: { value: 0 }, uSpan: { value: N / DF }, uOff: { value: DF_MARGIN + this.half },
-      uDeep: { value: new THREE.Color('#2F8FCB') }, uShallow: { value: new THREE.Color('#6FD3EA') }, uFoam: { value: new THREE.Color('#ffffff') },
+      uDeep: { value: new THREE.Color('#2C86C2') }, uMid: { value: new THREE.Color('#3DBFD6') }, uShallow: { value: new THREE.Color('#9BE6DE') }, uFoam: { value: new THREE.Color('#ffffff') },
       uRain: { value: 0 }, uSun: { value: 1 }, uNight: { value: 0 }, uIce: { value: 0 },
     }]);
     uniforms.uDist.value = tex;
@@ -393,40 +393,69 @@ float tfbm(vec2 p){ return tn(p) * 0.6 + tn(p * 2.3 + 7.1) * 0.3 + tn(p * 5.1 + 
 void main(){ vec4 wp = modelMatrix * vec4(position, 1.0); vXZ = wp.xz; vec4 mvPosition = viewMatrix * wp; gl_Position = projectionMatrix * mvPosition;
 #include <fog_vertex>
 }`,
-      fragmentShader: `uniform sampler2D uDist; uniform float uTime, uSpan, uOff, uRain, uSun, uNight, uIce; uniform vec3 uDeep, uShallow, uFoam; varying vec2 vXZ;
+      fragmentShader: `uniform sampler2D uDist; uniform float uTime, uSpan, uOff, uRain, uSun, uNight, uIce; uniform vec3 uDeep, uMid, uShallow, uFoam; varying vec2 vXZ;
 #include <common>
 #include <fog_pars_fragment>
 float hash(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
 float vnoise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
   return mix(mix(hash(i), hash(i+vec2(1,0)), f.x), mix(hash(i+vec2(0,1)), hash(i+vec2(1,1)), f.x), f.y); }
+// animated cellular pattern: bright where two cells meet, like light focused by ripples on a sandy floor
+float caustic(vec2 p, float t){
+  vec2 i = floor(p), f = fract(p);
+  float d1 = 8.0, d2 = 8.0;
+  for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
+    vec2 g = vec2(float(x), float(y));
+    vec2 o = vec2(hash(i + g), hash(i + g + 19.7));
+    o = 0.5 + 0.42 * sin(t * (0.6 + o * 0.5) + 6.2831 * o);
+    float d = length(g + o - f);
+    if (d < d1) { d2 = d1; d1 = d; } else if (d < d2) d2 = d;
+  }
+  return 1.0 - smoothstep(0.0, 0.16, d2 - d1);
+}
 void main(){
   vec2 uv = (vXZ + uOff) / uSpan;
   float d = texture2D(uDist, uv).r * 6.0;
   if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) d = 6.0;
   float n = vnoise(vXZ * 0.8 + vec2(uTime * 0.05, uTime * 0.03));
-  vec3 c = mix(uShallow, uDeep, smoothstep(0.1, 3.2, d + (n - 0.5) * 0.6));
+  float dn = d + (n - 0.5) * 0.5;
+  // three bands of colour: clear lagoon over the sand, turquoise, then deep blue
+  vec3 c = mix(uShallow, uMid, smoothstep(0.15, 1.6, dn));
+  c = mix(c, uDeep, smoothstep(1.4, 4.2, dn));
+  // a darker drop-off line where the sand shelf ends
+  c *= 1.0 - 0.08 * smoothstep(1.0, 1.5, dn) * (1.0 - smoothstep(1.5, 2.6, dn));
   // soft light streaks drifting across the surface
   float streak = smoothstep(0.62, 0.72, vnoise(vec2(vXZ.x * 0.35 + uTime * 0.08, vXZ.y * 1.4)));
-  c = mix(c, c * 1.12 + 0.03, streak * 0.5 * smoothstep(0.5, 2.0, d));
-  // waves rolling toward the shore
-  float wave = sin(d * 5.5 - uTime * 1.7 + n * 4.0);
-  float waveBand = smoothstep(0.82, 0.95, wave) * (1.0 - smoothstep(0.4, 1.6, d)) * smoothstep(0.08, 0.25, d);
-  // foam right at the shoreline
-  float edge = 1.0 - smoothstep(0.06, 0.16 + 0.05 * sin(uTime * 1.3 + n * 6.0), d);
-  // sun glints
+  c = mix(c, c * 1.1 + 0.03, streak * 0.45 * smoothstep(0.5, 2.0, d));
+  // caustics in the shallows
+  float shallow = 1.0 - smoothstep(0.3, 2.2, d);
+  float ca = caustic(vXZ * 1.1, uTime * 0.9) * 0.6 + caustic(vXZ * 1.9 + 3.1, -uTime * 1.1) * 0.4;
+  c += vec3(0.9, 1.0, 0.95) * ca * shallow * 0.15 * (0.35 + 0.65 * uSun) * (1.0 - uIce);
+  // waves rolling in: two broken foam lines that run up the beach and fall back
+  float run = 0.5 + 0.5 * sin(uTime * 0.7 + n * 3.0);
+  float line1 = abs(d - (0.28 + 0.22 * run));
+  float line2 = abs(d - mod(0.9 - uTime * 0.18 + n * 0.4, 1.3) - 0.35);
+  float brk = smoothstep(0.35, 0.65, vnoise(vXZ * 3.0 + vec2(uTime * 0.2, 0.0)));
+  float foamLine = (1.0 - smoothstep(0.025, 0.055, line1)) * (0.6 + 0.4 * brk);
+  foamLine = max(foamLine, (1.0 - smoothstep(0.015, 0.05, line2)) * brk * 0.6 * (1.0 - smoothstep(0.6, 1.6, d)));
+  // wet glossy band and foam right at the shoreline
+  float edge = 1.0 - smoothstep(0.05, 0.13 + 0.05 * sin(uTime * 1.3 + n * 6.0), d);
+  float lace = (1.0 - smoothstep(0.1, 0.3, d)) * step(0.55, vnoise(vXZ * 6.0 + uTime * 0.3)) * 0.5;
+  // sun glints on open water
   float glint = step(0.93, vnoise(vXZ * 3.2 + vec2(uTime * 0.6, -uTime * 0.4))) * step(0.93, vnoise(vXZ * 2.1 - vec2(uTime * 0.3, uTime * 0.5)));
   // rain rings
   vec2 cell = floor(vXZ * 2.5);
   float h = hash(cell);
   float ring = fract(uTime * 0.9 + h);
   float rd = length(fract(vXZ * 2.5) - 0.5);
-  float drop = step(abs(rd - ring * 0.45), 0.035) * (1.0 - ring) * step(h, max(uRain - 0.1, 0.0) * 0.8);
+  float drop = step(abs(rd - ring * 0.45), 0.035) * (1.0 - ring) * step(h, max(uRain - 0.25, 0.0) * 0.8);
   c *= 1.0 - uRain * 0.15;
-  c = mix(c, uFoam, max(edge * 0.95, max(waveBand * 0.7, max(drop * 0.7, glint * uSun * 0.9))));
+  float foam = max(edge * 0.95, max(foamLine, max(lace, max(drop * 0.7, glint * uSun * 0.8 * smoothstep(1.0, 2.5, d)))));
+  c = mix(c, uFoam, foam);
   c = mix(c, vec3(0.86, 0.92, 0.96), uIce * 0.35);
   c = mix(c, c * vec3(0.22, 0.3, 0.55), uNight * 0.85);
-  float alpha = mix(0.62, 0.96, smoothstep(0.05, 1.2, d));
-  gl_FragColor = vec4(c, max(alpha, edge));
+  // see-through over the sand, opaque out at sea
+  float alpha = mix(0.4, 0.95, smoothstep(0.05, 2.4, d));
+  gl_FragColor = vec4(c, max(alpha, foam));
   #include <colorspace_fragment>
   #include <fog_fragment>
 }`,
