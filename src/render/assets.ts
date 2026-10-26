@@ -11,15 +11,15 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 export interface ModelGeo { body: THREE.BufferGeometry; line: THREE.BufferGeometry }
-export type AnimKind = 'spinZ' | 'spinX' | 'spinY' | 'swingX' | 'swingZ' | 'flag' | 'bob';
+export type AnimKind = 'spinZ' | 'spinX' | 'spinY' | 'swingX' | 'swingZ' | 'flag' | 'bob' | 'drive';
 /** name: what the part is (crane, axe, bell …); the view picks its rhythm from it */
 export interface AnimPart { geo: ModelGeo; at: [number, number, number]; kind: AnimKind; name: string }
 /** smoke: chimney tops (model space) where the game puffs smoke while the building works */
 export interface Model extends ModelGeo { anims: AnimPart[]; height: number; smoke: [number, number, number][] }
 
 const models = new Map<string, Model>();
-const ANIM_RE = /^(spinz|spinx|spiny|swingx|swingz|flag|bob)_/;
-const KINDS: Record<string, AnimKind> = { spinz: 'spinZ', spinx: 'spinX', spiny: 'spinY', swingx: 'swingX', swingz: 'swingZ', flag: 'flag', bob: 'bob' };
+const ANIM_RE = /^(spinz|spinx|spiny|swingx|swingz|flag|bob|drive)_/;
+const KINDS: Record<string, AnimKind> = { spinz: 'spinZ', spinx: 'spinX', spiny: 'spinY', swingx: 'swingX', swingz: 'swingZ', flag: 'flag', bob: 'bob', drive: 'drive' };
 
 export function getModel(name: string): Model {
   const m = models.get(name);

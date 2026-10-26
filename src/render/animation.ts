@@ -37,6 +37,10 @@ export function animatePart(p: AnimatedPart, context: AnimationContext) {
         const f = p.t % 1;
         a = (p.name === 'hammer' ? -1 : 1) * (f < 0.75 ? Math.sin(f / 0.75 * Math.PI * 0.5) : 1 - (f - 0.75) / 0.25) * (p.name === 'hammer' ? 1.0 : 1.3);
         if (!work) a = 0;
+      } else if (p.name === 'skylight') {
+        // greenhouse roof vents creep open while it works and close when it stops
+        p.amp += ((work ? 1 : 0) - p.amp) * Math.min(1, Math.max(gdt, 0) * 0.3);
+        a = -0.4 * p.amp;
       } else if (p.name === 'bell' || p.name === 'firebell') {
         const on = p.name === 'bell' ? bellOn : fireOn;
         p.amp += ((on ? 0.7 : 0) - p.amp) * Math.min(1, gdt * 1.5);
@@ -55,6 +59,15 @@ export function animatePart(p: AnimatedPart, context: AnimationContext) {
       o.rotation.y = 0.25 * Math.sin(p.t * 2.1) * Math.min(1.5, wind) + 0.12 * Math.sin(p.t * 5.3);
       o.rotation.x = 0.06 * Math.sin(p.t * 3.1);
       return;
+    case 'drive': {
+      // a vehicle driving up and down its row, turning round at each end; it stops where it is when idle
+      o.userData.baseX ??= o.position.x;
+      if (work) p.t += gdt * 0.22;
+      o.position.x = o.userData.baseX + 1.3 * Math.sin(p.t);
+      const want = Math.cos(p.t) >= 0 ? 0 : Math.PI;
+      o.rotation.y += (want - o.rotation.y) * Math.min(1, Math.max(gdt, 0) * 2.5);
+      return;
+    }
     case 'bob':
       o.position.y = o.userData.base + Math.sin(time * 1.8 + id) * 0.03;
       o.rotation.z = Math.sin(time * 1.3 + id) * 0.06;

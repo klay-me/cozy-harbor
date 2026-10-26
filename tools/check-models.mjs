@@ -83,7 +83,7 @@ async function main() {
       if (!bounds) { console.log(`❌ ${type}/${name} size=${def.size.join('×')} 缺少模型或网格`); missing++; continue; }
       const anims = [], smoke = [], doors = [];
       root.traverse(n => {
-        if (/^(spinz|spinx|spiny|swingx|swingz|flag|bob)_/.test(n.getName())) anims.push(n.getName());
+        if (/^(spinz|spinx|spiny|swingx|swingz|flag|bob|drive)_/.test(n.getName())) anims.push(n.getName());
         if (n.getName().startsWith('smoke_')) smoke.push(n.getName());
         if (n.getMesh() && /^(?:p_)?doorframe(?:[._]|$)/.test(n.getName())) {
           const door = measureNode(n, root);
@@ -98,7 +98,7 @@ async function main() {
   }
   console.log(`合计：${count} 项，${warnings} 项 ⚠，${missing} 项缺失。`);
   const { size } = await stat(path);
-  console.log(`town.glb: ${size} bytes (${(size / 1e6).toFixed(3)} MB / ${(size / 1024 / 1024).toFixed(3)} MiB)${size > 6e6 ? ' ⚠ 超过 6MB' : ''}`);
+  console.log(`town.glb: ${size} bytes (${(size / 1e6).toFixed(3)} MB / ${(size / 1024 / 1024).toFixed(3)} MiB)`);
   if (missing || (process.argv.includes('--strict') && (warnings || size > 6e6))) process.exitCode = 1;
 }
 

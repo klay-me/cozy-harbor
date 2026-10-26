@@ -1424,9 +1424,14 @@ export class Game {
       if (s.weather && s.weather in WEATHER) { g.weather.cur = g.weather.prev = s.weather; }
       GOOD_IDS.forEach(k => { g.storage[k] = s.storage[k] ?? 0; });
       for (const i of s.roads) { g.occ[i] = -1; g.world.trees[i] = 0; }
-      for (const [type, x, z, tier, res, prog, paused, rot] of s.b) {
+      // buildings that grew since the save (each upgrade line now has one footprint) may not fit where they
+      // stood: place everything else first, then try them again shifted by a tile
+      const grown: typeof s.b = [];
+      for (const [pass, list] of [[0, s.b], [1, grown]] as const) for (const [type, x0, z0, tier, res, prog, paused, rot] of list) {
         if (!(type in BUILDINGS)) continue;
-        if (!g.canFit(type, x, z, rot ?? 0)) continue;
+        const spot = (pass ? [[-1, 0], [0, -1], [-1, -1], [1, 0], [0, 1]] : [[0, 0]]).find(([dx, dz]) => g.canFit(type, x0 + dx, z0 + dz, rot ?? 0));
+        if (!spot) { if (!pass) grown.push([type, x0, z0, tier, res, prog, paused, rot]); continue; }
+        const x = x0 + spot[0], z = z0 + spot[1];
         // saves before free facing only stored the turn (0/1); pick the side facing the road like they used to
         const b = g.addBuilding(type, x, z, s.rf ? rot ?? 0 : g.bestRot(type, x, z, rot ?? 0));
         b.tier = tier; b.residents = res; b.progress = prog; b.paused = !!paused;

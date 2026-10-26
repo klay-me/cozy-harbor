@@ -581,24 +581,6 @@ def school():
     box(p, (0.03, 0.03, 0.75), (0.75, -0.65, 0.5), P['white'], bevel=0, name='flagpole')
     box(p, (0.02, 0.22, 0.14), (0.75, -0.54, 0.8), '#F2766B', bevel=0.004, name='flag')
 
-def clinic():
-    p = root('clinic')
-    box(p, (1.75, 1.6, 0.12), (0, 0, 0.06), '#E2DDD3', bevel=0.03, name='base')
-    box(p, (1.4, 1.0, 0.95), (0, 0.25, 0.6), '#FFFFFF', bevel=0.03, name='walls')
-    flat_roof(p, 1.44, 1.04, 1.075, '#D6E2E8', y0=0.25, parapet='#EDF2F5')
-    box(p, (1.42, 1.02, 0.1), (0, 0.25, 0.45), '#8FD1C4', bevel=0.01, name='stripe')
-    door(p, 0, -0.25, 0.12, w=0.36, h=0.44, col=P['glass'], arch=False)
-    box(p, (0.62, 0.3, 0.04), (0, -0.4, 0.62), '#8FD1C4', bevel=0.01, name='canopy')
-    window_row(p, (-0.5, 0.5), -0.25, 0.32, w=0.24, h=0.22)
-    window_row(p, (-0.5, -0.17, 0.17, 0.5), -0.25, 0.82, w=0.22, h=0.24)
-    # red cross sign
-    box(p, (0.34, 0.06, 0.34), (0, -0.27, 1.25), P['white'], bevel=0.02, name='signbox')
-    box(p, (0.24, 0.07, 0.07), (0, -0.29, 1.25), P['red'], kind='G', bevel=0.005, name='cross')
-    box(p, (0.07, 0.07, 0.24), (0, -0.29, 1.25), P['red'], kind='G', bevel=0.005, name='cross')
-    flowers(p, -0.65, -0.55, 0.1)
-    flowers(p, 0.65, -0.55, 0.1, [P['white'], P['pink']])
-    box(p, (0.04, 0.4, 0.2), (0.75, 0.2, 0.15), '#B9C2CF', rot=(0, 0, 0), bevel=0.006, name='bikerack')
-
 def townhall():
     p = root('townhall')
     box(p, (2.75, 2.75, 0.14), (0, 0, 0.07), '#E2D9C8', bevel=0.03, name='plaza')
@@ -757,30 +739,6 @@ def recycler():
     for i in range(2):
         box(p, (0.24, 0.24, 0.2), (-0.65 + i * 0.27, -0.6, 0.22), '#B9C2CF', bevel=0.02, name='bale')
 
-def hospital():
-    p = root('hospital')
-    box(p, (2.75, 2.75, 0.12), (0, 0, 0.06), '#E2DDD3', bevel=0.03, name='grounds')
-    box(p, (2.2, 1.0, 1.7), (0, 0.6, 0.97), '#FFFFFF', bevel=0.03, name='block')
-    box(p, (1.0, 1.0, 1.0), (-0.6, -0.3, 0.62), '#FFFFFF', bevel=0.03, name='wing')
-    flat_roof(p, 2.24, 1.04, 1.82, '#D6E2E8', y0=0.6, parapet='#EDF2F5')
-    flat_roof(p, 1.04, 1.04, 1.12, '#D6E2E8', x0=-0.6, y0=-0.3)
-    for z in (0.55, 0.95, 1.35):
-        window_row(p, (0.1, 0.4, 0.7, 1.0), 0.09, z, w=0.2, h=0.24)
-    for z in (0.45, 0.85):
-        window_row(p, (-0.85, -0.35), -0.81, z, w=0.22, h=0.24)
-    door(p, 0.45, 0.09, 0.12, w=0.4, h=0.42, col=P['glass'], arch=False)
-    box(p, (0.7, 0.4, 0.05), (0.45, -0.1, 0.6), '#8FD1C4', bevel=0.01, name='canopy')
-    box(p, (0.4, 0.07, 0.4), (-0.1, 0.08, 1.6), P['white'], bevel=0.02, name='signbox')
-    box(p, (0.28, 0.08, 0.08), (-0.1, 0.06, 1.6), P['red'], kind='G', bevel=0.005, name='cross')
-    box(p, (0.08, 0.08, 0.28), (-0.1, 0.06, 1.6), P['red'], kind='G', bevel=0.005, name='cross')
-    # helipad
-    cyl(p, 0.35, 0.35, 0.03, (0.6, 0.6, 1.88), '#7E8A9A', seg=18, bevel=0, name='helipad')
-    box(p, (0.05, 0.25, 0.01), (0.5, 0.6, 1.9), P['white'], bevel=0, name='h')
-    box(p, (0.05, 0.25, 0.01), (0.7, 0.6, 1.9), P['white'], bevel=0, name='h')
-    box(p, (0.2, 0.05, 0.01), (0.6, 0.6, 1.9), P['white'], bevel=0, name='h')
-    for x, y in ((1.05, -0.8), (0.4, -0.95)):
-        tree_small(p, x, y, 1.0)
-
 def theatre():
     p = root('theatre')
     box(p, (2.75, 2.75, 0.12), (0, 0, 0.06), '#E9E1D2', bevel=0.03, name='plaza')
@@ -861,59 +819,6 @@ def bridge_plain():
     bridge_deck(root('bridge_plain'), False)
 
 # ---------------------------------------------------------------- survival buildings
-def garden():
-    p = root('garden')
-    box(p, (2.8, 2.8, 0.06), (0, 0, 0.03), '#B98A5A', bevel=0.02, name='soil')
-    for x0, y0, x1, y1 in ((-1.35, -1.35, 1.35, -1.35), (1.35, -1.35, 1.35, 1.35), (1.35, 1.35, -1.35, 1.35)):
-        fence(p, x0, y0, x1, y1, P['wood'], n=12)
-    crops = [('#8FD16A', 'cab'), ('#F2766B', 'tom'), ('#F2A541', 'car'), ('#6DB36A', 'let')]
-    for r in range(4):
-        y = -1.0 + r * 0.6
-        box(p, (2.3, 0.36, 0.08), (-0.1, y, 0.08), '#9B6B44', bevel=0.02, name='bed')
-        col, kind = crops[r]
-        for i in range(7):
-            x = -1.1 + i * 0.33
-            if kind == 'tom':
-                cyl(p, 0.012, 0.012, 0.36, (x, y, 0.26), P['wood2'], seg=4, name='stake')
-                ball(p, 0.08, (x, y, 0.22), P['leaf'], kind='L', name='vine')
-                ball(p, 0.04, (x + 0.04, y - 0.05, 0.24), col, name='tomato')
-            elif kind == 'car':
-                ball(p, 0.06, (x, y, 0.15), '#6DB36A', scale=(0.6, 0.6, 1.4), kind='L', name='tops')
-                ball(p, 0.035, (x, y - 0.05, 0.12), col, name='carrot')
-            else:
-                ball(p, 0.09, (x, y, 0.16), col, scale=(1, 1, 0.75), name='cabbage')
-    # scarecrow and tool shed
-    cyl(p, 0.02, 0.02, 0.7, (1.0, 0.95, 0.35), P['beam'], seg=5, name='scarepole')
-    box(p, (0.4, 0.03, 0.03), (1.0, 0.95, 0.5), P['beam'], bevel=0, name='scarearm')
-    ball(p, 0.08, (1.0, 0.95, 0.72), P['straw'], name='scarehead')
-    cyl(p, 0.13, 0.0, 0.1, (1.0, 0.95, 0.82), P['thatch2'], seg=8, name='hat')
-    box(p, (0.16, 0.08, 0.2), (1.0, 0.95, 0.45), '#E8665A', bevel=0.01, name='shirt')
-    box(p, (0.5, 0.4, 0.42), (-1.05, 1.05, 0.25), P['wood'], bevel=0.02, name='shed')
-    roof(p, 0.56, 0.46, 0.2, 0.46, P['green'], thick=0.05, oh=0.05, x0=-1.05, y0=1.05)
-    cyl(p, 0.1, 0.08, 0.16, (0.6, -1.25, 0.1), '#D9B27A', seg=10, name='basket')
-    for i in range(3):
-        ball(p, 0.05, (0.57 + i * 0.03, -1.25, 0.2), crops[i][0], name='harvest')
-
-def herbalist():
-    p = root('herbalist')
-    box(p, (1.7, 1.6, 0.12), (0, 0, 0.06), P['stone'], bevel=0.03, name='base')
-    box(p, (1.2, 0.95, 0.68), (-0.1, 0.2, 0.46), '#F3E9D2', bevel=0.03)
-    gable_fill(p, 1.2, 0.95, 0.48, 0.8, '#F3E9D2', x0=-0.1, y0=0.2)
-    roof(p, 1.2, 0.95, 0.5, 0.8, '#5E9C6A', thick=0.08, oh=0.13, x0=-0.1, y0=0.2, ridge=P['beam'])
-    door(p, -0.35, -0.28, 0.12, w=0.26, h=0.42, col='#5E9C6A')
-    window(p, 0.15, -0.28, 0.5, w=0.24, h=0.24, shutters='#5E9C6A', box_col=P['purple'])
-    # hanging herb bundles under the eave and a mortar sign
-    for i in range(4):
-        cyl(p, 0.004, 0.004, 0.14, (-0.5 + i * 0.22, -0.4, 0.86), P['dark'], seg=3, bevel=0, name='string')
-        ball(p, 0.05, (-0.5 + i * 0.22, -0.4, 0.76), ['#8FD16A', '#C7A6F2', '#F2CF5B', '#6DB36A'][i], scale=(0.8, 0.8, 1.4), name='herbs')
-    box(p, (0.03, 0.26, 0.22), (0.56, -0.25, 0.95), P['white'], bevel=0.01, name='signboard')
-    cyl(p, 0.06, 0.04, 0.08, (0.545, -0.25, 0.92), '#5E9C6A', seg=10, name='mortar')
-    # herb garden
-    for i, col in enumerate((P['purple'], '#8FD16A', P['yellow'], '#C7A6F2')):
-        ball(p, 0.1, (0.5 + (i % 2) * 0.25, -0.5 - (i // 2) * 0.22, 0.14), P['leaf'], scale=(1, 1, 0.7), kind='L', name='herbbush')
-        ball(p, 0.035, (0.5 + (i % 2) * 0.25, -0.5 - (i // 2) * 0.22, 0.22), col, name='bloom')
-    box(p, (0.6, 0.5, 0.05), (0.62, -0.6, 0.09), '#9B6B44', bevel=0.01, name='herbbed')
-
 def firestation():
     p = root('firestation')
     box(p, (1.75, 1.65, 0.12), (0, 0, 0.06), P['stone2'], bevel=0.03, name='base')

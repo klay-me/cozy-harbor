@@ -441,79 +441,6 @@ def sawmill():
         box(s, (0.05, 0.026, 0.05), (math.cos(a) * 0.25, 0, math.sin(a) * 0.25), P['metal'], rot=(0, -a + math.pi / 4, 0), bevel=0, name='tooth')
     cyl(s, 0.05, 0.05, 0.05, (0, 0, 0), P['dark'], seg=10, rot=(math.pi / 2, 0, 0), name='hub')
 
-def fishery():
-    p = root('fishery')
-    box(p, (1.4, 1.1, 0.12), (-0.15, 0.25, 0.06), P['stone'], bevel=0.03, name='base')
-    box(p, (0.95, 0.8, 0.62), (-0.3, 0.32, 0.43), '#D6EEF8', bevel=0.03)
-    for x in (-0.775, 0.175):
-        box(p, (0.06, 0.84, 0.63), (x, 0.32, 0.43), P['white'], bevel=0.01, name='trim')
-    gable_fill(p, 0.95, 0.8, 0.42, 0.74, '#D6EEF8', y0=0.32, x0=-0.3)
-    roof(p, 0.95, 0.8, 0.44, 0.74, '#EF7F63', thick=0.08, oh=0.13, x0=-0.3, y0=0.32, ridge=P['white'])
-    door(p, -0.45, -0.09, 0.12, w=0.24, h=0.4, col=P['blue'])
-    window(p, -0.08, -0.09, 0.5, w=0.2, h=0.2)
-    torus(p, 0.1, 0.03, (-0.3, -0.1, 0.92), P['red'], rot=(math.pi / 2, 0, 0), name='lifebuoy')
-    # dock reaching out over the water (front)
-    box(p, (0.5, 1.5, 0.07), (0.5, -0.5, 0.16), P['wood'], bevel=0.012, name='dock')
-    for i in range(8):
-        box(p, (0.52, 0.015, 0.075), (0.5, 0.18 - i * 0.18, 0.163), P['wood2'], bevel=0, name='plank')
-    for x in (0.28, 0.72):
-        for y in (-0.35, -1.15):
-            cyl(p, 0.045, 0.045, 0.6, (x, y, -0.08), P['beam'], seg=8, name='piling')
-    # drying rack with fish
-    for x in (-0.75, -0.05):
-        box(p, (0.04, 0.04, 0.55), (x, -0.4, 0.3), P['beam'], bevel=0.006, name='rackpost')
-    box(p, (0.78, 0.03, 0.03), (-0.4, -0.4, 0.56), P['beam'], bevel=0.004)
-    for i, x in enumerate((-0.66, -0.52, -0.38, -0.24, -0.1)):
-        ball(p, 0.05, (x, -0.4, 0.45), ['#F5A35C', '#9CC7E6', '#F5A35C', '#B9D9EF', '#F5A35C'][i], scale=(0.55, 0.35, 1.6), name='fish')
-    barrel(p, 0.0, 0.6, 0.12, 0.1, 0.26)
-    barrel(p, 0.22, 0.65, 0.12, 0.1, 0.26)
-    # a little rowboat tied to the dock
-    b = root('bob_boat')
-    b.parent = p
-    b.location = (0.95, -0.95, -0.05)
-    hull = [(-0.35, 0.08), (0.35, 0.08), (0.28, -0.04), (-0.28, -0.04)]
-    poly_prism(b, [(y, z) for y, z in hull], 0.26, (0, 0, 0.0), P['red'], rot=(0, 0, math.pi / 2), name='hull')
-    box(b, (0.22, 0.6, 0.03), (0, 0, 0.07), P['wood'], bevel=0.006, name='floor')
-    box(b, (0.24, 0.06, 0.04), (0, 0.05, 0.1), P['wood2'], bevel=0.006, name='seat')
-
-def farm():
-    p = root('farm')
-    # barn
-    box(p, (0.95, 0.8, 0.66), (-0.95, 0.9, 0.36), '#E2725B', bevel=0.025)
-    for x in (-1.42, -0.48):
-        box(p, (0.05, 0.84, 0.66), (x, 0.9, 0.36), P['white'], bevel=0.008)
-    gable_fill(p, 0.95, 0.8, 0.42, 0.69, '#E2725B', y0=0.9, x0=-0.95)
-    roof(p, 0.95, 0.8, 0.45, 0.69, '#8C7A6B', thick=0.07, oh=0.11, x0=-0.95, y0=0.9, ridge=P['dark'])
-    box(p, (0.36, 0.04, 0.44), (-0.95, 0.49, 0.25), P['white'], bevel=0.008)
-    box(p, (0.3, 0.05, 0.38), (-0.95, 0.485, 0.24), '#C9583F', bevel=0.006)
-    # silo
-    cyl(p, 0.26, 0.26, 1.05, (-0.25, 1.05, 0.55), '#E8E2D6', seg=16, name='silo')
-    ball(p, 0.26, (-0.25, 1.05, 1.07), '#6FA8DC', scale=(1, 1, 0.8), name='dome')
-    for z in (0.3, 0.7):
-        cyl(p, 0.27, 0.27, 0.03, (-0.25, 1.05, z), P['stone2'], seg=16, bevel=0, name='band')
-    # wheat field with tufts in rows
-    box(p, (2.7, 1.6, 0.08), (0.1, -0.55, 0.04), P['soil'], bevel=0.02, name='field')
-    for r in range(5):
-        y = -1.2 + r * 0.32
-        box(p, (2.55, 0.06, 0.02), (0.1, y + 0.16, 0.085), '#93663E', bevel=0, name='furrow')
-        for i in range(11):
-            x = -1.08 + i * 0.235 + (0.05 if r % 2 else 0)
-            h = 0.26 + random.random() * 0.06
-            cyl(p, 0.075, 0.0, h, (x, y, 0.08 + h / 2), P['wheat'] if (i + r) % 3 else '#E5B53E', seg=6, name='wheat', smooth=False)
-    # vegetable patch
-    box(p, (0.95, 0.8, 0.07), (0.85, 0.9, 0.035), P['soil'], bevel=0.015, name='patch')
-    for i in range(3):
-        for j in range(3):
-            ball(p, 0.08, (0.6 + i * 0.25, 0.68 + j * 0.22, 0.12), P['sprout'], scale=(1, 1, 0.7), seg=10, rings=7, kind='L', name='cabbage')
-    # hay bales and scarecrow
-    cyl(p, 0.14, 0.14, 0.22, (1.25, 0.25, 0.14), P['hay'], seg=14, rot=(math.pi / 2, 0, 0.4), name='bale')
-    cyl(p, 0.14, 0.14, 0.22, (1.0, 0.33, 0.14), P['hay'], seg=14, rot=(math.pi / 2, 0, -0.3), name='bale')
-    cyl(p, 0.025, 0.025, 0.85, (0.1, -0.05, 0.45), P['beam'], seg=6, name='scarepole')
-    box(p, (0.4, 0.03, 0.03), (0.1, -0.05, 0.62), P['beam'], bevel=0.005)
-    box(p, (0.18, 0.1, 0.22), (0.1, -0.05, 0.62), '#6FA8DC', bevel=0.03, name='shirt')
-    ball(p, 0.09, (0.1, -0.05, 0.84), '#F3DFB0', name='head')
-    cyl(p, 0.16, 0.06, 0.06, (0.1, -0.05, 0.92), P['straw'], seg=12, name='hat')
-
 def mill():
     p = root('mill')
     box(p, (1.5, 1.5, 0.1), (0, 0, 0.05), P['stone'], bevel=0.03, name='base')
@@ -741,11 +668,11 @@ for v in range(4):
     house_worker(v)
     house_technician(v)
     house_citizen(v)
-for f in (depot, warehouse, lumberjack, sawmill, fishery, farm, mill, bakery, market, tavern,
+for f in (depot, warehouse, lumberjack, sawmill, mill, bakery, market, tavern,
           tree_round, tree_pine, bush, rock, villager, cart, boat, lamp,
           sheepfarm, study, church, woodshed, claypit, brickworks, weaver, tailor, mine, smithy, park, guild,
-          factory, plant_modern, cannery, brewery, powerplant, heatplant, school, clinic, townhall, university,
-          factory_small, windturbine, solar, hydro, purifier, recycler, hospital, theatre, lab, ore_iron, ore_coal, bridge, bridge_plain, garden, herbalist, firestation, police):
+          factory, plant_modern, cannery, brewery, powerplant, heatplant, school, townhall, university,
+          factory_small, windturbine, solar, hydro, purifier, recycler, theatre, lab, ore_iron, ore_coal, bridge, bridge_plain, firestation, police):
     f()
 exec(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models_resize.py'), encoding='utf-8').read())
 exec(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models_m2.py'), encoding='utf-8').read())

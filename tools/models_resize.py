@@ -39,17 +39,6 @@ def extras():
     log_pile(p, 0.95, 0.55, 2, 0.6)
     for i in range(4):
         box(p, (0.5, 0.22, 0.045), (0.95, -0.75, 0.12 + i * 0.05), '#F2CF93' if i % 2 else '#E8BD80', bevel=0.006, name='plank')
-    p = regroup('fishery', 3, 2, sx=-0.5, plate='#D9C9A8')
-    for k in range(2):
-        x = 0.7 + k * 0.45
-        for sx_ in (-0.25, 0.25):
-            box(p, (0.04, 0.04, 0.55), (x + sx_ * 0, -0.15 + sx_ * 1.6, 0.32), P['beam'], bevel=0.006, name='rackpost')
-        box(p, (0.04, 0.84, 0.03), (x, -0.15, 0.56), P['beam'], bevel=0, name='rackbar')
-        for i in range(5):
-            ball(p, 0.05, (x, -0.5 + i * 0.17, 0.45), '#8CC8EA', scale=(0.5, 0.8, 1.6), name='dryfish')
-    for i in range(2):
-        barrel(p, 1.2, 0.6 - i * 0.24, 0.1, 0.1, 0.24)
-    cyl(p, 0.22, 0.22, 0.06, (0.75, 0.6, 0.14), '#C9A77E', seg=12, name='netpile')
     p = regroup('warehouse', 3, 2, sx=-0.5)
     for (x, y, z, s_) in ((0.75, -0.55, 0.1, 0.26), (1.05, -0.55, 0.1, 0.26), (0.9, -0.55, 0.36, 0.24), (0.8, -0.1, 0.1, 0.22), (1.1, 0.45, 0.1, 0.24), (1.1, 0.45, 0.34, 0.2)):
         crate(p, x, y, z, s_)
@@ -125,7 +114,6 @@ def extras():
     regroup('solar', 3, 3, scale=1.5, plate='#B9D38A')
     regroup('recycler', 3, 3, scale=1.45)
     regroup('factory_small', 3, 3, scale=1.45, plate='#C9C4BB')
-    regroup('farm', 4, 4, scale=1.33, plate='#C9A77E')
     regroup('factory', 4, 4, scale=1.3, plate='#A8A39A')
     regroup('powerplant', 4, 4, scale=1.3, plate='#A8A39A')
     regroup('university', 4, 4, scale=1.3, plate='#E2D9C8')
@@ -157,16 +145,6 @@ def extras():
     for y in (-0.9, 0.9):
         box(p, (0.6, 0.3, 0.12), (1.35, y, 0.16), '#8FD16A', bevel=0.03, name='hedge')
         flowers(p, 1.35, y, 0.1)
-    p = regroup('hospital', 4, 3, sx=-0.5, plate='#E2DDD3')
-    box(p, (0.5, 0.26, 0.24), (1.35, -0.6, 0.24), P['white'], bevel=0.03, name='ambulance')
-    box(p, (0.5, 0.27, 0.06), (1.35, -0.6, 0.3), P['red'], bevel=0, name='ambstripe')
-    for sy in (-0.12, 0.12):
-        for sx_ in (-0.15, 0.15):
-            cyl(p, 0.05, 0.05, 0.03, (1.35 + sx_, -0.6 + sy, 0.1), P['dark'], seg=8, rot=(math.pi / 2, 0, 0), name='wheel')
-    for i in range(3):
-        box(p, (0.03, 0.4, 0.01), (1.05 + i * 0.3, 0.3, 0.11), P['white'], bevel=0, name='parkline')
-    tree_small(p, 1.6, 0.9, 1.0)
-    tree_small(p, 1.1, 1.0, 0.8)
     p = regroup('plant_modern', 4, 3, sx=-0.5, plate='#D6D2CA')
     for i, y in enumerate((-0.6, 0.1, 0.8)):
         cyl(p, 0.22, 0.22, 0.7, (1.4, y, 0.45), '#E2E7EE', seg=14, name='tank')

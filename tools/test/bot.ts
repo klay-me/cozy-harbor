@@ -45,12 +45,16 @@ function farSpots(type: BuildingId) {
   }
   return out.sort((a, b) => a[2] - b[2]);
 }
+// spots where a building could not be connected to the roads: don't pay for the same mistake again
+const unreachable = new Set<string>();
 function placeConnected(type: BuildingId, cands: [number, number, number][]) {
-  for (const [x, z] of cands.slice(0, 6)) {
-    if (!g.place(type, x, z)) continue;
+  for (const [x, z] of cands.filter(([x, z]) => !unreachable.has(`${type},${x},${z}`)).slice(0, 6)) {
+    // like a player, turn the building so its front faces the water or a road
+    if (!g.place(type, x, z, g.bestRot(type, x, z, 0))) continue;
     const b = g.at(x, z)!;
     connect(b);
     if (b.connected) { built[type] = (built[type] ?? 0) + 1; return true; }
+    unreachable.add(`${type},${x},${z}`);
     g.demolish(x, z);
   }
   return false;
