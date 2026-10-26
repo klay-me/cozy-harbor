@@ -6,6 +6,7 @@ import type { Game } from '../sim/game';
 import { Tile } from '../sim/world';
 import type { Terrain } from './terrain';
 import { ENV } from './shared';
+import { getModel } from './assets';
 
 const LIGHTS = 8;
 const FLIES = 2400;
@@ -26,6 +27,8 @@ export class Night {
   private poolMat: THREE.MeshBasicMaterial;
   private lights: THREE.PointLight[] = [];
   private lampPos: THREE.Vector3[] = [];
+  private halos: THREE.Points;
+  private haloU = { uAmt: { value: 0 }, uScale: { value: 1 } };
   private flies: THREE.Points;
   private flyU = { uTime: ENV.uTime, uAmt: { value: 0 }, uScale: { value: 1 } };
   private pickT = 0;
@@ -41,6 +44,27 @@ export class Night {
     this.pools.count = 0;
     this.pools.renderOrder = 2;
     this.group.add(this.pools);
+    // every lamp head gets the same soft halo, so all lamps look lit (the point lights only add light on walls)
+    this.halos = new THREE.Points(new THREE.BufferGeometry(), new THREE.ShaderMaterial({
+      uniforms: { ...this.haloU, uMap: { value: tex } },
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      vertexShader: /* glsl */`
+uniform float uScale;
+void main(){
+  vec4 mv = modelViewMatrix * vec4(position, 1.0);
+  gl_Position = projectionMatrix * mv;
+  gl_PointSize = uScale * 40.0 * (20.0 / -mv.z);
+}`,
+      fragmentShader: /* glsl */`
+uniform sampler2D uMap;
+uniform float uAmt;
+void main(){
+  float a = texture2D(uMap, gl_PointCoord).a * uAmt;
+  gl_FragColor = vec4(vec3(1.0, 0.72, 0.4) * a, a);
+}`,
+    }));
+    this.halos.frustumCulled = false;
+    this.group.add(this.halos);
     for (let i = 0; i < LIGHTS; i++) {
       const l = new THREE.PointLight('#FFB25E', 0, 4.5, 1.6);
       this.lights.push(l);
@@ -95,11 +119,13 @@ void main(){
   sync(lamps: THREE.InstancedMesh, houses: { x: number; z: number; r: number }[]) {
     const M = new THREE.Matrix4(), P = new THREE.Vector3(), Q = new THREE.Quaternion(), S = new THREE.Vector3();
     this.lampPos = [];
+    const top = getModel('lamp').height - 0.08, hp: number[] = [];
     let n = 0;
     for (let i = 0; i < lamps.count && n < 1200; i++) {
       lamps.getMatrixAt(i, M);
       P.setFromMatrixPosition(M);
       this.lampPos.push(P.clone());
+      hp.push(P.x, P.y + top, P.z);
       M.compose(P.setY(P.y + 0.04), Q, S.set(2.6, 1, 2.6));
       this.pools.setMatrixAt(n++, M);
     }
@@ -108,6 +134,7 @@ void main(){
       M.compose(P.set(h.x, this.terrain.height(h.x, h.z) + 0.05, h.z), Q, S.set(h.r, 1, h.r));
       this.pools.setMatrixAt(n++, M);
     }
+    this.halos.geometry.setAttribute('position', new THREE.Float32BufferAttribute(hp, 3));
     this.pools.count = n;
     this.pools.instanceMatrix.needsUpdate = true;
     this.pickT = 0;
@@ -116,20 +143,35 @@ void main(){
   update(dt: number, glow: number, night: number, target: THREE.Vector3, warm: number, rain: number, highQuality: boolean) {
     this.poolMat.opacity = glow * 0.55;
     this.pools.visible = glow > 0.02;
-    // the point lights follow the lamps closest to the middle of the screen
+    // the point lights follow the lamps closest to the middle of the screen; a light only moves
+    // after fading out, and lamps that stay near keep their light, so nothing blinks while panning
     this.pickT -= dt;
     if (this.pickT <= 0) {
       this.pickT = 0.4;
-      const near = this.lampPos
+      const want = new Set(this.lampPos
         .map(p => ({ p, d: (p.x - target.x) ** 2 + (p.z - target.z) ** 2 }))
-        .sort((a, b) => a.d - b.d);
-      this.lights.forEach((l, i) => {
-        const e = near[i];
-        if (e) l.position.set(e.p.x, e.p.y + 0.9, e.p.z);
-        l.userData.on = !!e && highQuality;
-      });
+        .sort((a, b) => a.d - b.d).slice(0, LIGHTS).map(e => e.p));
+      for (const l of this.lights) {
+        if (l.userData.lamp && want.has(l.userData.lamp)) want.delete(l.userData.lamp);
+        else l.userData.lamp = null;
+      }
+      const free = [...want];
+      for (const l of this.lights) l.userData.next = l.userData.lamp ? null : free.shift() ?? null;
     }
-    for (const l of this.lights) l.intensity = l.userData.on ? glow * 2.2 : 0;
+    const k = 1 - Math.exp(-dt * 4);
+    for (const l of this.lights) {
+      const u = l.userData;
+      u.level = u.level ?? 0;
+      if (!u.lamp && u.next && u.level < 0.02) {
+        u.lamp = u.next; u.next = null;
+        l.position.set(u.lamp.x, u.lamp.y + 0.9, u.lamp.z);
+      }
+      u.level += ((u.lamp && highQuality ? 1 : 0) - u.level) * k;
+      l.intensity = u.level * glow * 2.2;
+    }
+    this.haloU.uAmt.value = glow * 0.9;
+    this.haloU.uScale.value = Math.min(2, devicePixelRatio || 1);
+    this.halos.visible = glow > 0.02;
     // fireflies: warm, dry nights, not in winter
     this.flyU.uAmt.value = Math.max(0, night - 0.35) / 0.65 * warm * (1 - rain);
     this.flyU.uScale.value = Math.min(2, devicePixelRatio || 1);
