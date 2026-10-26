@@ -747,6 +747,7 @@ for f in (depot, warehouse, lumberjack, sawmill, fishery, farm, mill, bakery, ma
           factory, plant_modern, cannery, brewery, powerplant, heatplant, school, clinic, townhall, university,
           factory_small, windturbine, solar, hydro, purifier, recycler, hospital, theatre, lab, ore_iron, ore_coal, bridge, bridge_plain, garden, herbalist, firestation, police):
     f()
+exec(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models_resize.py'), encoding='utf-8').read())
 # chimney smoke markers on the older houses
 for o in list(bpy.data.objects):
     if o.parent is None and o.name.startswith('house_peasant_'):
@@ -756,7 +757,7 @@ for o in list(bpy.data.objects):
     if o.parent is None and o.name == 'bakery':
         smoke(o, 0.42, 0.42, 2.06)
     if o.parent is None and o.name == 'tavern':
-        smoke(o, -0.4, 0.45, 2.27)
+        smoke(o, -0.9, 0.45, 2.27)
 
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
 bpy.ops.export_scene.gltf(filepath=OUT, export_format='GLB', export_apply=True, export_yup=True,

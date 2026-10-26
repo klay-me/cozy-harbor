@@ -122,58 +122,58 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
   road: B({ name: '道路', desc: '连接建筑与港口。按住拖动可以一次修一段。也能架桥跨过河流和湖泊（每格 12 金币 + 1 木板），但不能跨海。', era: 1, size: [1, 1], cost: { gold: 2 }, upkeep: 0, category: 'road', model: '', hotkey: 'R' }),
   house: B({ name: '住宅', desc: '居民的家。满足需求、住得开心，就能升级为更高的阶层。', era: 1, size: [2, 2], cost: { gold: 40, planks: 2 }, upkeep: 0, category: 'home', model: 'house', hotkey: 'H' }),
   depot: B({ name: '港口', desc: '城镇的起点，存放所有货物。', era: 1, size: [3, 3], cost: { gold: 0 }, upkeep: 0, category: 'public', model: 'depot', storage: 60, buildable: false }),
-  warehouse: B({ name: '仓库', desc: '每座仓库让每种货物的存储上限增加 40。', era: 1, size: [2, 2], cost: { gold: 100, planks: 6 }, upkeep: 5, category: 'public', model: 'warehouse', storage: 40 }),
+  warehouse: B({ name: '仓库', desc: '每座仓库让每种货物的存储上限增加 40。', era: 1, size: [3, 2], cost: { gold: 100, planks: 6 }, upkeep: 5, category: 'public', model: 'warehouse', storage: 40 }),
 
   // ---- era 1 ----
   lumberjack: B({ name: '伐木场', desc: '砍伐附近的树木，周围树越多效率越高，还会慢慢补种树苗。只要金币就能建。', era: 1, size: [2, 2], cost: { gold: 60 }, upkeep: 5, category: 'raw', model: 'lumberjack', workers: { tier: 'peasant', n: 4 }, cycle: 15, output: 'wood', radius: 3, needs: 'forest' }),
-  sawmill: B({ name: '锯木厂', desc: '把木材加工成木板。', era: 1, size: [2, 2], cost: { gold: 100, planks: 4 }, upkeep: 10, category: 'craft', model: 'sawmill', workers: { tier: 'peasant', n: 6 }, cycle: 15, input: { wood: 1 }, output: 'planks' }),
-  fishery: B({ name: '渔场', desc: '必须紧挨水边。为居民提供鱼。', era: 1, size: [2, 2], cost: { gold: 80, planks: 2 }, upkeep: 5, category: 'raw', model: 'fishery', workers: { tier: 'peasant', n: 3 }, cycle: 20, output: 'fish', needs: 'water' }),
+  sawmill: B({ name: '锯木厂', desc: '把木材加工成木板。', era: 1, size: [3, 2], cost: { gold: 100, planks: 4 }, upkeep: 10, category: 'craft', model: 'sawmill', workers: { tier: 'peasant', n: 6 }, cycle: 15, input: { wood: 1 }, output: 'planks' }),
+  fishery: B({ name: '渔场', desc: '必须紧挨水边。为居民提供鱼。', era: 1, size: [3, 2], cost: { gold: 80, planks: 2 }, upkeep: 5, category: 'raw', model: 'fishery', workers: { tier: 'peasant', n: 3 }, cycle: 20, output: 'fish', needs: 'water' }),
   garden: B({ name: '菜园', desc: '种蔬菜，和鱼一样能填饱肚子。冬天不长菜，记得秋天多囤一些。', era: 1, size: [3, 3], cost: { gold: 80, planks: 3 }, upkeep: 4, category: 'raw', model: 'garden', workers: { tier: 'peasant', n: 4 }, cycle: 15, output: 'veg' }),
   herbalist: B({ name: '草药铺', desc: '医疗覆盖：范围内的病人好得快，瘟疫不容易扩散。', era: 1, size: [2, 2], cost: { gold: 120, planks: 6 }, upkeep: 5, category: 'public', model: 'herbalist', workers: { tier: 'peasant', n: 2 }, radius: 8, protects: 'health' }),
-  firestation: B({ name: '消防队', desc: '消防覆盖：范围内着火的建筑很快就能扑灭；没有覆盖的火会把房子烧光。', era: 1, size: [2, 2], cost: { gold: 150, planks: 8 }, upkeep: 5, category: 'public', model: 'firestation', workers: { tier: 'peasant', n: 3 }, radius: 9, protects: 'fire' }),
-  farm: B({ name: '麦田', desc: '种植小麦。冬天休耕。', era: 1, size: [3, 3], cost: { gold: 100, planks: 4 }, upkeep: 10, category: 'raw', model: 'farm', workers: { tier: 'peasant', n: 4 }, cycle: 30, output: 'grain' }),
-  sheepfarm: B({ name: '牧羊场', desc: '养羊产羊毛，织布的原料。', era: 1, size: [3, 3], cost: { gold: 120, planks: 4 }, upkeep: 8, category: 'raw', model: 'sheepfarm', workers: { tier: 'peasant', n: 3 }, cycle: 30, output: 'wool' }),
-  market: B({ name: '集市', desc: '覆盖范围内的住宅满足"集市"需求。', era: 1, size: [2, 2], cost: { gold: 120, planks: 6 }, upkeep: 6, category: 'public', model: 'market', radius: 9, service: 'market' }),
-  church: B({ name: '教堂', desc: '小镇的精神中心。工人需要它；建成后才能进入手工业时代。', era: 1, size: [3, 3], cost: { gold: 400, planks: 24 }, upkeep: 10, category: 'public', model: 'church', radius: 11, service: 'church' }),
+  firestation: B({ name: '消防队', desc: '消防覆盖：范围内着火的建筑很快就能扑灭；没有覆盖的火会把房子烧光。', era: 1, size: [3, 2], cost: { gold: 150, planks: 8 }, upkeep: 5, category: 'public', model: 'firestation', workers: { tier: 'peasant', n: 3 }, radius: 9, protects: 'fire' }),
+  farm: B({ name: '麦田', desc: '种植小麦。冬天休耕。', era: 1, size: [4, 4], cost: { gold: 100, planks: 4 }, upkeep: 10, category: 'raw', model: 'farm', workers: { tier: 'peasant', n: 4 }, cycle: 30, output: 'grain' }),
+  sheepfarm: B({ name: '牧羊场', desc: '养羊产羊毛，织布的原料。', era: 1, size: [4, 3], cost: { gold: 120, planks: 4 }, upkeep: 8, category: 'raw', model: 'sheepfarm', workers: { tier: 'peasant', n: 3 }, cycle: 30, output: 'wool' }),
+  market: B({ name: '集市', desc: '覆盖范围内的住宅满足"集市"需求。', era: 1, size: [3, 3], cost: { gold: 120, planks: 6 }, upkeep: 6, category: 'public', model: 'market', radius: 9, service: 'market' }),
+  church: B({ name: '教堂', desc: '小镇的精神中心。工人需要它；建成后才能进入手工业时代。', era: 1, size: [3, 4], cost: { gold: 400, planks: 24 }, upkeep: 10, category: 'public', model: 'church', radius: 11, service: 'church' }),
   study: B({ name: '村塾', desc: '产生研究点，解锁田园时代的研究。', era: 1, size: [2, 2], cost: { gold: 150, planks: 8 }, upkeep: 5, category: 'public', model: 'study', workers: { tier: 'peasant', n: 2 }, research_pts: 6 }),
 
   // ---- era 2 ----
   police: B({ name: '巡警所', desc: '治安覆盖：住户不开心时容易有小偷和闹事，巡警能管住他们。', era: 2, size: [2, 2], cost: { gold: 250, planks: 6, bricks: 6 }, upkeep: 12, category: 'public', model: 'police', workers: { tier: 'worker', n: 2 }, radius: 10, protects: 'police' }),
   firewood: B({ name: '柴火坊', desc: '把木材劈成柴火。气温低于 8°C 住宅就要烧柴取暖。', era: 1, size: [2, 2], cost: { gold: 80, planks: 4 }, upkeep: 3, category: 'craft', model: 'woodshed', workers: { tier: 'peasant', n: 2 }, cycle: 20, input: { wood: 1 }, output: 'firewood', outQty: 2, pollution: 2 }),
-  claypit: B({ name: '黏土坑', desc: '在河岸或湖边挖黏土。', era: 2, size: [2, 2], cost: { gold: 100, planks: 4 }, upkeep: 6, category: 'raw', model: 'claypit', workers: { tier: 'peasant', n: 4 }, cycle: 20, output: 'clay', needs: 'water', pollution: 2 }),
-  brickworks: B({ name: '砖厂', desc: '把黏土烧成砖，手工业时代的主要建材。', era: 2, size: [2, 2], cost: { gold: 150, planks: 6 }, upkeep: 8, category: 'craft', model: 'brickworks', workers: { tier: 'peasant', n: 6 }, cycle: 20, input: { clay: 1 }, output: 'bricks', pollution: 10 }),
+  claypit: B({ name: '黏土坑', desc: '在河岸或湖边挖黏土。', era: 2, size: [3, 3], cost: { gold: 100, planks: 4 }, upkeep: 6, category: 'raw', model: 'claypit', workers: { tier: 'peasant', n: 4 }, cycle: 20, output: 'clay', needs: 'water', pollution: 2 }),
+  brickworks: B({ name: '砖厂', desc: '把黏土烧成砖，手工业时代的主要建材。', era: 2, size: [3, 2], cost: { gold: 150, planks: 6 }, upkeep: 8, category: 'craft', model: 'brickworks', workers: { tier: 'peasant', n: 6 }, cycle: 20, input: { clay: 1 }, output: 'bricks', pollution: 10 }),
   mill: B({ name: '磨坊', desc: '把小麦磨成面粉。', era: 2, size: [2, 2], cost: { gold: 150, planks: 8 }, upkeep: 8, category: 'craft', model: 'mill', workers: { tier: 'worker', n: 4 }, cycle: 30, input: { grain: 1 }, output: 'flour' }),
   bakery: B({ name: '面包房', desc: '用面粉烤面包。', era: 2, size: [2, 2], cost: { gold: 150, planks: 6, bricks: 4 }, upkeep: 8, category: 'craft', model: 'bakery', workers: { tier: 'worker', n: 4 }, cycle: 30, input: { flour: 1 }, output: 'bread', pollution: 2 }),
-  weaver: B({ name: '织布厂', desc: '把羊毛织成布。', era: 2, size: [2, 2], cost: { gold: 200, planks: 6, bricks: 4 }, upkeep: 10, category: 'craft', model: 'weaver', workers: { tier: 'worker', n: 6 }, cycle: 30, input: { wool: 1 }, output: 'cloth', pollution: 5 }),
+  weaver: B({ name: '织布厂', desc: '把羊毛织成布。', era: 2, size: [3, 2], cost: { gold: 200, planks: 6, bricks: 4 }, upkeep: 10, category: 'craft', model: 'weaver', workers: { tier: 'worker', n: 6 }, cycle: 30, input: { wool: 1 }, output: 'cloth', pollution: 5 }),
   tailor: B({ name: '裁缝铺', desc: '用布做衣服。', era: 2, size: [2, 2], cost: { gold: 150, planks: 4, bricks: 4 }, upkeep: 8, category: 'craft', model: 'tailor', workers: { tier: 'worker', n: 4 }, cycle: 30, input: { cloth: 1 }, output: 'clothes' }),
   ironmine: B({ name: '铁矿', desc: '必须建在铁矿脉上。', era: 2, size: [2, 2], cost: { gold: 200, planks: 8 }, upkeep: 10, category: 'raw', model: 'mine', workers: { tier: 'worker', n: 6 }, cycle: 20, output: 'ore', needs: 'iron', pollution: 10 }),
   smithy: B({ name: '铁匠铺', desc: '用铁矿石和木材打造工具；建成后才能进入工业时代。', era: 2, size: [2, 2], cost: { gold: 250, planks: 6, bricks: 6 }, upkeep: 10, category: 'craft', model: 'smithy', workers: { tier: 'worker', n: 6 }, cycle: 30, input: { ore: 1, wood: 1 }, output: 'tools', pollution: 10 }),
-  tavern: B({ name: '酒馆', desc: '工人和技工下班后的去处。', era: 2, size: [2, 2], cost: { gold: 200, planks: 10 }, upkeep: 15, category: 'public', model: 'tavern', radius: 9, service: 'tavern' }),
-  park: B({ name: '公园', desc: '减少附近的污染，让附近住户更开心。', era: 2, size: [2, 2], cost: { gold: 100, bricks: 2 }, upkeep: 5, category: 'public', model: 'park', radius: 4, service: 'park', pollution: -15 }),
-  guild: B({ name: '工匠行会', desc: '产生研究点，解锁手工业时代的研究。', era: 2, size: [2, 2], cost: { gold: 300, planks: 10, bricks: 10 }, upkeep: 20, category: 'public', model: 'guild', workers: { tier: 'worker', n: 4 }, research_pts: 12 }),
+  tavern: B({ name: '酒馆', desc: '工人和技工下班后的去处。', era: 2, size: [3, 2], cost: { gold: 200, planks: 10 }, upkeep: 15, category: 'public', model: 'tavern', radius: 9, service: 'tavern' }),
+  park: B({ name: '公园', desc: '减少附近的污染，让附近住户更开心。', era: 2, size: [3, 3], cost: { gold: 100, bricks: 2 }, upkeep: 5, category: 'public', model: 'park', radius: 4, service: 'park', pollution: -15 }),
+  guild: B({ name: '工匠行会', desc: '产生研究点，解锁手工业时代的研究。', era: 2, size: [3, 2], cost: { gold: 300, planks: 10, bricks: 10 }, upkeep: 20, category: 'public', model: 'guild', workers: { tier: 'worker', n: 4 }, research_pts: 12 }),
 
   // ---- era 3 ----
   coalmine: B({ name: '煤矿', desc: '必须建在煤矿脉上。', era: 3, size: [2, 2], cost: { gold: 300, bricks: 10, tools: 4 }, upkeep: 14, category: 'raw', model: 'mine', workers: { tier: 'worker', n: 8 }, cycle: 15, output: 'coal', needs: 'coal', pollution: 25 }),
-  steelworks: B({ name: '炼钢厂', desc: '用铁矿石和煤炼钢，污染很重。', era: 3, size: [3, 3], cost: { gold: 600, bricks: 20, tools: 8 }, upkeep: 24, category: 'craft', model: 'factory', workers: { tier: 'worker', n: 8 }, cycle: 30, input: { ore: 1, coal: 1 }, output: 'steel', pollution: 40 }),
-  cannery: B({ name: '罐头厂', desc: '用鱼和钢做罐头。', era: 3, size: [2, 2], cost: { gold: 400, bricks: 10, tools: 4, steel: 4 }, upkeep: 18, category: 'craft', model: 'cannery', workers: { tier: 'worker', n: 6 }, cycle: 60, input: { fish: 3, steel: 1 }, output: 'cans', outQty: 3, power: 4, pollution: 15 }),
+  steelworks: B({ name: '炼钢厂', desc: '用铁矿石和煤炼钢，污染很重。', era: 3, size: [4, 4], cost: { gold: 600, bricks: 20, tools: 8 }, upkeep: 24, category: 'craft', model: 'factory', workers: { tier: 'worker', n: 8 }, cycle: 30, input: { ore: 1, coal: 1 }, output: 'steel', pollution: 40 }),
+  cannery: B({ name: '罐头厂', desc: '用鱼和钢做罐头。', era: 3, size: [3, 2], cost: { gold: 400, bricks: 10, tools: 4, steel: 4 }, upkeep: 18, category: 'craft', model: 'cannery', workers: { tier: 'worker', n: 6 }, cycle: 60, input: { fish: 3, steel: 1 }, output: 'cans', outQty: 3, power: 4, pollution: 15 }),
   brewery: B({ name: '啤酒厂', desc: '用小麦酿啤酒。', era: 3, size: [2, 2], cost: { gold: 300, bricks: 10, tools: 2 }, upkeep: 14, category: 'craft', model: 'brewery', workers: { tier: 'technician', n: 6 }, cycle: 30, input: { grain: 1 }, output: 'beer', pollution: 5 }),
-  coalplant: B({ name: '燃煤电厂', desc: '烧煤发电，便宜稳定，但污染最重。', era: 3, research: 'steam', size: [3, 3], cost: { gold: 800, bricks: 20, tools: 6 }, upkeep: 30, category: 'power', model: 'powerplant', workers: { tier: 'worker', n: 6 }, cycle: 30, input: { coal: 1 }, powerGen: 20, powerKind: 'coal', pollution: 50 }),
+  coalplant: B({ name: '燃煤电厂', desc: '烧煤发电，便宜稳定，但污染最重。', era: 3, research: 'steam', size: [4, 4], cost: { gold: 800, bricks: 20, tools: 6 }, upkeep: 30, category: 'power', model: 'powerplant', workers: { tier: 'worker', n: 6 }, cycle: 30, input: { coal: 1 }, powerGen: 20, powerKind: 'coal', pollution: 50 }),
   heatplant: B({ name: '煤炉房', desc: '集中供暖：半径内的住宅冬天不必各自烧燃料，比分散取暖省 30% 的煤。', era: 3, research: 'central', size: [2, 2], cost: { gold: 400, bricks: 12, steel: 4 }, upkeep: 20, category: 'power', model: 'heatplant', workers: { tier: 'technician', n: 4 }, radius: 6, heating: true, pollution: 20 }),
-  school: B({ name: '学校', desc: '技工和市民需要它。', era: 3, size: [2, 2], cost: { gold: 400, bricks: 12 }, upkeep: 20, category: 'public', model: 'school', radius: 10, service: 'school' }),
+  school: B({ name: '学校', desc: '技工和市民需要它。', era: 3, size: [3, 3], cost: { gold: 400, bricks: 12 }, upkeep: 20, category: 'public', model: 'school', radius: 10, service: 'school' }),
   clinic: B({ name: '诊所', desc: '技工需要它；同时提供医疗覆盖。', era: 3, size: [2, 2], cost: { gold: 400, bricks: 10, steel: 2 }, upkeep: 20, category: 'public', model: 'clinic', radius: 9, service: 'clinic', protects: 'health' }),
-  townhall: B({ name: '市政厅', desc: '建成后才能进入现代城市时代。', era: 3, size: [3, 3], cost: { gold: 1200, bricks: 30, steel: 10 }, upkeep: 40, category: 'public', model: 'townhall' }),
-  university: B({ name: '大学', desc: '产生研究点，解锁工业时代的研究。', era: 3, size: [3, 3], cost: { gold: 800, bricks: 20, steel: 6 }, upkeep: 35, category: 'public', model: 'university', workers: { tier: 'technician', n: 6 }, research_pts: 24 }),
+  townhall: B({ name: '市政厅', desc: '建成后才能进入现代城市时代。', era: 3, size: [4, 3], cost: { gold: 1200, bricks: 30, steel: 10 }, upkeep: 40, category: 'public', model: 'townhall' }),
+  university: B({ name: '大学', desc: '产生研究点，解锁工业时代的研究。', era: 3, size: [4, 4], cost: { gold: 800, bricks: 20, steel: 6 }, upkeep: 35, category: 'public', model: 'university', workers: { tier: 'technician', n: 6 }, research_pts: 24 }),
 
   // ---- era 4 ----
-  cementworks: B({ name: '水泥厂', desc: '用黏土和煤做水泥，现代建筑的建材。', era: 4, size: [2, 2], cost: { gold: 800, bricks: 20, steel: 10 }, upkeep: 24, category: 'craft', model: 'factory_small', workers: { tier: 'technician', n: 8 }, cycle: 30, input: { clay: 1, coal: 1 }, output: 'cement', power: 6, pollution: 30 }),
-  appliances: B({ name: '电器厂', desc: '用钢和工具造电器，市民的舒适品。', era: 4, size: [3, 3], cost: { gold: 1000, steel: 10, cement: 10 }, upkeep: 31, category: 'craft', model: 'plant_modern', workers: { tier: 'citizen', n: 8 }, cycle: 60, input: { steel: 1, tools: 1 }, output: 'appliances', power: 10, pollution: 15 }),
+  cementworks: B({ name: '水泥厂', desc: '用黏土和煤做水泥，现代建筑的建材。', era: 4, size: [3, 3], cost: { gold: 800, bricks: 20, steel: 10 }, upkeep: 24, category: 'craft', model: 'factory_small', workers: { tier: 'technician', n: 8 }, cycle: 30, input: { clay: 1, coal: 1 }, output: 'cement', power: 6, pollution: 30 }),
+  appliances: B({ name: '电器厂', desc: '用钢和工具造电器，市民的舒适品。', era: 4, size: [4, 3], cost: { gold: 1000, steel: 10, cement: 10 }, upkeep: 31, category: 'craft', model: 'plant_modern', workers: { tier: 'citizen', n: 8 }, cycle: 60, input: { steel: 1, tools: 1 }, output: 'appliances', power: 10, pollution: 15 }),
   windturbine: B({ name: '风车', desc: '无污染发电。没风时减半，雷雨天停机。', era: 4, research: 'wind', size: [2, 2], cost: { gold: 300, steel: 4, cement: 2 }, upkeep: 8, category: 'power', model: 'windturbine', powerGen: 6, powerKind: 'wind' }),
-  solar: B({ name: '太阳能板', desc: '无污染发电，只在白天工作，阴雨天减半。', era: 4, research: 'solar', size: [2, 2], cost: { gold: 400, steel: 6 }, upkeep: 8, category: 'power', model: 'solar', powerGen: 8, powerKind: 'solar' }),
+  solar: B({ name: '太阳能板', desc: '无污染发电，只在白天工作，阴雨天减半。', era: 4, research: 'solar', size: [3, 3], cost: { gold: 400, steel: 6 }, upkeep: 8, category: 'power', model: 'solar', powerGen: 8, powerKind: 'solar' }),
   hydro: B({ name: '水电站', desc: '必须建在内陆河湖边，稳定无污染，造价高。', era: 4, research: 'hydro', size: [3, 3], cost: { gold: 1500, steel: 10, cement: 20 }, upkeep: 30, category: 'power', model: 'hydro', workers: { tier: 'technician', n: 4 }, powerGen: 30, powerKind: 'hydro', needs: 'river' }),
-  purifier: B({ name: '净化厂', desc: '大幅降低周围的污染。', era: 4, research: 'purify', size: [2, 2], cost: { gold: 800, steel: 10, cement: 6 }, upkeep: 30, category: 'power', model: 'purifier', workers: { tier: 'technician', n: 4 }, radius: 6, power: 8, pollution: -40 }),
-  recycler: B({ name: '回收站', desc: '回收垃圾，产出少量钢，顺便减少污染。', era: 4, size: [2, 2], cost: { gold: 600, steel: 6, cement: 6 }, upkeep: 18, category: 'craft', model: 'recycler', workers: { tier: 'citizen', n: 4 }, cycle: 60, output: 'steel', power: 4, pollution: -10 }),
-  hospital: B({ name: '医院', desc: '市民需要它；同时提供大范围医疗覆盖。', era: 4, size: [3, 3], cost: { gold: 1000, cement: 10, steel: 6 }, upkeep: 40, category: 'public', model: 'hospital', radius: 12, service: 'hospital', protects: 'health' }),
-  theatre: B({ name: '剧院', desc: '市民需要它。', era: 4, size: [3, 3], cost: { gold: 1200, cement: 12 }, upkeep: 40, category: 'public', model: 'theatre', radius: 12, service: 'theatre' }),
+  purifier: B({ name: '净化厂', desc: '大幅降低周围的污染。', era: 4, research: 'purify', size: [3, 2], cost: { gold: 800, steel: 10, cement: 6 }, upkeep: 30, category: 'power', model: 'purifier', workers: { tier: 'technician', n: 4 }, radius: 6, power: 8, pollution: -40 }),
+  recycler: B({ name: '回收站', desc: '回收垃圾，产出少量钢，顺便减少污染。', era: 4, size: [3, 3], cost: { gold: 600, steel: 6, cement: 6 }, upkeep: 18, category: 'craft', model: 'recycler', workers: { tier: 'citizen', n: 4 }, cycle: 60, output: 'steel', power: 4, pollution: -10 }),
+  hospital: B({ name: '医院', desc: '市民需要它；同时提供大范围医疗覆盖。', era: 4, size: [4, 3], cost: { gold: 1000, cement: 10, steel: 6 }, upkeep: 40, category: 'public', model: 'hospital', radius: 12, service: 'hospital', protects: 'health' }),
+  theatre: B({ name: '剧院', desc: '市民需要它。', era: 4, size: [4, 4], cost: { gold: 1200, cement: 12 }, upkeep: 40, category: 'public', model: 'theatre', radius: 12, service: 'theatre' }),
   lab: B({ name: '研究所', desc: '产生大量研究点，包括无限研究。', era: 4, size: [2, 2], cost: { gold: 1500, cement: 10, steel: 10 }, upkeep: 50, category: 'public', model: 'lab', workers: { tier: 'citizen', n: 6 }, research_pts: 40 }),
 };
 
@@ -292,7 +292,9 @@ export const WEATHER: Record<WeatherId, WeatherDef> = {
 export const DAY_LENGTH = 240;
 /** per-minute rate -> per-day */
 export const PER_DAY = DAY_LENGTH / 60;
-export const SEASON_DAYS = 3;
+/** default days per season; players can pick 3, 4 or 6 in the menu */
+export const SEASON_DAYS = 4;
+export const SEASON_DAY_OPTIONS = [3, 4, 6];
 export const START_HOUR = 8;
 export type SeasonId = 'spring' | 'summer' | 'autumn' | 'winter';
 export const SEASON_IDS: SeasonId[] = ['spring', 'summer', 'autumn', 'winter'];

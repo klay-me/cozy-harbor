@@ -70,6 +70,9 @@ async function boot() {
     research: t => { if (game.research.current === t) return; game.setResearch(t); },
     trade: (g, n) => { n > 0 ? game.buy(g, n) : game.sell(g, -n); },
     overlay: on => view.setPollutionView(on),
+    pause: b => game.togglePause(b),
+    rotate: () => { rot = 1 - rot; updatePreview(); },
+    seasonDays: n => { game.setSeasonDays(n); game.notify(`季节长度改为每季 ${n} 天`, 'info'); },
   }, makeThumbs(allTypes));
   hud.setAudio(sound.settings, rotMode);
 
@@ -124,8 +127,9 @@ async function boot() {
   let pinch: { d: number; a: number; cx: number; cy: number } | null = null;
   let touchGhost: string | null = null;
 
+  let rot = 0;
   const anchor = (t: BuildingId, p: { x: number; z: number }) => {
-    const [w, h] = BUILDINGS[t].size;
+    const [w, h] = game.sizeOf(t, rot);
     return { x: p.x - Math.floor((w - 1) / 2), z: p.z - Math.floor((h - 1) / 2) };
   };
   function updatePreview() {
@@ -135,7 +139,7 @@ async function boot() {
       view.showRoadPath(path, (x, z) => game.roadTileOk(x, z));
     } else if (tool !== 'select' && tool !== 'demolish') {
       const a = anchor(tool, hover);
-      view.showGhost(tool, a.x, a.z, game.canPlace(tool, a.x, a.z).ok);
+      view.showGhost(tool, a.x, a.z, game.canPlace(tool, a.x, a.z, rot).ok, rot);
     }
   }
   function act(p: { x: number; z: number }) {
@@ -146,7 +150,7 @@ async function boot() {
       game.demolish(p.x, p.z);
     } else if (tool !== 'road') {
       const a = anchor(tool, p);
-      game.place(tool, a.x, a.z);
+      game.place(tool, a.x, a.z, rot);
       updatePreview();
     }
   }
@@ -238,6 +242,7 @@ async function boot() {
     const k = e.key.toLowerCase();
     keys.add(k);
     if (k === 'escape') { if (hud.panelOpen) { hud.closePanels(); return; } setTool('select'); select(null); }
+    if (k === 'f' && tool !== 'select' && tool !== 'demolish' && tool !== 'road') { rot = 1 - rot; updatePreview(); }
     if (k === 't') hud.togglePanel('research');
     if (k === 'g') hud.togglePanel('goods');
     if (k === 'l') hud.togglePanel('ledger');

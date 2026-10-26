@@ -28,6 +28,9 @@ export interface HudHooks {
   research(t: TechId): void;
   trade(g: GoodId, n: number): void;
   overlay(on: boolean): void;
+  pause(b: Bld): void;
+  seasonDays(n: number): void;
+  rotate(): void;
 }
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string, root: ParentNode = document) => root.querySelector(sel) as T;
@@ -35,6 +38,7 @@ const fmt = (n: number) => Math.floor(n).toLocaleString('zh-CN');
 const ERA_NUM = ['', '一', '二', '三', '四'];
 export const HOUSE_NAMES: Record<string, string> = { peasant: '农舍', worker: '工人住宅', technician: '技工公寓', citizen: '市民楼' };
 
+const refund = (c: Cost): Cost => { const o: Cost = { gold: Math.floor(c.gold / 2) }; for (const k of GOOD_IDS) if (c[k]) o[k] = Math.ceil(c[k]! / 2); return o; };
 /** "50 金币 · 4 砖" as icon chips */
 export function costHtml(c: Cost, g?: Game) {
   const parts = [`<span class="${g && g.gold < c.gold ? 'short' : ''}">${icon('gold')}${c.gold}</span>`];
@@ -75,6 +79,7 @@ export class Hud {
           <button id="tLedger" title="收支账本 (L)">${icon('ledger')}账本</button>
           <button id="tGoods" title="仓库与商船 (G)">${icon('box')}仓库</button>
           <button id="tOverlay" title="污染视图 (P)">${icon('pollution')}污染</button>
+          <button id="tRotate" title="旋转建筑 (F)" hidden>↻ 旋转</button>
           <button id="tSelect" title="选择 (Esc)">选择</button>
           <button id="tDemolish" title="拆除 (X)">拆除</button>
         </div>
@@ -90,6 +95,8 @@ export class Hud {
         <div class="settings">
           <label for="volMusic">音乐</label><input type="range" id="volMusic" min="0" max="1" step="0.05">
           <label for="volSfx">音效</label><input type="range" id="volSfx" min="0" max="1" step="0.05">
+          <label for="seasonLen">季节长度</label>
+          <select id="seasonLen"><option value="3">每季 3 天（一年 48 分钟）</option><option value="4">每季 4 天（一年 64 分钟）</option><option value="6">每季 6 天（一年 96 分钟）</option></select>
           <label for="rotMode">转动方式</label>
           <select id="rotMode"><option value="orbit">旋转地图（绕画面中心）</option><option value="look">转动视角（镜头原地转）</option></select>
         </div>
@@ -99,7 +106,7 @@ export class Hud {
           <p><b>旋转地图</b>：按住中键（滚轮）拖动，或按住 Q / E</p>
           <p><b>缩放</b>：滚轮，手机上双指捏合</p>
           <p><b>修路</b>：选"道路"后按住拖动</p>
-          <p><b>研究 / 仓库 / 污染</b>：T / G / P</p>
+          <p><b>研究 / 仓库 / 污染</b>：T / G / P</p><p><b>旋转建筑</b>：放置长方形建筑时按 F</p>
           <p><b>取消</b>：右键单击或 Esc</p>
           <p>气温低于 8°C 住宅就要烧柴火（工业时代后烧煤），越冷烧得越多，秋天记得囤好燃料。</p><p><b>账本</b>：L，或点金币、货物数字，看每分钟的收入支出和货物进出。</p>
           <p>游戏每 30 秒自动保存在这台设备的浏览器里。</p>
@@ -110,6 +117,7 @@ export class Hud {
     $('#muteBtn', root).addEventListener('click', () => { this.audio.muted = !this.audio.muted; hooks.audio({ muted: this.audio.muted }); this.renderAudio(); });
     $<HTMLInputElement>('#volMusic', root).addEventListener('input', e => { this.audio.music = Number((e.target as HTMLInputElement).value); hooks.audio({ music: this.audio.music }); });
     $<HTMLInputElement>('#volSfx', root).addEventListener('input', e => { this.audio.sfx = Number((e.target as HTMLInputElement).value); hooks.audio({ sfx: this.audio.sfx }); });
+    $<HTMLSelectElement>('#seasonLen', root).addEventListener('change', e => hooks.seasonDays(Number((e.target as HTMLSelectElement).value)));
     $<HTMLSelectElement>('#rotMode', root).addEventListener('change', e => hooks.rotateMode((e.target as HTMLSelectElement).value as RotateMode));
     $('#speed', root).addEventListener('click', e => {
       const b = (e.target as HTMLElement).closest('button');
@@ -158,6 +166,7 @@ export class Hud {
     if (innerWidth <= 720) quest.classList.add('mini');
     quest.addEventListener('click', () => quest.classList.toggle('mini'));
     $('#tSelect', root).addEventListener('click', () => hooks.tool('select'));
+    $('#tRotate', root).addEventListener('click', () => hooks.rotate());
     $('#tDemolish', root).addEventListener('click', () => hooks.tool(this.tool === 'demolish' ? 'select' : 'demolish'));
     $('#tResearch', root).addEventListener('click', () => this.togglePanel('research'));
     $('#tGoods', root).addEventListener('click', () => this.togglePanel('goods'));
@@ -199,6 +208,7 @@ export class Hud {
         else { btn.dataset.confirm = '1'; btn.textContent = '再点一次确认拆除'; }
       }
       if (a === 'focus') hooks.focus(b);
+      if (a === 'pause') { hooks.pause(b); this.infoKey = ''; this.renderInfo(); }
     });
   }
 
@@ -217,7 +227,7 @@ export class Hud {
     b.title = this.audio.muted ? '打开声音' : '静音';
   }
 
-  setGame(g: Game) { this.game = g; this.selected = null; this.infoKey = ''; this.itemsKey = ''; this.renderInfo(); this.renderItems(); }
+  setGame(g: Game) { $<HTMLSelectElement>('#seasonLen', this.root).value = String(g.seasonDays); this.game = g; this.selected = null; this.infoKey = ''; this.itemsKey = ''; this.renderInfo(); this.renderItems(); }
   setTool(t: Tool) {
     this.tool = t;
     const cat = BUILD_MENU.findIndex(c => menuItems(c.cat).includes(t as BuildingId));
@@ -226,6 +236,7 @@ export class Hud {
     this.renderItems();
     $('#tDemolish', this.root).classList.toggle('on', t === 'demolish');
     $('#tSelect', this.root).classList.toggle('on', t === 'select');
+    $('#tRotate', this.root).hidden = !(t in BUILDINGS && BUILDINGS[t as BuildingId].size[0] !== BUILDINGS[t as BuildingId].size[1]);
   }
   select(b: Bld | null) { this.selected = b; this.infoKey = ''; this.renderInfo(); }
   setOverlay(on: boolean) {
@@ -531,21 +542,21 @@ export class Hud {
     } else if (d.heating) {
       body = `<div class="row"><span>${TIERS[d.workers!.tier].name}</span><b data-f="staff"></b></div><div class="row"><span>供暖半径</span><b>${d.radius} 格</b></div><div class="row"><span>供暖住宅</span><b data-f="cov"></b></div>`;
     } else if (d.service) {
-      body = `<div class="row"><span>覆盖半径</span><b>${g.radiusOf(b)} 格</b></div><div class="row"><span>覆盖住宅</span><b data-f="cov"></b></div>`;
+      body = `<div class="row"><span>覆盖范围</span><b>${g.usesRoads(b.type) ? `沿道路走 ${g.roadRange(b.type)} 格` : `半径 ${g.radiusOf(b)} 格`}</b></div><div class="row"><span>覆盖住宅</span><b data-f="cov"></b></div>`;
     } else if (b.type === 'depot' || b.type === 'warehouse') {
       body = `<div class="row"><span>每种货物上限</span><b data-f="cap"></b></div><button class="ghost" data-a="goods">打开仓库与商船</button>`;
     } else if (d.workers) {
       body = `<div class="row"><span>${TIERS[d.workers.tier].name}</span><b data-f="staff"></b></div>`;
     }
     if (d.pollution) body += `<div class="row"><span>${d.pollution > 0 ? '污染' : '净化'}</span><b>${d.pollution > 0 ? '' : '-'}${Math.abs(d.pollution)}</b></div>`;
-    if (d.protects) body += `<div class="row"><span>${PROTECTS[d.protects]}覆盖</span><b>半径 ${d.radius} 格，覆盖 <span data-f="pcov"></span> 座建筑</b></div>`;
+    if (d.protects) body += `<div class="row"><span>${PROTECTS[d.protects]}覆盖</span><b>沿道路走 ${g.roadRange(b.type)} 格，覆盖 <span data-f="pcov"></span> 座建筑</b></div><p class="hint">和纪元一样，服务沿着道路走：门口的路连到哪，就能管到哪。</p>`;
     if (b.type !== 'depot') body += `<div class="safety" data-f="safety"></div>`;
     box.innerHTML = `
       <header><h3>${title}</h3><button class="x" data-a="close" aria-label="关闭">×</button></header>
       <span class="pill" data-f="status"></span>
       <p class="desc">${isHouse ? this.houseDesc(b) : d.desc}</p>
       ${body}
-      <footer>${d.upkeep ? `<span class="upkeep">维护费 ${Math.round(d.upkeep * PER_DAY)}/天</span>` : '<span></span>'}${b.type !== 'depot' ? '<button class="danger" data-a="demolish">拆除</button>' : ''}</footer>`;
+      <footer>${d.upkeep ? `<span class="upkeep">维护费 ${Math.round(d.upkeep * PER_DAY * (b.paused ? 0.25 : 1))}/天</span>` : '<span></span>'}<span class="acts">${d.workers ? `<button class="ghost small" data-a="pause">${b.paused ? '重新开工' : '暂停'}</button>` : ''}${b.type !== 'depot' ? `<button class="danger" data-a="demolish" title="返还一半造价：${costHtml(refund(d.cost)).replace(/<[^>]+>/g, ' ')}">拆除</button>` : ''}</span></footer>`;
     box.querySelector('[data-a="research"]')?.addEventListener('click', () => this.togglePanel('research', true));
     box.querySelector('[data-a="goods"]')?.addEventListener('click', () => this.togglePanel('goods', true));
     this.updateInfo();

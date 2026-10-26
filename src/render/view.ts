@@ -192,13 +192,13 @@ export class View {
     const { world, W, occ } = this.game;
     const M = new THREE.Matrix4(), Q = new THREE.Quaternion(), S = new THREE.Vector3();
     const n = [0, 0];
-    for (let z = 0; z < W; z++) for (let x = 0; x < W; x++) {
-      const k = z * W + x, d = world.deposits[k];
-      if (!d || occ[k] !== 0 || (x * 5 + z * 3) % 2) continue;
-      const wx = x + 0.5 - this.half, wz = z + 0.5 - this.half;
-      const s = 0.9 + ((x * 13 + z * 7) % 5) * 0.1;
-      M.compose(new THREE.Vector3(wx, this.terrain.height(wx, wz), wz), Q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), (x * 3 + z * 5) % 6), S.set(s, s, s));
-      this.deposits[d - 1].setMatrixAt(n[d - 1]++, M);
+    for (const p of world.patches) {
+      let taken = false;
+      for (let j = 0; j < 2; j++) for (let i = 0; i < 2; i++) if (occ[(p.z + j) * W + p.x + i] !== 0) taken = true;
+      if (taken) continue;
+      const wx = p.x + 1 - this.half, wz = p.z + 1 - this.half;
+      M.compose(new THREE.Vector3(wx, this.terrain.height(wx, wz), wz), Q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), (p.x * 3 + p.z * 5) % 6), S.set(1.9, 1.6, 1.9));
+      this.deposits[p.kind - 1].setMatrixAt(n[p.kind - 1]++, M);
     }
     this.deposits.forEach((m, i) => { m.count = n[i]; (m.userData.line as THREE.InstancedMesh).count = n[i]; m.instanceMatrix.needsUpdate = true; });
   }
@@ -215,6 +215,20 @@ export class View {
       }
       if (m.instanceColor) m.instanceColor.needsUpdate = true;
     }
+  }
+  /** show which streets and buildings a service reaches */
+  private showReach(type: BuildingId, x: number, z: number, w: number, h: number, mask?: Uint8Array) {
+    const g = this.game, W = g.W;
+    const m = mask ?? g.roadReach(x, z, w, h, g.roadRange(type));
+    const cells = new Uint8Array(W * W);
+    for (let i = 0; i < W * W; i++) if (m[i]) cells[i] = 2;
+    const all = !!BUILDINGS[type].protects;
+    for (const b of g.buildings.values()) {
+      if (!all && b.type !== 'house') continue;
+      if (!g.touchesMask(b, m)) continue;
+      for (let j = 0; j < b.h; j++) for (let i = 0; i < b.w; i++) cells[(b.z + j) * W + b.x + i] = 1;
+    }
+    this.terrain.setReach(cells);
   }
   setPollutionView(on: boolean) { this.terrain.terrainU.uPollOn.value = on ? 1 : 0; }
 
@@ -289,6 +303,10 @@ export class View {
   // ---------- buildings ----------
   facing(b: Pick<Bld, 'x' | 'z' | 'w' | 'h' | 'type'>): number {
     const g = this.game;
+    // a non-square building can only turn the ways its footprint allows
+    const [dw, dh] = BUILDINGS[b.type].size;
+    const turned = dw !== dh && b.w !== dw;
+    const allowed = (yaw: number) => dw === dh || (turned ? Math.abs(Math.abs(yaw) - Math.PI / 2) < 0.01 : Math.abs(Math.abs(yaw) - Math.PI / 2) > 0.01);
     const sides: [number, number[][]][] = [
       [0, Array.from({ length: b.w }, (_, i) => [b.x + i, b.z + b.h])],
       [Math.PI / 2, Array.from({ length: b.h }, (_, j) => [b.x + b.w, b.z + j])],
@@ -298,11 +316,12 @@ export class View {
     const wantWater = b.type === 'fishery' || b.type === 'depot';
     let best = 0, bestScore = -1;
     for (const [yaw, cells] of sides) {
+      if (!allowed(yaw)) continue;
       let s = 0;
       for (const [x, z] of cells) s += wantWater ? (g.world.tile(x, z) === Tile.Water ? 1 : 0) : (g.isRoad(x, z) ? 1 : 0);
       if (s > bestScore) { bestScore = s; best = yaw; }
     }
-    return bestScore > 0 ? best : 0;
+    return bestScore > 0 ? best : turned ? Math.PI / 2 : 0;
   }
   /** where people enter and leave a building: the middle of an edge that touches a road */
   door(b: Bld): THREE.Vector2 {
@@ -358,12 +377,12 @@ export class View {
   }
 
   // ---------- tool preview ----------
-  showGhost(type: BuildingId | null, x = 0, z = 0, ok = true) {
+  showGhost(type: BuildingId | null, x = 0, z = 0, ok = true, rot = 0) {
     this.ghost.visible = !!type;
     const U = this.terrain.terrainU;
-    if (!type) { U.uRangeOn.value = 0; return; }
+    if (!type) { U.uRangeOn.value = 0; this.terrain.setReach(null); return; }
     const def = BUILDINGS[type];
-    const [w, h] = def.size;
+    const [w, h] = this.game.sizeOf(type, rot);
     const key = type === 'house' ? 'house-peasant-0' : type;
     if (this.ghost.userData.key !== key) {
       this.ghost.children.filter(c => c !== this.ghostFoot).forEach(c => this.ghost.remove(c));
@@ -383,7 +402,12 @@ export class View {
     (this.ghostFoot.material as THREE.MeshBasicMaterial).color.setHex(ok ? 0x7ee08a : 0xff7a6e);
     this.ghost.position.set(x + w / 2 - this.half, 0, z + h / 2 - this.half);
     this.ghost.rotation.y = this.facing({ x, z, w, h, type });
-    if (def.radius) {
+    if (this.game.usesRoads(type)) {
+      U.uRangeOn.value = 0;
+      const k = `${type}:${x},${z}`;
+      if (this.ghost.userData.reach !== k) { this.ghost.userData.reach = k; this.showReach(type, x, z, w, h); }
+    } else if (def.radius) {
+      this.terrain.setReach(null);
       U.uRangeOn.value = 1;
       U.uRange.value.set(x + w / 2 - this.half, z + h / 2 - this.half, def.radius + (def.service ? 0 : 0.5));
     } else U.uRangeOn.value = 0;
@@ -404,12 +428,13 @@ export class View {
   select(b: Bld | null) {
     const U = this.terrain.terrainU;
     const s = U.uSel.value;
-    if (!b) { s.set(0, 0, 0, 0); if (!this.ghost.visible) U.uRangeOn.value = 0; return; }
+    if (!b) { s.set(0, 0, 0, 0); if (!this.ghost.visible) { U.uRangeOn.value = 0; this.terrain.setReach(null); } return; }
     const c = this.game.center(b);
     s.set(c.x - this.half, c.z - this.half, b.w, b.h);
     const r = BUILDINGS[b.type].radius;
-    if (r) { U.uRangeOn.value = 1; U.uRange.value.set(c.x - this.half, c.z - this.half, this.game.radiusOf(b) + (BUILDINGS[b.type].service ? 0 : 0.5)); }
-    else if (!this.ghost.visible) U.uRangeOn.value = 0;
+    if (this.game.usesRoads(b.type)) { U.uRangeOn.value = 0; this.showReach(b.type, b.x, b.z, b.w, b.h, this.game.reach.get(b.id)); }
+    else if (r) { this.terrain.setReach(null); U.uRangeOn.value = 1; U.uRange.value.set(c.x - this.half, c.z - this.half, this.game.radiusOf(b) + (BUILDINGS[b.type].service ? 0 : 0.5)); }
+    else if (!this.ghost.visible) { U.uRangeOn.value = 0; this.terrain.setReach(null); }
   }
 
   private groundAt(clientX: number, clientY: number) {

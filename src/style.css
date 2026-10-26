@@ -322,3 +322,6 @@ button.chip:hover { border-color: var(--ink); }
 .need.minus b { text-align: left; }
 .lh { margin: 12px 0 4px; font-size: 12px; letter-spacing: .06em; color: var(--ink-soft); }
 .lhist .lrow .soft { color: var(--ink-soft); margin-left: auto; padding-left: 12px; }
+.info footer .acts { display: flex; gap: 6px; }
+.info .ghost.small { padding: 6px 10px; border-style: solid; border-color: #e6d8bd; }
+.settings label[for=seasonLen] { grid-column: 1 / -1; margin-top: 2px; }

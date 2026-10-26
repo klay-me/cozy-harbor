@@ -11,6 +11,7 @@ export interface Bld {
   id: number;
   type: BuildingId;
   x: number; z: number; w: number; h: number;
+  rot: number;        // 1 = turned a quarter (non-square footprints only)
   variant: number;
   // production
   progress: number;
@@ -39,6 +40,7 @@ export interface Bld {
   hungerT: number;         // seconds the household has gone short of food
   fed: number;             // 0..1 share of hunger stilled
   plague: number;          // seconds since infection (0 = healthy)
+  paused: boolean;         // closed by the player: no workers, quarter upkeep
 }
 
 export interface ProdEvent { id: number; good: GoodId; n: number }
@@ -137,6 +139,8 @@ export class Game {
   /** what heating would burn per minute at coldness 1 (for the winter estimate) */
   heatBase: Partial<Record<GoodId | 'power', number>> = {};
   temp = 13;
+  /** days per season (a setting) */
+  seasonDays = SEASON_DAYS;
   ledger = new Ledger();
   /** 0..1 how well each tier was fed this step */
   fedRatio: Record<TierId, number> = { peasant: 1, worker: 1, technician: 1, citizen: 1 };
@@ -150,6 +154,8 @@ export class Game {
   flowLeft = { hunger: 0, cold: 0, plague: 0, fire: 0 };
   /** buildings currently burning, for the renderer */
   fires = new Set<number>();
+  /** road tiles each street-served building reaches (cached on refresh) */
+  reach = new Map<number, Uint8Array>();
   private toastAt: Record<string, number> = {};
   netRoads = new Uint8Array(0);
   // change counters for the renderer
@@ -179,7 +185,14 @@ export class Game {
   get totalHours() { return START_HOUR + (this.time / DAY_LENGTH) * 24; }
   get hour() { return this.totalHours % 24; }
   get day() { return Math.floor(this.totalHours / 24); }
-  get seasonPos() { return (this.totalHours / 24) / SEASON_DAYS; }
+  /** change the season length without jumping to another season */
+  setSeasonDays(n: number) {
+    const pos = this.seasonPos;
+    this.seasonDays = n;
+    this.time = (pos * 24 * n - START_HOUR) / 24 * DAY_LENGTH;
+    this.lastDay = this.day; this.lastSeason = this.season;
+  }
+  get seasonPos() { return (this.totalHours / 24) / this.seasonDays; }
   get season(): SeasonId { return SEASON_IDS[Math.floor(this.seasonPos) % 4]; }
   get year() { return Math.floor(this.seasonPos / 4) + 1; }
   get night() {
@@ -197,9 +210,9 @@ export class Game {
   /** 0..1 how far through the current season */
   get seasonFrac() { return this.seasonPos % 1; }
   /** game seconds until the next season */
-  get seasonLeft() { return (1 - this.seasonFrac) * SEASON_DAYS * DAY_LENGTH; }
+  get seasonLeft() { return (1 - this.seasonFrac) * this.seasonDays * DAY_LENGTH; }
   /** day of the current season, 1-based */
-  get seasonDay() { return Math.floor(this.seasonFrac * SEASON_DAYS) + 1; }
+  get seasonDay() { return Math.floor(this.seasonFrac * this.seasonDays) + 1; }
   /** temperature in °C: season curve, day and night, weather, and colder winters each year */
   tempAt(seasonPos: number, hour: number) {
     const s = seasonPos - 0.5, i = Math.floor(s), f = s - i;
@@ -233,7 +246,8 @@ export class Game {
   }
   isRoad(x: number, z: number) { return this.world.inside(x, z) && this.occ[z * this.W + x] === -1; }
   center(b: Bld) { return { x: b.x + b.w / 2, z: b.z + b.h / 2 }; }
-  sizeOf(type: BuildingId) { return BUILDINGS[type].size; }
+  /** footprint, swapped when rotated a quarter turn */
+  sizeOf(type: BuildingId, rot = 0): [number, number] { const [w, h] = BUILDINGS[type].size; return rot % 2 ? [h, w] : [w, h]; }
   has(t: TechId) { return (this.research.levels[t] ?? 0) > 0; }
   unlocked(type: BuildingId) {
     const d = BUILDINGS[type];
@@ -264,13 +278,26 @@ export class Game {
   private gain(c: Cost, f = 1, label = '拆除返还') {
     this.gold += Math.floor(c.gold * f);
     this.ledger.add('gold', 'in', label, Math.floor(c.gold * f));
-    for (const k of GOOD_IDS) if (c[k]) { const n = Math.floor(c[k]! * f); this.storage[k] = Math.min(this.cap, this.storage[k] + n); this.ledger.add(k, 'in', label, n); }
+    const got: string[] = [];
+    for (const k of GOOD_IDS) if (c[k]) {
+      const n = Math.min(Math.ceil(c[k]! * f), Math.max(0, Math.floor(this.cap - this.storage[k])));
+      this.storage[k] += n;
+      this.ledger.add(k, 'in', label, n);
+      if (n) got.push(`${n} ${GOODS[k].name}`);
+    }
+    return [Math.floor(c.gold * f) ? `${Math.floor(c.gold * f)} 金币` : '', ...got].filter(Boolean).join('、');
+  }
+  /** close or reopen a workplace */
+  togglePause(b: Bld) {
+    if (!BUILDINGS[b.type].workers) return;
+    b.paused = !b.paused;
+    this.notify(b.paused ? `${BUILDINGS[b.type].name}暂停了：工人去别处干活，维护费只收 1/4` : `${BUILDINGS[b.type].name}重新开工`, 'info');
   }
 
-  canPlace(type: BuildingId, x: number, z: number): { ok: boolean; reason?: string } {
+  canPlace(type: BuildingId, x: number, z: number, rot = 0): { ok: boolean; reason?: string } {
     const def = BUILDINGS[type];
     if (!this.unlocked(type)) return { ok: false, reason: this.lockReason(type) };
-    const [w, h] = def.size;
+    const [w, h] = this.sizeOf(type, rot);
     let dep = 0;
     for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
       const tx = x + i, tz = z + j;
@@ -284,13 +311,24 @@ export class Game {
     }
     if (def.needs === 'water' && !this.touchesWater(x, z, w, h)) return { ok: false, reason: `${def.name}必须紧挨水边` };
     if (def.needs === 'river' && !this.touchesWater(x, z, w, h, true)) return { ok: false, reason: `${def.name}必须紧挨河流或湖泊` };
-    if (def.needs === 'iron' && dep < 2) return { ok: false, reason: '必须建在铁矿脉上' };
-    if (def.needs === 'coal' && dep < 2) return { ok: false, reason: '必须建在煤矿脉上' };
+    if (def.needs === 'iron' && dep < 4) return { ok: false, reason: '必须正好压在一块铁矿上（2×2 的矿点）' };
+    if (def.needs === 'coal' && dep < 4) return { ok: false, reason: '必须正好压在一块煤矿上（2×2 的矿点）' };
     const m = this.missing(def.cost);
     if (m) return { ok: false, reason: m };
     return { ok: true };
   }
 
+  /** room for a footprint, ignoring cost and unlocks (used when loading old saves) */
+  canFit(type: BuildingId, x: number, z: number, rot = 0) {
+    const [w, h] = this.sizeOf(type, rot);
+    for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
+      const tx = x + i, tz = z + j;
+      if (!this.world.inside(tx, tz) || this.occ[tz * this.W + tx] !== 0) return false;
+      const t = this.world.tile(tx, tz);
+      if (t === Tile.Water || t === Tile.Rock) return false;
+    }
+    return true;
+  }
   touchesWater(x: number, z: number, w: number, h: number, inland = false) {
     for (let j = -1; j <= h; j++) for (let i = -1; i <= w; i++) {
       if (i >= 0 && i < w && j >= 0 && j < h) continue;
@@ -320,23 +358,23 @@ export class Game {
   }
 
   // ---------- actions ----------
-  place(type: BuildingId, x: number, z: number): boolean {
-    const chk = this.canPlace(type, x, z);
+  place(type: BuildingId, x: number, z: number, rot = 0): boolean {
+    const chk = this.canPlace(type, x, z, rot);
     if (!chk.ok) { this.notify(chk.reason!, 'warn'); return false; }
     this.pay(BUILDINGS[type].cost);
-    this.addBuilding(type, x, z);
+    this.addBuilding(type, x, z, rot);
     this.refresh();
     this.sfx.push('place');
     return true;
   }
 
-  private addBuilding(type: BuildingId, x: number, z: number) {
-    const [w, h] = BUILDINGS[type].size;
+  private addBuilding(type: BuildingId, x: number, z: number, rot = 0) {
+    const [w, h] = this.sizeOf(type, rot);
     const id = this.nextId++;
     const b: Bld = {
-      id, type, x, z, w, h, variant: (x * 7 + z * 13) % 4,
+      id, type, x, z, w, h, rot: rot % 2, variant: (x * 7 + z * 13) % 4,
       progress: 0, loaded: false, staff: 0, env: 1, working: false, status: '', connected: false, gen: 0,
-      tier: 'peasant', residents: 0, sick: 0, happy: 0, parts: [], needs: [], warm: 1, coldT: 0, growT: 0, cover: new Set(), heaters: [], protect: new Set(), fire: 0, strike: 0, hungerT: 0, fed: 1, plague: 0,
+      tier: 'peasant', residents: 0, sick: 0, happy: 0, parts: [], needs: [], warm: 1, coldT: 0, growT: 0, cover: new Set(), heaters: [], protect: new Set(), fire: 0, strike: 0, hungerT: 0, fed: 1, plague: 0, paused: false,
     };
     this.buildings.set(id, b);
     for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
@@ -397,7 +435,8 @@ export class Game {
     if (o > 0) {
       const b = this.buildings.get(o)!;
       if (b.type === 'depot') { this.notify('港口不能拆除', 'warn'); return false; }
-      this.gain(BUILDINGS[b.type].cost, REFUND);
+      const back = this.gain(BUILDINGS[b.type].cost, REFUND);
+      if (back) this.notify(`拆除返还：${back}`, 'info');
       this.remove(b);
       this.sfx.push('demolish');
       return true;
@@ -546,14 +585,12 @@ export class Game {
     });
     void hubs;
     // protection (health, fire, police) for every building
-    const prot = [...this.buildings.values()].filter(s => BUILDINGS[s.type].protects && s.connected);
+    this.reach.clear();
+    for (const s of this.buildings.values()) if (s.connected && this.usesRoads(s.type)) this.reach.set(s.id, this.roadReach(s.x, s.z, s.w, s.h, this.roadRange(s.type)));
+    const prot = [...this.buildings.values()].filter(s => BUILDINGS[s.type].protects && this.reach.has(s.id));
     this.buildings.forEach(b => {
       b.protect = new Set();
-      const c = this.center(b);
-      for (const s of prot) {
-        const sc = this.center(s);
-        if (Math.hypot(sc.x - c.x, sc.z - c.z) <= this.radiusOf(s)) b.protect.add(BUILDINGS[s.type].protects!);
-      }
+      for (const s of prot) if (s === b || this.touchesMask(b, this.reach.get(s.id)!)) b.protect.add(BUILDINGS[s.type].protects!);
     });
     // cache which services and heating plants reach each house
     const cov = [...this.buildings.values()].filter(s => BUILDINGS[s.type].service || BUILDINGS[s.type].heating);
@@ -563,13 +600,45 @@ export class Game {
       const c = this.center(b);
       for (const s of cov) {
         if (!s.connected) continue;
-        const sc = this.center(s);
-        if (Math.hypot(sc.x - c.x, sc.z - c.z) > this.radiusOf(s)) continue;
         const d = BUILDINGS[s.type];
+        const m = this.reach.get(s.id);
+        if (m) { if (!this.touchesMask(b, m)) continue; }
+        else { const sc = this.center(s); if (Math.hypot(sc.x - c.x, sc.z - c.z) > this.radiusOf(s)) continue; }
         if (d.service) b.cover.add(d.service);
         if (d.heating) b.heaters.push(s);
       }
     });
+  }
+  /** services spread along the streets (like Anno): road tiles reachable within the range */
+  roadRange(type: BuildingId) { return Math.round((BUILDINGS[type].radius ?? 0) * 1.6); }
+  usesRoads(type: BuildingId) { const d = BUILDINGS[type]; return !!(d.service && d.service !== 'park') || !!d.protects; }
+  /** road tiles a building at (x,z,w,h) reaches; returns a mask (1 = reached) over the map */
+  roadReach(x: number, z: number, w: number, h: number, range: number) {
+    const W = this.W, mask = new Uint8Array(W * W), dist = new Int16Array(W * W).fill(-1), q: number[] = [];
+    const seed = (tx: number, tz: number) => { if (this.isRoad(tx, tz)) { const k = tz * W + tx; if (dist[k] < 0) { dist[k] = 0; q.push(k); } } };
+    for (let i = 0; i < w; i++) { seed(x + i, z - 1); seed(x + i, z + h); }
+    for (let j = 0; j < h; j++) { seed(x - 1, z + j); seed(x + w, z + j); }
+    for (let qi = 0; qi < q.length; qi++) {
+      const k = q[qi]; mask[k] = 1;
+      if (dist[k] >= range) continue;
+      const tx = k % W, tz = (k / W) | 0;
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = tx + dx, nz = tz + dz;
+        if (!this.isRoad(nx, nz)) continue;
+        const nk = nz * W + nx;
+        if (dist[nk] >= 0) continue;
+        dist[nk] = dist[k] + 1; q.push(nk);
+      }
+    }
+    return mask;
+  }
+  /** does a building touch any reached road tile? */
+  touchesMask(b: { x: number; z: number; w: number; h: number }, mask: Uint8Array) {
+    const W = this.W;
+    const at = (tx: number, tz: number) => this.world.inside(tx, tz) && mask[tz * W + tx] === 1;
+    for (let i = 0; i < b.w; i++) if (at(b.x + i, b.z - 1) || at(b.x + i, b.z + b.h)) return true;
+    for (let j = 0; j < b.h; j++) if (at(b.x - 1, b.z + j) || at(b.x + b.w, b.z + j)) return true;
+    return false;
   }
   forEdge(b: Bld, fn: (x: number, z: number) => void) {
     for (let i = 0; i < b.w; i++) { fn(b.x + i, b.z - 1); fn(b.x + i, b.z + b.h); }
@@ -629,11 +698,12 @@ export class Game {
     for (const b of this.buildings.values()) {
       const def = BUILDINGS[b.type];
       // idle workshops (no staff, no input, strike, fire) only cost a quarter
-      const fee = def.workers && !b.working ? def.upkeep * 0.25 : def.upkeep;
+      const fee = def.workers && (!b.working || b.paused) ? def.upkeep * 0.25 : def.upkeep;
       upkeep += fee;
       this.ledger.add('gold', 'out', `维护·${def.name}`, fee / 60 * dt);
       b.gen = 0;
       if (b.type === 'house' || b.type === 'road') continue;
+      if (b.paused) { b.staff = 0; b.working = false; b.status = '已暂停：工人去别处干活了'; continue; }
       // staffing
       if (def.workers) {
         const need = this.workersFor(b.type);
@@ -1112,7 +1182,7 @@ export class Game {
     if (this.lastSeason && s !== this.lastSeason) {
       this.notify(`${s === 'spring' ? `第 ${this.year} 年，` : ''}${SEASONS[s].name}天到了：${SEASONS[s].effect}`, 'good');
       if (s === 'autumn') {
-        const winterNeed = this.foodNeed() * SEASON_DAYS;
+        const winterNeed = this.foodNeed() * this.seasonDays;
         this.notify(`冬天快到了：菜园和麦田会停产，渔场减产。三天冬天全城要吃约 ${Math.ceil(winterNeed)} 份饱食（现在库存 ${Math.floor(this.foodStock())}），还要烧约 ${Math.ceil(this.winterFuelEstimate())} 份燃料`, 'warn');
       }
       this.sfx.push('season');
@@ -1137,8 +1207,8 @@ export class Game {
     const start = Math.floor(this.seasonPos / 4) * 4 + (this.season === 'winter' && this.seasonFrac > 0 ? 3 + this.seasonFrac : 3);
     const end = Math.floor(this.seasonPos / 4) * 4 + 4;
     let c = 0, n = 0;
-    for (let p = start; p < end; p += 0.02) { c += coldness(this.tempAt(p, (p * SEASON_DAYS * 24) % 24)); n++; }
-    const minutes = (end - start) * SEASON_DAYS * DAY_LENGTH / 60;
+    for (let p = start; p < end; p += 0.02) { c += coldness(this.tempAt(p, (p * this.seasonDays * 24) % 24)); n++; }
+    const minutes = (end - start) * this.seasonDays * DAY_LENGTH / 60;
     let tot = 0;
     for (const [f, r] of Object.entries(this.heatBase)) if (f !== 'power') tot += r! * (n ? c / n : 0) * minutes;
     return tot;
@@ -1158,10 +1228,10 @@ export class Game {
     const roads: number[] = [];
     this.occ.forEach((o, i) => { if (o === -1) roads.push(i); });
     return JSON.stringify({
-      v: 2, seed: this.world.seed, weather: this.weather.cur, gold: this.gold, time: this.time, quest: this.questIndex, era: this.era,
+      v: 2, seasonDays: this.seasonDays, seed: this.world.seed, weather: this.weather.cur, gold: this.gold, time: this.time, quest: this.questIndex, era: this.era,
       research: { current: this.research.current, points: this.research.points, levels: this.research.levels, saved: this.research.saved },
       storage: this.storage, roads,
-      b: [...this.buildings.values()].filter(b => b.type !== 'depot').map(b => [b.type, b.x, b.z, b.tier, b.residents, b.progress]),
+      b: [...this.buildings.values()].filter(b => b.type !== 'depot').map(b => [b.type, b.x, b.z, b.tier, b.residents, b.progress, b.paused ? 1 : 0, b.rot]),
     });
   }
   static load(json: string): Game | null {
@@ -1169,15 +1239,16 @@ export class Game {
       const s = JSON.parse(json);
       if (s.v !== 2) return null;
       const g = new Game(s.seed);
-      g.gold = s.gold; g.time = s.time; g.questIndex = s.quest; g.era = s.era ?? 1;
+      g.gold = s.gold; g.time = s.time; if (s.seasonDays) g.seasonDays = s.seasonDays; g.questIndex = s.quest; g.era = s.era ?? 1;
       if (s.research) { g.research.current = s.research.current; g.research.points = s.research.points; g.research.levels = s.research.levels ?? {}; g.research.saved = s.research.saved ?? {}; }
       if (s.weather && s.weather in WEATHER) { g.weather.cur = g.weather.prev = s.weather; }
       GOOD_IDS.forEach(k => { g.storage[k] = s.storage[k] ?? 0; });
       for (const i of s.roads) { g.occ[i] = -1; g.world.trees[i] = 0; }
-      for (const [type, x, z, tier, res, prog] of s.b) {
+      for (const [type, x, z, tier, res, prog, paused, rot] of s.b) {
         if (!(type in BUILDINGS)) continue;
-        const b = g.addBuilding(type, x, z);
-        b.tier = tier; b.residents = res; b.progress = prog;
+        if (!g.canFit(type, x, z, rot ?? 0)) continue;
+        const b = g.addBuilding(type, x, z, rot ?? 0);
+        b.tier = tier; b.residents = res; b.progress = prog; b.paused = !!paused;
       }
       g.rVersion++; g.tVersion++;
       g.refresh();

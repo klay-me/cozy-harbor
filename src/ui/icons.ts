@@ -54,6 +54,7 @@ export const ICONS: Record<string, string> = {
   era: wrap(`<path d="M3 20h18" fill="none"/><path d="M5 20v-6l4-3 4 3v6" fill="#f7e2b0"/><path d="M13 20V9l3-3 3 3v11" fill="#c9d9ef"/>`),
   thermo: wrap(`<path d="M10 4a2 2 0 0 1 4 0v9.5a4 4 0 1 1-4 0z" fill="#fff8ea"/><circle cx="12" cy="17" r="2.2" fill="#f2766b" stroke="none"/><path d="M12 9v7" stroke="#f2766b" stroke-width="2"/>`),
   ledger: wrap(`<path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z" fill="#f7e2b0"/><path d="M5 17a3 3 0 0 1 3-3h11" fill="none"/><path d="M9 7.5h6M9 10.5h4" fill="none"/>`),
+  veg: wrap(`<path d="M12 21c-4.5 0-7-3-7-6.5S8 8 12 8s7 3 7 6.5-2.5 6.5-7 6.5z" fill="#8FD16A"/><path d="M12 8c0-2 1-4 3-5M12 8c-1-2-3-3-5-3M12 12v8M9 13.5l3 2.5 3-2.5" fill="none"/>`),
   food: wrap(`<path d="M4 12h16a8 7 0 0 1-16 0z" fill="#fff8ea"/><path d="M8 9c0-2 1-3 1-4M12 9c0-2 1-3 1-4M16 9c0-2 1-3 1-4" fill="none"/>`),
   fire: wrap(`<path d="M12 21c-4 0-6.5-2.6-6.5-6 0-4 4-6 3.5-11 3 1.5 5 4 5 6.5 1-1 1.5-2.2 1.5-3.5 2 1.8 3 4.5 3 7.5 0 3.8-2.6 6.5-6.5 6.5z" fill="#f2766b"/>`),
   clock: wrap(`<circle cx="12" cy="12" r="8.5" fill="#fff8ea"/><path d="M12 7v5l3 2" fill="none"/>`),

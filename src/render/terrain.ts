@@ -25,9 +25,11 @@ export class Terrain {
     uGrass: { value: new THREE.Color('#86CC63') },
     uPoll: { value: null as THREE.DataTexture | null }, uPollOn: { value: 0 },
     uRoad: { value: null as THREE.DataTexture | null }, uRoadStyle: { value: 0 },
+    uReach: { value: null as THREE.DataTexture | null }, uReachOn: { value: 0 },
   };
   private pollData!: Uint8Array;
   private roadData!: Uint8Array;
+  private reachData!: Uint8Array;
   /** occupied land tiles (buildings and roads), in the margin grid: the ground is levelled under them */
   private occT!: Float32Array;
   waterU: Record<string, THREE.IUniform>;
@@ -57,6 +59,11 @@ export class Terrain {
     rt.magFilter = THREE.LinearFilter; rt.minFilter = THREE.LinearFilter;
     rt.needsUpdate = true;
     this.terrainU.uRoad.value = rt;
+    this.reachData = new Uint8Array(W * W * 4);
+    const ct = new THREE.DataTexture(this.reachData, W, W, THREE.RGBAFormat);
+    ct.magFilter = THREE.NearestFilter; ct.minFilter = THREE.NearestFilter;
+    ct.needsUpdate = true;
+    this.terrainU.uReach.value = ct;
     // tile-level fields with margin, then a light blur to round the corners
     const TW = this.TW;
     const raw = new Float32Array(TW * TW), rawR = new Float32Array(TW * TW);
@@ -122,6 +129,13 @@ export class Terrain {
     const L = this.land(wx, wz);
     return THREE.MathUtils.smoothstep(o, 0.3, 0.62) * THREE.MathUtils.smoothstep(L, 0.46, 0.53);
   }
+  /** street coverage overlay: 2 = reached road, 1 = covered building, null hides it */
+  setReach(cells: Uint8Array | null) {
+    if (!cells) { this.terrainU.uReachOn.value = 0; return; }
+    for (let i = 0; i < cells.length; i++) { this.reachData[i * 4] = cells[i] * 120; this.reachData[i * 4 + 3] = 255; }
+    this.terrainU.uReach.value!.needsUpdate = true;
+    this.terrainU.uReachOn.value = 1;
+  }
   /** roads and buildings changed: level the ground under them and repaint the streets */
   setGround(occ: Int32Array, isLandRoad: (i: number) => boolean, roadStyle: number) {
     const W = this.W, TW = this.TW;
@@ -131,7 +145,7 @@ export class Terrain {
       const road = isLandRoad(i);
       const v = occ[i] > 0 || road ? 1 : 0;
       this.occT[(z + MARGIN) * TW + x + MARGIN] = v;
-      this.roadData[i * 4] = road ? 255 : 0; this.roadData[i * 4 + 3] = 255;
+      this.roadData[i * 4] = road ? 255 : 0; this.roadData[i * 4 + 1] = this.world.deposits[i] === 1 ? 255 : 0; this.roadData[i * 4 + 2] = this.world.deposits[i] === 2 ? 255 : 0; this.roadData[i * 4 + 3] = 255;
     }
     this.terrainU.uRoad.value!.needsUpdate = true;
     this.terrainU.uRoadStyle.value = roadStyle;
@@ -187,8 +201,8 @@ export class Terrain {
       Object.assign(sh.uniforms, U, ENV);
       sh.vertexShader = 'attribute vec3 kind;\nattribute float raise;\nvarying vec3 vKind;\nvarying vec3 vWP;\nvarying float vRaise;\n' + sh.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvKind = kind;\nvRaise = raise;');
       sh.fragmentShader = `
-uniform float uGrid, uW, uRangeOn, uSnow, uWet, uPollOn, uRoadStyle;
-uniform sampler2D uPoll, uRoad;
+uniform float uGrid, uW, uRangeOn, uSnow, uWet, uPollOn, uRoadStyle, uReachOn, uTime;
+uniform sampler2D uPoll, uRoad, uReach;
 varying float vRaise;
 uniform vec3 uRange, uGrass;
 uniform vec4 uSel;
@@ -230,7 +244,12 @@ float tfbm(vec2 p){ return tn(p) * 0.6 + tn(p * 2.3 + 7.1) * 0.3 + tn(p * 5.1 + 
   c = mix(c, quay, smoothstep(0.05, 0.35, vRaise));
   // streets painted into the ground: dirt track, then cobbles, then paving
   vec2 ruv = (vWP.xz + uW * 0.5) / uW;
-  float rm = texture2D(uRoad, ruv).r;
+  vec4 rtex = texture2D(uRoad, ruv);
+  float rm = rtex.r;
+  // mineral patches: stony ground speckled red (iron) or black (coal)
+  vec2 dc = floor(vWP.xz * 6.0);
+  c = mix(c, mix(vec3(0.62, 0.55, 0.5), vec3(0.78, 0.45, 0.35), step(0.7, th(dc))), smoothstep(0.45, 0.55, rtex.g) * 0.85);
+  c = mix(c, mix(vec3(0.42, 0.40, 0.42), vec3(0.18, 0.17, 0.2), step(0.6, th(dc))), smoothstep(0.45, 0.55, rtex.b) * 0.85);
   float road = smoothstep(0.56, 0.6, rm);
   float kerb = road * (1.0 - smoothstep(0.6, 0.68, rm));
   vec3 dirt = vec3(0.86, 0.75, 0.56) * (0.94 + 0.1 * tn(vWP.xz * 3.0)) * (1.0 - 0.06 * step(0.7, tn(vWP.xz * 9.0)));
@@ -258,6 +277,11 @@ float tfbm(vec2 p){ return tn(p) * 0.6 + tn(p * 2.3 + 7.1) * 0.3 + tn(p * 5.1 + 
             : pv < 0.66 ? mix(vec3(1.0, 0.86, 0.35), vec3(0.95, 0.45, 0.3), (pv - 0.33) / 0.33)
             : mix(vec3(0.95, 0.45, 0.3), vec3(0.55, 0.3, 0.55), (pv - 0.66) / 0.34);
   gl_FragColor.rgb = mix(gl_FragColor.rgb, heat, uPollOn * inMap * 0.6);
+  // street coverage: reached roads glow, covered buildings get a soft wash
+  float rv = texture2D(uReach, gp / uW).r;
+  float pulse = 0.85 + 0.15 * sin(uTime * 4.0);
+  gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(1.0, 0.86, 0.35), uReachOn * inMap * step(0.6, rv) * 0.55 * pulse);
+  gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.6, 0.9, 1.0), uReachOn * inMap * step(0.3, rv) * (1.0 - step(0.6, rv)) * 0.45);
   float d = distance(vWP.xz, uRange.xy);
   float inside = 1.0 - smoothstep(uRange.z - 0.06, uRange.z, d);
   float ring = smoothstep(uRange.z - 0.18, uRange.z - 0.06, d) * inside;

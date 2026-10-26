@@ -8,6 +8,7 @@ const NAMES = ['house_peasant_0', 'house_peasant_1', 'house_worker_0', 'house_wo
   'lumberjack', 'sawmill', 'fishery', 'farm', 'mill', 'bakery', 'market', 'tavern',
   'tree_round', 'tree_pine', 'bush', 'rock', 'lamp', 'boat', 'cart', 'villager_body'];
 
+const NAMES_BIG = ['sawmill', 'fishery', 'warehouse', 'tavern', 'brickworks', 'weaver', 'firestation', 'guild', 'cannery', 'purifier', 'church', 'sheepfarm', 'townhall', 'hospital', 'plant_modern', 'market', 'farm', 'factory'];
 const NAMES_M1 = ['house_technician_0', 'house_technician_1', 'house_citizen_0', 'house_citizen_2', 'study', 'church',
   'sheepfarm', 'woodshed', 'claypit', 'brickworks', 'weaver', 'tailor', 'mine', 'smithy', 'park', 'guild', 'ore_iron', 'ore_coal',
   'factory', 'cannery', 'brewery', 'powerplant', 'heatplant', 'school', 'clinic', 'townhall', 'university',
@@ -28,8 +29,8 @@ export function gallery(container: HTMLElement, opts: { snow?: number; glow?: nu
   ENV.uSnow.value = opts.snow ?? 0;
   ENV.uGlow.value = opts.glow ?? 0;
   const one = /one=([a-z_0-9]+)/.exec(location.hash)?.[1];
-  const list = one ? [one] : location.hash.includes('m1') ? NAMES_M1 : NAMES;
-  const cols = location.hash.includes('m1') ? 8 : 6;
+  const list = one ? [one] : location.hash.includes('big') ? NAMES_BIG : location.hash.includes('m1') ? NAMES_M1 : NAMES;
+  const cols = location.hash.includes('big') ? 6 : location.hash.includes('m1') ? 8 : 6;
   list.filter(hasModel).forEach((n, i) => {
     const m = getModel(n);
     const g = new THREE.Group();
@@ -49,14 +50,15 @@ export function gallery(container: HTMLElement, opts: { snow?: number; glow?: nu
         g.add(p);
       });
     }
-    g.position.set(one ? 0 : (i % cols) * 3.4 - (cols - 1) * 1.7, 0, one ? 0 : Math.floor(i / cols) * 3.6 - 5);
+    const sp = location.hash.includes('big') ? 4.6 : 3.4;
+    g.position.set(one ? 0 : (i % cols) * sp - (cols - 1) * sp / 2, 0, one ? 0 : Math.floor(i / cols) * (sp + 0.4) - 5);
     scene.add(g);
   });
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(60, 60).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: '#9fd27c' }));
   scene.add(ground);
   const cam = new THREE.PerspectiveCamera(32, innerWidth / innerHeight, 0.1, 200);
   const rows = Math.ceil(list.length / cols);
-  const far = location.hash.includes('m1') ? 1.45 : 1;
+  const far = location.hash.includes('big') ? 1.5 : location.hash.includes('m1') ? 1.45 : 1;
   cam.position.set(2 * far, 17 * far, 19 * far + (rows - 4) * 1.5);
   cam.lookAt(0, 0, (rows - 4) * 1.8 + 0.5);
   if (one) { cam.position.set(1.2, 3.2, 5.2); cam.lookAt(0, 1.2, 0); }
