@@ -652,7 +652,7 @@ export class View {
     this.rig.update(dt);
     this.decor?.setSeason(g.seasonPos);
     this.landmarks?.update(dt);
-    this.env.update(dt, g, this.rig.target, this.terrain, this.scene.fog as THREE.Fog);
+    this.env.update(dt, g, this.rig.target, this.terrain, this.scene.fog as THREE.Fog, this.rig.dist);
     this.people?.update(dt, gameDt);
     this.smoke?.update(dt);
     this.markT -= dt;

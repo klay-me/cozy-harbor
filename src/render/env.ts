@@ -156,7 +156,7 @@ export class Env {
   /** for the audio mix */
   mix() { return { rain: this.w.rain, storm: this.w.storm, sunny: 1 - this.w.over, night: this.night, snow: this.w.snow }; }
 
-  update(dt: number, game: Game, target: THREE.Vector3, terrain: Terrain, fog: THREE.Fog) {
+  update(dt: number, game: Game, target: THREE.Vector3, terrain: Terrain, fog: THREE.Fog, camDist = 26) {
     this.t += dt;
     ENV.uTime.value = this.t;
     const ease = 1 - Math.exp(-dt * 1.5);
@@ -184,7 +184,9 @@ export class Env {
     hi *= 1 + o * 0.15;
     this.skyTop.copy(top); this.skyHor.copy(hor);
     fog.color.copy(hor);
-    fog.near = this.w.near; fog.far = this.w.far;
+    // fog starts past the point you are looking at, so zooming out in fog still shows the town
+    const view = Math.max(0, camDist - 12);
+    fog.near = this.w.near + view; fog.far = this.w.far + view * 1.15;
     // sun / moon direction
     const day = h >= 5.5 && h <= 20;
     let dir: THREE.Vector3;

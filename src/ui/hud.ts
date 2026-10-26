@@ -35,8 +35,8 @@ export interface HudHooks {
   lookAt(x: number, z: number): void;
   sound(name: string): void;
 }
-type PanelId = 'research' | 'goods' | 'ledger' | 'log';
-const PANELS: PanelId[] = ['research', 'goods', 'ledger', 'log'];
+type PanelId = 'research' | 'goods' | 'ledger' | 'log' | 'work';
+const PANELS: PanelId[] = ['research', 'goods', 'ledger', 'log', 'work'];
 interface Alert { t: Toast; el: HTMLElement; life: number; n: number }
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string, root: ParentNode = document) => root.querySelector(sel) as T;
@@ -95,6 +95,7 @@ export class Hud {
       <div class="panel card" id="goods" hidden role="dialog" aria-label="仓库与商船"></div>
       <div class="panel card" id="ledger" hidden role="dialog" aria-label="收支账本"></div>
       <div class="panel card" id="log" hidden role="dialog" aria-label="消息记录"></div>
+      <div class="panel card" id="work" hidden role="dialog" aria-label="劳动力"></div>
       <div class="alerts" id="alerts" aria-live="polite"></div>
       <div class="banner" id="banner" aria-live="polite" hidden></div>
       <div class="actmsg" id="actmsg" aria-live="polite"></div>
@@ -159,6 +160,7 @@ export class Hud {
       const a = el.dataset.open;
       if (a === 'research') this.togglePanel('research');
       if (a === 'goods') this.togglePanel('goods');
+      if (a === 'work') this.togglePanel('work');
       if (a === 'ledger') { this.ledgerTab = el.dataset.good ? 'goods' : 'gold'; this.ledgerOpen = (el.dataset.good as GoodId) || this.ledgerOpen; this.togglePanel('ledger', true); }
     });
     // menu
@@ -214,6 +216,9 @@ export class Hud {
       if (tab) { this.ledgerTab = tab as 'gold' | 'goods'; this.renderLedger(); return; }
       const row = el.closest<HTMLElement>('[data-lgood]')?.dataset.lgood as GoodId | undefined;
       if (row) { this.ledgerOpen = this.ledgerOpen === row ? null : row; this.renderLedger(); }
+    });
+    $('#work', root).addEventListener('click', e => {
+      if ((e.target as HTMLElement).closest('[data-a="close"]')) this.togglePanel('work', false);
     });
     $('#goods', root).addEventListener('click', e => {
       const el = e.target as HTMLElement;
@@ -291,10 +296,39 @@ export class Hud {
     $('#tResearch', this.root).classList.toggle('on', id === 'research' && open);
     $('#tGoods', this.root).classList.toggle('on', id === 'goods' && open);
     $('#tLedger', this.root).classList.toggle('on', id === 'ledger' && open);
-    if (open && id !== 'log') id === 'research' ? this.renderResearch() : id === 'goods' ? this.renderGoods() : this.renderLedger();
+    if (open && id !== 'log') id === 'research' ? this.renderResearch() : id === 'goods' ? this.renderGoods() : id === 'work' ? this.renderWork() : this.renderLedger();
   }
   closePanels() { this.togglePanel('research', false); }
   get panelOpen() { return PANELS.some(p => !$('#' + p, this.root).hidden); }
+
+  /** jobs and hands per class, and which buildings employ them */
+  private renderWork() {
+    const g = this.game;
+    if (!g) return;
+    const box = $('#work', this.root);
+    const byType = new Map<BuildingId, { n: number; need: number; got: number; idle: number }>();
+    for (const b of g.buildings.values()) {
+      const d = BUILDINGS[b.type];
+      if (!d.workers) continue;
+      const need = b.paused ? 0 : g.workersFor(b.type);
+      const e = byType.get(b.type) ?? { n: 0, need: 0, got: 0, idle: 0 };
+      e.n++; e.need += need; e.got += Math.round((b.staff ?? 0) * need);
+      if (b.paused) e.idle++;
+      byType.set(b.type, e);
+    }
+    const cols = TIER_IDS.filter(t => g.pop[t] > 0 || TIERS[t].era <= g.era).map(t => {
+      const w = g.workforce[t], gap = w.need - w.have;
+      const rows = [...byType.entries()].filter(([k]) => BUILDINGS[k].workers!.tier === t).sort((a, b) => b[1].need - a[1].need)
+        .map(([k, e]) => `<div class="lrow"><span>${BUILDINGS[k].name} ×${e.n}${e.idle ? `<small>（${e.idle} 座暂停）</small>` : ''}</span><b class="${e.got < e.need ? 'down' : ''}">${e.got}/${e.need}</b></div>`).join('');
+      return `<div class="col"><h4>${TIERS[t].name}</h4>
+        <div class="lsum">${icon(t)}<span>人口 <b>${g.pop[t]}</b></span></div>
+        <div class="lrow"><span>能干活的</span><b>${w.have}</b></div>
+        <div class="lrow"><span>岗位需要</span><b>${w.need}</b></div>
+        <div class="lrow"><span>${gap > 0 ? '缺人' : '空闲'}</span><b class="${gap > 0 ? 'down' : 'up'}">${Math.abs(gap)}</b></div>
+        <h4 class="lh">各建筑（已到岗/需要）</h4>${rows || '<div class="lrow none">还没有要这个阶层的建筑</div>'}</div>`;
+    }).join('');
+    box.innerHTML = `<header><h3>劳动力</h3><span class="sub">病人和着火住宅里的人不上班；挨饿的人只干半天。缺人时先建住宅或让住宅升级。</span><button class="x" data-a="close" aria-label="关闭">×</button></header><div class="cols">${cols}</div>`;
+  }
 
   private renderItems() {
     const g = this.game;
@@ -304,9 +338,8 @@ export class Hud {
     this.itemsKey = key;
     $('#tabs', this.root).querySelectorAll('button').forEach((b, i) => b.setAttribute('aria-selected', String(i === this.tab)));
     // show what is unlocked plus a peek at the next era
-    // a line shows only its highest unlocked level (old ones upgrade in place from the info panel)
+    // every level of an upgrade line stays buildable: the cheap one for a quick start, the big one when you can afford it
     const items = menuItems(BUILD_MENU[this.tab].cat).filter(t => BUILDINGS[t].era <= g.era + 1)
-      .filter(t => { const up = BUILDINGS[t].upgrade; return !up || !g.unlocked(up.to); })
       .sort((a, b) => Number(!g.unlocked(a)) - Number(!g.unlocked(b)) || BUILDINGS[a].era - BUILDINGS[b].era);
     $('#items', this.root).innerHTML = items.map(t => {
       const d = BUILDINGS[t];
@@ -343,6 +376,7 @@ export class Hud {
       const box = $('#ledger', this.root), st = box.scrollTop;
       this.renderLedger(); box.scrollTop = st;
     }
+    if (!$('#work', this.root).hidden && this.ledgerT === 0) { const box = $('#work', this.root), st = box.scrollTop; this.renderWork(); box.scrollTop = st; }
     const top = (this.root.querySelector('.topbar') as HTMLElement).getBoundingClientRect().bottom + 10;
     const quest = $('#quest', this.root);
     quest.style.top = `${top}px`;
@@ -399,7 +433,7 @@ export class Hud {
     $('#res', this.root).innerHTML = `
       <span class="chip gold${g.gold < 0 ? ' low' : ''}" data-open="ledger" title="金币。每天税收 ${fmt(g.taxRate * PER_DAY)}，维护费 ${fmt(g.upkeepRate * PER_DAY)}${g.gold < 0 ? `。已经亏空 ${g.debtDays} 天：大家越来越不满，会罢工` : ''}（点击看收支明细）">${icon('gold')}<b>${fmt(g.gold)}</b><i class="${net >= 0 ? 'up' : 'down'}">${net >= 0 ? '+' : ''}${Math.round(net * PER_DAY)}/天</i></span>
       <span class="chip ${foodCls}" data-open="ledger" data-good="${foodKey}" title="${foodTip}">${icon('food')}<b>${foodDays === Infinity ? '—' : foodDays >= 10 ? Math.round(foodDays) : foodDays.toFixed(1)}</b><i>天</i></span>
-      <span class="chip pop" title="人口 ${total}">${tiers.map(t => `<span title="${TIERS[t].name}：${g.pop[t]} 人（空闲劳动力 ${Math.max(0, g.workforce[t].have - g.workforce[t].need)}，岗位 ${g.workforce[t].need}）" class="${g.workforce[t].need > g.workforce[t].have ? 'short' : ''}">${icon(t)}<b>${g.pop[t]}</b></span>`).join('')}</span>
+      <span class="chip pop" data-open="work" title="人口 ${total}（点击看各阶层劳动力）">${tiers.map(t => `<span title="${TIERS[t].name}：${g.pop[t]} 人（空闲劳动力 ${Math.max(0, g.workforce[t].have - g.workforce[t].need)}，岗位 ${g.workforce[t].need}）" class="${g.workforce[t].need > g.workforce[t].have ? 'short' : ''}">${icon(t)}<b>${g.pop[t]}</b></span>`).join('')}</span>
       <span class="chip ${happyCls}" title="平均幸福度">${icon('happy')}<b>${Math.round(g.happyAvg)}</b></span>
       ${g.era >= 3 ? `<span class="chip ${g.power.use > g.power.gen + 0.05 ? 'low' : ''}" title="电网：发电 ${g.power.gen.toFixed(1)} / 用电 ${g.power.use.toFixed(1)}">${icon('power')}<b>${g.power.gen.toFixed(0)}</b><i>/${g.power.use.toFixed(0)}</i></span>
       <span class="chip ${g.pollutionAvg > 25 ? 'low' : ''}" title="住宅区平均污染（点"污染"查看分布）">${icon('pollution')}<b>${g.pollutionAvg.toFixed(0)}</b></span>` : ''}
