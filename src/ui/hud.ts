@@ -8,7 +8,7 @@ import type { AudioSettings } from '../audio/sound';
 import type { RotateMode } from '../render/camera';
 import type { Quality } from '../render/post';
 import { icon } from './icons';
-import { SEASON_IDS, SEASON_DAYS, DAY_LENGTH, HEAT_BELOW, PER_DAY, FOODS, FoodId, PROTECTS, ProtectId, familyOf, ELEC_BOOST, COLD_STORE, DIFFICULTY, DIFFICULTY_IDS, DifficultyId, ModeId, MODES, SURVIVAL, MOOD } from '../sim/data';
+import { SEASON_IDS, SEASON_DAYS, DAY_LENGTH, HEAT_BELOW, PER_DAY, FOODS, FoodId, PROTECTS, ProtectId, familyOf, ELEC_BOOST, COLD_STORE, DIFFICULTY, DIFFICULTY_IDS, DifficultyId, ModeId, MODES, SURVIVAL, MOOD, HEAT_LADDER } from '../sim/data';
 import { supplies, needs as chainNeeds, chainSummary, outPerDay } from './chain';
 
 export type Tool = 'select' | 'demolish' | BuildingId;
@@ -81,6 +81,7 @@ export class Hud {
         <button class="menu-btn icon-btn log-btn" id="logBtn" title="消息记录 (M)" aria-label="消息记录">${icon('bell')}<span class="badge" id="logBadge" hidden></span></button>
         <button class="menu-btn icon-btn" id="muteBtn" aria-label="静音"></button>
         <button class="menu-btn" id="menuBtn" aria-haspopup="true">菜单</button>
+        <div class="timeline" id="timeline" aria-label="气温时间线"></div>
       </div>
       <aside class="quest card" id="quest"></aside>
       <aside class="info card" id="info" hidden></aside>
@@ -386,6 +387,7 @@ export class Hud {
     this.toastT = 0;
     this.renderItems();
     this.renderTop();
+    this.renderTimeline();
     $('#speed', this.root).querySelectorAll('button').forEach(b => b.classList.toggle('on', Number(b.dataset.speed) === g.speed));
     $('#items', this.root).querySelectorAll<HTMLButtonElement>('.item:not(.locked)').forEach(b => {
       b.classList.toggle('poor', !g.canAfford(BUILDINGS[b.dataset.type as BuildingId].cost));
@@ -414,6 +416,66 @@ export class Hud {
     const badge = $('#logBadge', this.root);
     badge.hidden = !this.unread;
     badge.textContent = this.unread > 9 ? '9+' : String(this.unread);
+  }
+
+  // ---------- the time line (after 冰汽时代): days ahead, temperature, blizzards, the great cold ----------
+  private tlKey = '';
+  private renderTimeline() {
+    const g = this.game, box = $('#timeline', this.root);
+    const goal = g.mode === 'survival' && !g.won;
+    const now = g.dayF;
+    // the whole 100 days in a survival game; otherwise the days around now
+    const a = goal ? 0 : Math.max(0, Math.floor(now) - 4), b = goal ? SURVIVAL.days + 1 : a + 24;
+    const key = `${a}|${b}|${Math.floor(now * 8)}|${g.mode}|${g.difficulty}|${g.seasonDays}|${g.era}|${this.game.mods.heatLimit}`;
+    if (key === this.tlKey) return;
+    this.tlKey = key;
+    const W = 1000, H = 44, T0 = 30, T1 = -48;     // °C at the top and the bottom
+    const x = (d: number) => ((d - a) / (b - a)) * W;
+    const y = (t: number) => ((T0 - Math.max(T1, Math.min(T0, t))) / (T0 - T1)) * H;
+    const pos = (d: number) => d / g.seasonDays;
+    const SEASON_FILL: Record<string, string> = { 春: '#e3f3d4', 夏: '#fbecb8', 秋: '#f8dcc0', 冬: '#dbe9f6', 回暖: '#eef5df' };
+    let bg = '', hi: string[] = [], lo: string[] = [], marks = '', tips = '';
+    const step = (b - a) > 40 ? 0.5 : 0.25;
+    for (let d = a; d < b; d += step) {
+      const p = pos(d + step / 2);
+      const great = g.greatK(d + step / 2) > 0.5, snap = g.snapDrop(p) > 0;
+      const fill = great ? '#9fb7e6' : snap ? '#bcd0ef' : SEASON_FILL[g.seasonName(p)] ?? '#eee';
+      bg += `<rect x="${x(d).toFixed(1)}" y="0" width="${(x(d + step) - x(d) + 0.6).toFixed(1)}" height="${H}" fill="${fill}"/>`;
+      if (snap || great) marks += `<rect x="${x(d).toFixed(1)}" y="0" width="${(x(d + step) - x(d) + 0.6).toFixed(1)}" height="4" fill="${great ? '#3f5fa8' : '#6f8fcf'}"/>`;
+      hi.push(`${x(d + step / 2).toFixed(1)},${y(g.tempAt(p, 15)).toFixed(1)}`);
+      lo.push(`${x(d + step / 2).toFixed(1)},${y(g.tempAt(p, 4)).toFixed(1)}`);
+    }
+    // heating ladder: the coldest each way of heating can hold out against
+    const rungs = [['firewood', '柴火'], ['coal', '煤炉'], ['district', '集中供暖']] as const;
+    const lines = rungs.map(([k]) => `<line x1="0" x2="${W}" y1="${y(g.heatLimit(k)).toFixed(1)}" y2="${y(g.heatLimit(k)).toFixed(1)}" stroke="#7a6f86" stroke-width="1" stroke-dasharray="6 5" vector-effect="non-scaling-stroke" opacity=".55"/>`).join('')
+      + `<line x1="0" x2="${W}" y1="${y(0)}" y2="${y(0)}" stroke="#7a6f86" stroke-width="1" vector-effect="non-scaling-stroke" opacity=".35"/>`;
+    const band = `<polygon points="${hi.join(' ')} ${lo.slice().reverse().join(' ')}" fill="#f2766b" opacity=".28"/><polyline points="${lo.join(' ')}" fill="none" stroke="#c2412f" stroke-width="1.6" vector-effect="non-scaling-stroke"/><polyline points="${hi.join(' ')}" fill="none" stroke="#e8955b" stroke-width="1.2" vector-effect="non-scaling-stroke"/>`;
+    const past = `<rect x="0" y="0" width="${Math.max(0, x(now)).toFixed(1)}" height="${H}" fill="#fff8ea" opacity=".55"/>`;
+    const nowLine = `<line x1="${x(now).toFixed(1)}" x2="${x(now).toFixed(1)}" y1="0" y2="${H}" stroke="#3b3346" stroke-width="2.5" vector-effect="non-scaling-stroke"/>`;
+    // hover tips, one per day
+    for (let d = a; d < b; d++) {
+      const p = pos(d + 0.5);
+      const great = g.greatK(d + 0.5) > 0.5, snap = g.snapDrop(p) > 0;
+      tips += `<rect x="${x(d).toFixed(1)}" y="0" width="${(x(d + 1) - x(d)).toFixed(1)}" height="${H}" fill="transparent"><title>第 ${d + 1} 天 · ${g.seasonName(p)}${great ? ' · 大寒潮' : snap ? ' · 暴风雪' : ''}&#10;白天约 ${Math.round(g.tempAt(p, 15))}°C，夜里约 ${Math.round(g.tempAt(p, 4))}°C（不算天气）</title></rect>`;
+    }
+    // labels as HTML so they keep their shape when the bar stretches
+    const pct = (d: number) => `${(((d - a) / (b - a)) * 100).toFixed(2)}%`;
+    let labels = '';
+    const every = goal ? 10 : 4;
+    for (let d = Math.ceil(a / every) * every; d < b; d += every) if (d > a) labels += `<span class="tk" style="left:${pct(d)}">${d}</span>`;
+    if (goal) {
+      labels += `<span class="ev great" style="left:${pct(SURVIVAL.greatFrom - 1)}">大寒潮</span><span class="ev goal" style="left:${pct(SURVIVAL.days)}">100</span>`;
+    }
+    // where the season turns (as the town lives it): name the new one
+    let last = '';
+    for (let d = a; d < b; d += 0.25) {
+      const n = g.greatK(d) > 0.5 ? '' : g.seasonName(pos(d));
+      if (n && n !== last && d > a + 0.5 && n !== '冬') labels += `<span class="ss" style="left:${pct(d)}">${n}</span>`;
+      if (n) last = n;
+    }
+    const rungLabels = rungs.map(([k, n], i) => `<span class="rung" style="left:${4 + i * 62}px;top:${(y(g.heatLimit(k)) / H * 100).toFixed(1)}%">${n} ${Math.round(g.heatLimit(k))}°</span>`).join('');
+    box.title = '';
+    box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${bg}${marks}${lines}${band}${past}${nowLine}${tips}</svg>${labels}${rungLabels}<span class="now" style="left:${pct(now)}">${goal ? `第${g.day + 1}天` : '现在'}</span>`;
   }
 
   // ---------- end of a survival game ----------
@@ -465,7 +527,7 @@ export class Hud {
     const essentials = new Set<string>();
     for (const t of TIER_IDS) if (g.pop[t]) TIERS[t].foods.forEach(k => essentials.add(k));
     const winterSoon = g.era >= 2 && (g.season === 'autumn' || g.season === 'winter');
-    const fuel = g.era >= 3 ? g.storage.firewood + g.storage.coal : g.storage.firewood;
+    const fuel = g.era >= 2 ? g.storage.firewood + g.storage.coal : g.storage.firewood;
     const need = g.winterFuelEstimate();
     const happyCls = g.happyAvg >= 70 ? 'ok' : g.happyAvg >= 45 ? 'mid' : 'bad';
     const nextName = g.seasonName(Math.floor(g.seasonPos) + 1.5);
@@ -804,8 +866,10 @@ export class Hud {
       f('happy')!.textContent = String(Math.round(hp));
       f('parts')!.innerHTML = b.parts.map(p => { if (p.max === 0) return `<div class="need minus"><span>${p.label}</span><b>${Math.round(p.value)}</b></div>`; const v = p.value / p.max; return `<div class="need"><span>${p.label}</span><span class="bar"><i style="width:${Math.round(v * 100)}%" class="${v > 0.95 ? 'ok' : v > 0.4 ? 'mid' : 'bad'}"></i></span></div>`; }).join('');
       f('needs')!.innerHTML = b.needs.map(n => `<div class="need"><span>${n.label}</span><span class="bar"><i style="width:${Math.round(n.value * 100)}%" class="${n.value > 0.95 ? 'ok' : n.value > 0.4 ? 'mid' : 'bad'}"></i></span></div>`).join('');
-      const fuel = T.fuel === 'power' ? '电' : g.heatedBy(b) ? '煤（集中供暖）' : GOODS[T.fuel as GoodId].name;
-      f('fuel')!.textContent = g.heatingOn ? `${fuel} · ${b.warm > 0.9 ? '温暖' : b.warm > 0.5 ? '有点冷' : '很冷'}` : `${fuel}（低于 ${HEAT_BELOW}°C 才烧）`;
+      const hk = g.heatKind(b), L = HEAT_LADDER[hk];
+      const fuel = `${L.name}（${L.fuel === 'power' ? '用电' : `烧${GOODS[L.fuel as GoodId].name}`}，能扛到 ${Math.round(g.heatLimit(hk))}°C）`;
+      const capped = g.heatingOn && g.heatCap(hk) < 0.99;
+      f('fuel')!.textContent = g.heatingOn ? `${fuel} · ${b.warm > 0.9 ? '温暖' : b.warm > 0.5 ? '有点冷' : '很冷'}${capped ? `：太冷了，${L.name}顶不住${hk === 'firewood' ? '，需要煤' : hk === 'coal' ? '，需要集中供暖' : ''}` : ''}` : `${fuel}，低于 ${HEAT_BELOW}°C 才烧`;
       const up = box.querySelector<HTMLButtonElement>('[data-a="upgrade"]');
       if (up) {
         const block = g.upgradeBlock(b);

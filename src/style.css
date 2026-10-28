@@ -403,3 +403,17 @@ button.chip:hover { border-color: var(--ink); }
 .endcard .row { display: flex; gap: 8px; justify-content: center; margin-top: 14px; }
 .endcard button { border: 2px solid var(--ink); background: #fff; border-radius: 12px; padding: 9px 16px; font-weight: 700; box-shadow: 0 3px 0 var(--ink); }
 .endcard button.primary { background: var(--coral); color: #fff; }
+
+/* ---------- time line (冰汽时代-style forecast under the top bar) ---------- */
+.topbar { flex-wrap: wrap; }
+.timeline { order: 9; flex-basis: 100%; position: relative; height: 56px; padding: 0; background: var(--card); border: 2.5px solid var(--ink); border-radius: 14px; box-shadow: 0 4px 0 var(--ink); overflow: hidden; }
+.timeline svg { position: absolute; left: 0; top: 0; width: 100%; height: 44px; display: block; }
+.timeline .tk, .timeline .ss, .timeline .ev, .timeline .now { position: absolute; transform: translateX(-50%); font: 600 10px/1 var(--ui); white-space: nowrap; pointer-events: none; }
+.timeline .tk { bottom: 2px; color: var(--ink-soft); }
+.timeline .ss { top: 6px; color: #4f8f3c; transform: none; margin-left: 2px; }
+.timeline .ev { bottom: 1px; padding: 1px 5px; border-radius: 6px; color: #fff; }
+.timeline .ev.great { background: #3f5fa8; transform: none; }
+.timeline .ev.goal { background: var(--coral); transform: translateX(-100%); }
+.timeline .now { bottom: 1px; padding: 1px 5px; border-radius: 6px; background: var(--ink); color: var(--card); z-index: 1; }
+.timeline .rung { position: absolute; left: 4px; transform: translateY(-50%); font: 600 9px/1 var(--ui); color: #6b6275; background: #fff8ea; z-index: 1; padding: 0 3px; border-radius: 4px; pointer-events: none; }
+@media (max-width: 720px) { .timeline { order: 3; height: 46px; } .timeline svg { height: 36px; } .timeline .rung { display: none; } }

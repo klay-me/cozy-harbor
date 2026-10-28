@@ -150,7 +150,7 @@ const plain: [BuildingId, () => number][] = [
   ['police', () => g.era >= 2 ? Math.floor(houses().length / 20) : 0],
   ['church', () => g.pop.peasant >= 50 ? 1 : 0],
   ['market', () => 1 + Math.floor(houses().length / 14)],
-  ['warehouse', () => Math.floor(houses().length / 18)],
+  ['warehouse', () => Math.floor(houses().length / (g.mode === 'survival' && g.gold > 3000 ? 8 : 18))],
   ['tavern', () => g.era >= 2 && g.pop.worker > 0 ? 1 + Math.floor(houses().length / 16) : 0],
   ['guild', () => g.pop.worker > 30 ? 1 : 0],
   ['smithy', () => g.pop.worker > 30 ? 1 : 0],
@@ -159,7 +159,7 @@ const plain: [BuildingId, () => number][] = [
   ['clinic', () => g.era === 3 ? 1 + Math.floor(houses().length / 25) - n('herbalist') : 0],
   ['greenhouse', () => g.era >= 3 ? Math.floor(houses().length / 20) : 0],
   ['university', () => g.pop.technician > 20 ? 1 : 0],
-  ['heatplant', () => g.pop.technician > 40 ? Math.floor(houses().length / 20) : 0],
+  ['heatplant', () => g.pop.technician > 40 || (g.mode === 'survival' && g.era >= 3) ? Math.ceil(houses().length / 18) : 0],
   ['townhall', () => g.pop.technician > 100 ? 1 : 0],
   ['hospital', () => g.era >= 4 ? 1 + Math.floor(houses().length / 30) : 0],
   ['theatre', () => g.era >= 4 ? 1 + Math.floor(houses().length / 30) : 0],
@@ -181,6 +181,8 @@ function demandRates() {
   }
   for (const [f, r] of Object.entries(g.heatBase)) if (f !== 'power') dem[f] = (dem[f] ?? 0) + (r as number) * (g.mode === 'survival' ? 0.5 + g.chill(g.dayF) * 1.2 : 0.5);
   if (!(g.heatNeed as any).firewood) dem.firewood = (dem.firewood ?? 0) + 1;
+  // the winters outgrow firewood: lay in coal ahead of time
+  if (g.era >= 2 && g.mode === 'survival') dem.coal = (dem.coal ?? 0) + ((g.heatBase as any).firewood ?? 0) * 0.6 * (0.3 + g.chill(g.dayF));
   // building materials: a steady trickle
   dem.planks = (dem.planks ?? 0) + 3;
   if (g.era >= 2) dem.bricks = (dem.bricks ?? 0) + 3;
@@ -209,6 +211,8 @@ for (let t = 0; t < minutes * 60; t += 10) {
     const deficits = Object.keys(dem).filter(k => (prod[k] ?? 0) < dem[k] * 1.05 && producerOf[k] && g.unlocked(producerOf[k]!) && g.canAfford(BUILDINGS[producerOf[k]!].cost))
       .sort((a, b) => (prod[a] ?? 0) / dem[a] - (prod[b] ?? 0) / dem[b]);
     for (const k of deficits.slice(0, 3)) {
+      // coal: a mine on a vein if one is free, kilns only otherwise
+      if (k === 'coal' && g.unlocked('coalmine') && g.canAfford(BUILDINGS.coalmine.cost) && g.workforce.worker.have - g.workforce.worker.need >= g.workersFor('coalmine') && build('coalmine')) continue;
       const t = producerOf[k]!;
       if (g.gold - BUILDINGS[t].cost.gold < 80) continue;
       const wk = BUILDINGS[t].workers;
@@ -241,7 +245,9 @@ for (let t = 0; t < minutes * 60; t += 10) {
   if (g.heatingOn) for (const k of ['firewood', 'coal'] as const) if (g.heatNeed[k] && g.storage[k] < 10 && g.gold > 200) g.buy(k, 20);
   for (const k of ['planks', 'bricks', 'steel', 'tools', 'cement'] as const) if (GOODS[k].era <= g.era && g.storage[k] < 6 && g.gold > 1500) g.buy(k, 10);
   // hungry: buy what each tier eats
-  if (g.foodDays() < 1.5 && g.gold > 300) for (const t of TIER_IDS_) if (g.pop[t]) for (const f of TIERS[t].foods) if (GOODS[f].era <= g.era && g.storage[f] < 15) g.buy(f, 15);
+  if (g.foodDays() < 1.5 && g.gold > 300) for (const t of TIER_IDS_) if (g.pop[t]) for (const f of TIERS[t].foods) if (GOODS[f].era <= g.era && g.storage[f] < 15) g.buy(f, g.gold > 3000 ? Math.floor(g.cap * 0.5) : 15);
+  // survival: stock up on food before winter while the harbour is open
+  if (g.mode === 'survival' && g.season === 'autumn' && !g.harbourFrozen && g.gold > 3000) for (const t of TIER_IDS_) if (g.pop[t]) for (const f of TIERS[t].foods) if (GOODS[f].era <= g.era && g.storage[f] < g.cap * 0.7) g.buy(f, Math.floor(g.cap * 0.8 - g.storage[f]));
   }
   // upgrades: keep some lower tier as workforce
   const maxShare: Record<TierId, number> = { peasant: g.era >= 2 ? 0.5 : 0, worker: g.era >= 3 ? 0.55 : 0, technician: g.era >= 4 ? 0.5 : 0, citizen: 0 };
@@ -276,7 +282,7 @@ for (let t = 0; t < minutes * 60; t += 10) {
   if (t % 120 === 0 || g.era !== lastEra) {
     lastEra = g.era;
     const st = Object.fromEntries(GOOD_IDS.filter(k => g.storage[k] > 0.5).map(k => [k, Math.round(g.storage[k])]));
-    L(`t=${(g.time / 60).toFixed(0)}m y${g.year} ${g.season} era${g.era} gold=${Math.round(g.gold)} net=${Math.round(g.taxRate - g.upkeepRate)} pop=${JSON.stringify(g.pop)} happy=${g.happyAvg.toFixed(0)} pol=${g.pollutionAvg.toFixed(1)} power=${g.power.gen.toFixed(0)}/${g.power.must.toFixed(0)}+${g.power.boost.toFixed(0)}(${Math.round(g.power.boostRatio*100)}%) day=${g.day + 1} ${g.seasonName()} blz=${g.blizzard?1:0} t=${g.temp.toFixed(0)} hope=${g.hope.toFixed(0)} disc=${g.discontent.toFixed(0)} deaths=${g.deaths} upk×${g.upkeepScale.toFixed(2)} rp=${g.research.rate.toFixed(0)} cap=${g.cap} q=${g.questIndex}`);
+    L(`t=${(g.time / 60).toFixed(0)}m y${g.year} ${g.season} era${g.era} gold=${Math.round(g.gold)} net=${Math.round(g.taxRate - g.upkeepRate)} pop=${JSON.stringify(g.pop)} happy=${g.happyAvg.toFixed(0)} pol=${g.pollutionAvg.toFixed(1)} power=${g.power.gen.toFixed(0)}/${g.power.must.toFixed(0)}+${g.power.boost.toFixed(0)}(${Math.round(g.power.boostRatio*100)}%) day=${g.day + 1} ${g.seasonName()} blz=${g.blizzard?1:0} t=${g.temp.toFixed(0)} hope=${g.hope.toFixed(0)} disc=${g.discontent.toFixed(0)} deaths=${g.deaths} rp=${g.research.rate.toFixed(0)} cap=${g.cap} q=${g.questIndex}`);
     L('   store', JSON.stringify(st));
     const wf = Object.fromEntries(Object.entries(g.workforce).map(([k, v]) => [k, `${v.have}/${v.need}`]));
     L('   bare', 'health', houses().filter(h => h.residents && !h.protect.has('health')).length, 'fire', houses().filter(h => h.residents && !h.protect.has('fire')).length, 'plague', houses().filter(h => h.plague > 0).length);

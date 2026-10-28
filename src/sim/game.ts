@@ -7,7 +7,7 @@ import {
   DAY_LENGTH, SEASON_DAYS, START_HOUR, SEASONS, SEASON_IDS, SeasonId,
   SERVICE_ALSO, familyOf, FOODS, FoodId, ProtectId, FIRE, PLAGUE, CRIME, STRIKE, HUNGER, PER_DAY, DEBT,
   ELEC_BOOST, LIGHT, COLD_STORE, SPOIL, SPOIL_SUMMER, COLD_SNAP, DIFFICULTY, DifficultyId,
-  ModeId, MODES, SURVIVAL, FREEZE, BLIZZARD_OUTDOOR, OUTDOOR, CROP_TEMP, CROPS, SEA_ICE, MOOD, SCALE_UPKEEP, GLUT,
+  ModeId, MODES, SURVIVAL, FREEZE, BLIZZARD_OUTDOOR, OUTDOOR, CROP_TEMP, CROPS, SEA_ICE, MOOD, GLUT, HEAT_LADDER, HeatKind, COAL_SWITCH,
 } from './data';
 
 export interface Bld {
@@ -121,7 +121,7 @@ const BOOSTED = new Set<BuildingId>(['garden', 'farm', 'greenhouse']);
 const POLLUTION_HURTS = new Set<BuildingId>(['farm', 'fishery', 'sheepfarm']);
 
 type Mods = Required<Omit<TechEffect, 'prod' | 'workersLess'>> & { prod: Partial<Record<BuildingId, number>>; workersLess: Partial<Record<BuildingId, number>> };
-const emptyMods = (): Mods => ({ prod: {}, workersLess: {}, prodAll: 0, heating: 0, storage: 0, happiness: 0, parkRadius: 0, pollution: 0, sickness: 0, forestNeed: 10 });
+const emptyMods = (): Mods => ({ prod: {}, workersLess: {}, prodAll: 0, heating: 0, storage: 0, happiness: 0, parkRadius: 0, pollution: 0, sickness: 0, forestNeed: 10, heatLimit: 0, spoil: 0 });
 
 export class Game {
   world: World;
@@ -165,8 +165,6 @@ export class Game {
   winterLog = { deaths: 0, minTemp: 99, left: 0 };
   /** how much of each good was sold lately: the trade ship pays less for a glut */
   glut: Partial<Record<GoodId, number>> = {};
-  /** buildings that cost upkeep, and what the town's size adds to it */
-  upkeepScale = 1;
   research = { current: null as TechId | null, points: 0, rate: 0, levels: {} as Partial<Record<TechId, number>>, saved: {} as Partial<Record<TechId, number>> };
   mods = emptyMods();
   pollution: Float32Array;
@@ -382,7 +380,7 @@ export class Game {
     return s ? BUILDINGS[s.type].boost! * s.staff : 0;
   }
   /** a greenhouse keeps warm for free inside a heating plant's range */
-  heatedSite(b: Bld) { return !!this.within(b, (o, d) => !!d.heating && o.working); }
+  heatedSite(b: Bld) { return !!this.within(b, (o, d) => (!!d.heating || !!d.cogen) && o.working); }
 
   // ---------- queries ----------
   count(type: BuildingId, connected = false) {
@@ -841,6 +839,8 @@ export class Game {
       m.parkRadius += (e.parkRadius ?? 0) * lv;
       m.pollution += (e.pollution ?? 0) * lv;
       m.sickness += (e.sickness ?? 0) * lv;
+      m.heatLimit += (e.heatLimit ?? 0) * lv;
+      m.spoil += (e.spoil ?? 0) * lv;
       if (e.forestNeed) m.forestNeed = Math.min(m.forestNeed, e.forestNeed);
     }
     m.pollution = Math.max(-0.9, m.pollution);
@@ -903,7 +903,7 @@ export class Game {
       for (const s of prot) if (s === b || this.touchesMask(b, this.reach.get(s.id)!)) b.protect.add(BUILDINGS[s.type].protects!);
     });
     // cache which services and heating plants reach each house
-    const cov = [...this.buildings.values()].filter(s => BUILDINGS[s.type].service || BUILDINGS[s.type].heating);
+    const cov = [...this.buildings.values()].filter(s => BUILDINGS[s.type].service || BUILDINGS[s.type].heating || BUILDINGS[s.type].cogen);
     this.buildings.forEach(b => {
       if (b.type !== 'house') return;
       b.cover = new Set(); b.heaters = [];
@@ -915,7 +915,7 @@ export class Game {
         if (m) { if (!this.touchesMask(b, m)) continue; }
         else { const sc = this.center(s); if (Math.hypot(sc.x - c.x, sc.z - c.z) > this.radiusOf(s)) continue; }
         if (d.service) { b.cover.add(d.service); SERVICE_ALSO[d.service]?.forEach(x => b.cover.add(x)); }
-        if (d.heating) b.heaters.push(s);
+        if (d.heating || d.cogen) b.heaters.push(s);
       }
     });
   }
@@ -966,6 +966,19 @@ export class Game {
     return undefined;
   }
   covered(b: Bld, svc: ServiceId) { return b.type === 'house' ? b.cover.has(svc) : !!this.within(b, (_s, d) => !!d.service && (d.service === svc || !!SERVICE_ALSO[d.service]?.includes(svc))); }
+  /** how a home keeps warm: its tier's fuel, district heat if a plant reaches it, coal once firewood can't cope */
+  heatKind(b: Bld): HeatKind {
+    const f = TIERS[b.tier].fuel;
+    if (f === 'power') return 'power';
+    if (this.heatedBy(b)) return 'district';
+    const coal = this.storage.coal >= 1;
+    if (f === 'coal') return coal || this.storage.firewood < 1 ? 'coal' : 'firewood';
+    return coal && this.temp < this.heatLimit('firewood') + COAL_SWITCH ? 'coal' : 'firewood';
+  }
+  /** the coldest temperature a way of heating keeps a home fully warm at */
+  heatLimit(k: HeatKind) { return HEAT_LADDER[k].limit - (k === 'firewood' || k === 'coal' ? this.mods.heatLimit : 0); }
+  /** the most warmth (0..1) a way of heating can give at the current temperature */
+  heatCap(k: HeatKind, t = this.temp) { return Math.max(0, Math.min(1, 1 - (this.heatLimit(k) - t) / HEAT_LADDER[k].fall)); }
   heatedBy(b: Bld) { return b.heaters.find(s => s.working && this.buildings.has(s.id)); }
 
   // ---------- simulation ----------
@@ -984,7 +997,7 @@ export class Game {
     this.temp = this.calcTemp();
     this.ledger.tick(dt);
     this.slowT += dt;
-    if (this.slowT >= 1) { this.slowT = 0; this.replant(); this.computePollution(); this.checkEra(); this.checkQuest(); this.upkeepScale = this.calcUpkeepScale(); }
+    if (this.slowT >= 1) { this.slowT = 0; this.replant(); this.computePollution(); this.checkEra(); this.checkQuest(); }
 
     // ---- population & workforce (sick people stay home)
     TIER_IDS.forEach(t => { this.pop[t] = 0; });
@@ -1010,7 +1023,7 @@ export class Game {
       const def = BUILDINGS[b.type];
       if (def.powerGen && b.connected && !b.paused) plants++;
       // idle workshops (no staff, no input, strike, fire) only cost a quarter
-      const fee = (def.workers && (!b.working || b.paused) ? def.upkeep * 0.25 : def.upkeep) * diff.upkeep * this.upkeepScale;
+      const fee = (def.workers && (!b.working || b.paused) ? def.upkeep * 0.25 : def.upkeep) * diff.upkeep;
       upkeep += fee;
       this.ledger.add('gold', 'out', `维护·${def.name}`, fee / 60 * dt);
       b.gen = 0;
@@ -1156,15 +1169,15 @@ export class Game {
     const heat = cold > 0, heatMul = Math.max(0.2, 1 + this.mods.heating) * cold;
     const heatBase: Partial<Record<GoodId | 'power', number>> = {};
     const fuelNeed: Partial<Record<GoodId | 'power', number>> = {};
-    const houseFuel = new Map<Bld, [GoodId | 'power', number]>();
+    const houseFuel = new Map<Bld, [GoodId | 'power', number, HeatKind]>();
     for (const b of this.buildings.values()) {
       if (b.type !== 'house' || !b.residents) continue;
-      let fuel: GoodId | 'power' = TIERS[b.tier].fuel;
-      let rate = b.residents * (fuel === 'power' ? POWER_HEAT_PER_RESIDENT : HEAT_PER_RESIDENT) * heatMul;
-      if (fuel !== 'power' && this.heatedBy(b)) { fuel = 'coal'; rate *= 0.7; }
-      houseFuel.set(b, [fuel, rate]);
+      const kind = this.heatKind(b), L = HEAT_LADDER[kind], fuel = L.fuel as GoodId | 'power';
+      const base = b.residents * (fuel === 'power' ? POWER_HEAT_PER_RESIDENT : HEAT_PER_RESIDENT) * L.per * Math.max(0.2, 1 + this.mods.heating);
+      const rate = base * cold;
+      houseFuel.set(b, [fuel, rate, kind]);
       fuelNeed[fuel] = (fuelNeed[fuel] ?? 0) + rate;
-      heatBase[fuel] = (heatBase[fuel] ?? 0) + (cold > 0 ? rate / cold : b.residents * (fuel === 'power' ? POWER_HEAT_PER_RESIDENT : HEAT_PER_RESIDENT) * Math.max(0.2, 1 + this.mods.heating) * (fuel === 'coal' && TIERS[b.tier].fuel !== 'coal' ? 0.7 : 1));
+      heatBase[fuel] = (heatBase[fuel] ?? 0) + base;
     }
     this.heatNeed = fuelNeed;
     this.heatBase = heatBase;
@@ -1197,7 +1210,7 @@ export class Game {
     else if (this.power.boostRatio > 0.9) this.flags.delete('boost');
 
     // ---- spoilage: fresh food rots in store; powered warehouses keep it cold
-    const rot = diff.spoil * (this.season === 'summer' ? SPOIL_SUMMER : 1) * (1 - COLD_STORE * this.power.cold);
+    const rot = diff.spoil * Math.max(0.1, 1 + this.mods.spoil) * (this.season === 'summer' ? SPOIL_SUMMER : 1) * (1 - COLD_STORE * this.power.cold);
     for (const [g, r] of Object.entries(SPOIL) as [GoodId, number][]) {
       const n = this.storage[g] * r * rot / 60 * dt;
       if (n <= 0) continue;
@@ -1207,6 +1220,7 @@ export class Game {
 
     // ---- houses: happiness, growth, sickness, tax
     let tax = 0, happySum = 0, houses = 0, coldHouses = 0, hungryHouses = 0;
+    const beaten: Partial<Record<HeatKind, number>> = {};
     const comfortSupply = (gs: GoodId[]) => gs.length ? gs.reduce((a, g) => a + (this.storage[g] >= 1 ? 1 : this.supply[g]), 0) / gs.length : 1;
     for (const b of this.buildings.values()) {
       if (b.type !== 'house') continue;
@@ -1231,8 +1245,10 @@ export class Game {
       const hf = houseFuel.get(b);
       const ok = hf ? (fuelOk[hf[0]] ?? 1) : 1;
       // a chilly evening without fuel is bearable; a freezing one is not
-      const warmGoal = heat && hf ? ok + (1 - ok) * Math.max(0, 1 - cold * 2) : 1;
+      // and however much fuel arrives, a stove can only hold off so much cold (the heating ladder)
+      const warmGoal = heat && hf ? Math.min(ok + (1 - ok) * Math.max(0, 1 - cold * 2), this.heatCap(hf[2])) : 1;
       b.warm += (warmGoal - b.warm) * Math.min(1, dt / 3);
+      if (heat && hf && b.residents && this.heatCap(hf[2]) < 0.6) beaten[hf[2]] = (beaten[hf[2]] ?? 0) + 1;
       const healthV = b.residents ? 1 - b.sick / b.residents : 1;
       const debtPen = this.gold < 0 ? Math.min(DEBT.max, DEBT.base + this.debtDays * DEBT.perDay) : 0;
       b.parts = [
@@ -1289,6 +1305,11 @@ export class Game {
     this.stepMood(dt, houses ? coldHouses / houses : 0, houses ? hungryHouses / houses : 0);
     this.stepDisasters(dt);
     this.stepDay();
+    // the cold has outgrown the way some homes heat: say what the next rung of the ladder is
+    for (const [k, n] of Object.entries(beaten) as [HeatKind, number][]) {
+      const next = k === 'firewood' ? (this.era >= 2 ? '建炭窑或煤矿，有煤以后住户会自动换成煤炉（能扛到 ' + Math.round(this.heatLimit('coal')) + '°C）' : '进入手工业时代就能烧煤') : k === 'coal' ? (this.era >= 3 ? '研究集中供暖建煤炉房，或在燃煤电厂旁边住（余热供暖，能扛到 ' + Math.round(this.heatLimit('district')) + '°C）' : '进入工业时代就能集中供暖') : '';
+      if (next) this.throttle('beaten-' + k, 90, `太冷了：${n} 户人家的${HEAT_LADDER[k].name}只能扛到 ${Math.round(this.heatLimit(k))}°C，烧再多也暖不起来。${next}`, 'warn', undefined, 'cold');
+    }
     if (coldHouses > 0) { if (this.mode === 'survival') this.throttle('coldHouses', 60, `有 ${coldHouses} 户人家没有燃料取暖，再冻下去会死人！快补充${this.era >= 3 ? '柴火或煤' : '柴火'}，或向商船买`, 'warn', undefined, 'cold'); else this.once('cold' + this.year, `有 ${coldHouses} 户人家没有燃料取暖！快补充${this.era >= 3 ? '柴火或煤' : '柴火'}`, 'warn', 'cold'); }
 
     // ---- research
@@ -1352,11 +1373,6 @@ export class Game {
   // ---------- hope, discontent, and how the game ends ----------
   /** tax share left after discontent */
   get taxMood() { return 1 - MOOD.taxLoss * this.discontent / 100; }
-  private calcUpkeepScale() {
-    let n = 0;
-    for (const b of this.buildings.values()) if (BUILDINGS[b.type].upkeep > 0) n++;
-    return Math.min(SCALE_UPKEEP.max, 1 + Math.max(0, n - SCALE_UPKEEP.free) * SCALE_UPKEEP.per);
-  }
   /** someone froze, starved or died of plague */
   private lost() {
     this.winterLog.left++;

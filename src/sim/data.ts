@@ -14,7 +14,7 @@ export const GOODS: Record<GoodId, { name: string; era: Era; price: number }> = 
   wood: { name: '木材', era: 1, price: 2 }, planks: { name: '木板', era: 1, price: 4 }, fish: { name: '鱼', era: 1, price: 3 }, veg: { name: '蔬菜', era: 1, price: 2 }, grain: { name: '小麦', era: 1, price: 2 }, wool: { name: '羊毛', era: 1, price: 3 },
   firewood: { name: '柴火', era: 1, price: 3 }, clay: { name: '黏土', era: 2, price: 2 }, bricks: { name: '砖', era: 2, price: 6 }, flour: { name: '面粉', era: 2, price: 4 }, bread: { name: '面包', era: 2, price: 7 },
   cloth: { name: '布', era: 2, price: 6 }, clothes: { name: '衣服', era: 2, price: 10 }, ore: { name: '铁矿石', era: 2, price: 5 }, tools: { name: '工具', era: 2, price: 12 },
-  coal: { name: '煤', era: 3, price: 5 }, steel: { name: '钢', era: 3, price: 15 }, cans: { name: '罐头', era: 3, price: 12 }, beer: { name: '啤酒', era: 3, price: 8 },
+  coal: { name: '煤', era: 2, price: 5 }, steel: { name: '钢', era: 3, price: 15 }, cans: { name: '罐头', era: 3, price: 12 }, beer: { name: '啤酒', era: 3, price: 8 },
   cement: { name: '水泥', era: 4, price: 14 }, appliances: { name: '电器', era: 4, price: 25 },
 };
 export const BUY_MARKUP = 2.5;
@@ -73,6 +73,22 @@ export const TIERS: Record<TierId, TierDef> = {
 /** winter fuel per resident per minute at cold factor 1; power is in units of the grid */
 export const HEAT_PER_RESIDENT = 0.04;
 export const POWER_HEAT_PER_RESIDENT = 0.2;
+/**
+ * 取暖阶梯 (the heating ladder). Each way of heating keeps a home fully warm down to `limit` °C; colder than
+ * that, the most warmth it can give falls off to nothing over `fall` degrees. `per` is the fuel burnt per
+ * resident relative to HEAT_PER_RESIDENT (power: POWER_HEAT_PER_RESIDENT). As the winters deepen the town
+ * has to climb it: firewood stoves -> coal stoves -> district heating (煤炉房, or a coal power station's waste
+ * heat) -> electric heating.
+ */
+export type HeatKind = 'firewood' | 'coal' | 'district' | 'power';
+export const HEAT_LADDER: Record<HeatKind, { name: string; fuel: Fuel; limit: number; fall: number; per: number }> = {
+  firewood: { name: '柴火炉', fuel: 'firewood', limit: -15, fall: 12, per: 1 },
+  coal: { name: '煤炉', fuel: 'coal', limit: -28, fall: 14, per: 0.6 },
+  district: { name: '集中供暖', fuel: 'coal', limit: -40, fall: 16, per: 0.45 },
+  power: { name: '电暖', fuel: 'power', limit: -45, fall: 20, per: 1 },
+};
+/** firewood homes switch to coal stoves this many degrees above the firewood limit, if there is coal */
+export const COAL_SWITCH = 3;
 
 // ---------- electricity ----------
 /** a workshop with an `elec` draw works this much faster while the grid feeds it (like 纪元 1800) */
@@ -92,7 +108,7 @@ export type BuildingId =
   | 'firewood' | 'police' | 'claypit' | 'brickworks' | 'mill' | 'bakery' | 'weaver' | 'tailor' | 'ironmine' | 'smithy' | 'tavern' | 'park' | 'guild'
   | 'fishpier' | 'vegfield' | 'compost'
   // era 3
-  | 'coalmine' | 'steelworks' | 'cannery' | 'brewery' | 'coalplant' | 'heatplant' | 'school' | 'clinic' | 'townhall' | 'university'
+  | 'charcoal' | 'coalmine' | 'steelworks' | 'cannery' | 'brewery' | 'coalplant' | 'heatplant' | 'school' | 'clinic' | 'townhall' | 'university'
   | 'fishport' | 'greenhouse' | 'mechfarm'
   // era 4
   | 'cementworks' | 'appliances' | 'windturbine' | 'solar' | 'hydro' | 'purifier' | 'recycler' | 'hospital' | 'theatre' | 'lab'
@@ -125,6 +141,8 @@ export interface BuildingDef {
   radius?: number;                // service / search / heating radius in tiles
   service?: ServiceId;
   heating?: boolean;              // district heating plant
+  /** a power station whose waste heat warms the homes within `radius` like a heating plant while it runs */
+  cogen?: boolean;
   protects?: ProtectId;           // health, fire or police cover within radius
   storage?: number;
   needs?: Need;
@@ -167,6 +185,7 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
   firewood: B({ name: '柴火坊', desc: '把木材劈成柴火。气温低于 8°C 住宅就要烧柴取暖。', era: 1, size: [2, 2], cost: { gold: 80, planks: 4 }, upkeep: 3, category: 'craft', model: 'woodshed', workers: { tier: 'peasant', n: 2 }, cycle: 20, input: { wood: 1 }, output: 'firewood', outQty: 2, pollution: 2 }),
   claypit: B({ name: '黏土坑', desc: '在河岸或湖边挖黏土。', era: 2, size: [3, 3], cost: { gold: 100, planks: 4 }, upkeep: 6, category: 'raw', model: 'claypit', workers: { tier: 'peasant', n: 4 }, cycle: 20, output: 'clay', needs: 'water', pollution: 2, elec: 2 }),
   brickworks: B({ name: '砖厂', desc: '把黏土烧成砖，手工业时代的主要建材。', era: 2, size: [3, 2], cost: { gold: 150, planks: 6 }, upkeep: 8, category: 'craft', model: 'brickworks', workers: { tier: 'peasant', n: 6 }, cycle: 20, input: { clay: 1 }, output: 'bricks', pollution: 10, elec: 3 }),
+  charcoal: B({ name: '炭窑', desc: '把木材闷烧成木炭（算作煤）。不需要煤矿脉，产量低、费木材，是手工业时代熬过严冬的第一份煤。', era: 2, size: [2, 2], cost: { gold: 150, planks: 6, bricks: 4 }, upkeep: 6, category: 'craft', model: 'brickworks', workers: { tier: 'peasant', n: 3 }, cycle: 20, input: { wood: 2 }, output: 'coal', pollution: 15 }),
   mill: B({ name: '磨坊', desc: '把小麦磨成面粉。', era: 2, size: [2, 2], cost: { gold: 150, planks: 8 }, upkeep: 8, category: 'craft', model: 'mill', workers: { tier: 'worker', n: 4 }, cycle: 30, input: { grain: 1 }, output: 'flour', elec: 2 }),
   bakery: B({ name: '面包房', desc: '用面粉烤面包。', era: 2, size: [2, 2], cost: { gold: 150, planks: 6, bricks: 4 }, upkeep: 8, category: 'craft', model: 'bakery', workers: { tier: 'worker', n: 4 }, cycle: 30, input: { flour: 1 }, output: 'bread', pollution: 2, elec: 2 }),
   weaver: B({ name: '织布厂', desc: '把羊毛织成布。', era: 2, size: [3, 2], cost: { gold: 200, planks: 6, bricks: 4 }, upkeep: 10, category: 'craft', model: 'weaver', workers: { tier: 'worker', n: 6 }, cycle: 30, input: { wool: 1 }, output: 'cloth', pollution: 5, elec: 3 }),
@@ -181,12 +200,12 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
   compost: B({ name: '堆肥场', desc: '把落叶和厩肥堆成肥料。半径内的菜园、菜田、麦田、温室产量 +25%。有点臭。', era: 2, size: [2, 2], cost: { gold: 120, planks: 4, bricks: 2 }, upkeep: 4, category: 'raw', model: 'compost', workers: { tier: 'peasant', n: 2 }, radius: 5, boost: 0.25, pollution: 3 }),
 
   // ---- era 3 ----
-  coalmine: B({ name: '煤矿', desc: '必须建在煤矿脉上。', era: 3, size: [2, 2], cost: { gold: 300, bricks: 10, tools: 4 }, upkeep: 14, category: 'raw', model: 'mine', workers: { tier: 'worker', n: 8 }, cycle: 15, output: 'coal', needs: 'coal', pollution: 25, elec: 4 }),
+  coalmine: B({ name: '煤矿', desc: '必须建在煤矿脉上。手工业时代就能开采，煤炉比柴火炉耐寒得多。', era: 2, size: [2, 2], cost: { gold: 300, bricks: 10, tools: 4 }, upkeep: 14, category: 'raw', model: 'mine', workers: { tier: 'worker', n: 8 }, cycle: 15, output: 'coal', needs: 'coal', pollution: 25, elec: 4 }),
   steelworks: B({ name: '炼钢厂', desc: '用铁矿石和煤炼钢，污染很重。', era: 3, size: [4, 4], cost: { gold: 600, bricks: 20, tools: 8 }, upkeep: 24, category: 'craft', model: 'factory', workers: { tier: 'worker', n: 8 }, cycle: 30, input: { ore: 1, coal: 1 }, output: 'steel', pollution: 40, elec: 6 }),
   cannery: B({ name: '罐头厂', desc: '用鱼和钢做罐头。', era: 3, size: [3, 2], cost: { gold: 400, bricks: 10, tools: 4, steel: 4 }, upkeep: 18, category: 'craft', model: 'cannery', workers: { tier: 'worker', n: 6 }, cycle: 60, input: { fish: 3, steel: 1 }, output: 'cans', outQty: 3, power: 4, pollution: 15 }),
   brewery: B({ name: '啤酒厂', desc: '用小麦酿啤酒。', era: 3, size: [2, 2], cost: { gold: 300, bricks: 10, tools: 2 }, upkeep: 14, category: 'craft', model: 'brewery', workers: { tier: 'technician', n: 6 }, cycle: 30, input: { grain: 1 }, output: 'beer', pollution: 5, elec: 3 }),
-  coalplant: B({ name: '燃煤电厂', desc: '烧煤发电，便宜稳定，但污染最重。', era: 3, research: 'steam', size: [4, 4], cost: { gold: 800, bricks: 20, tools: 6 }, upkeep: 30, category: 'power', model: 'powerplant', workers: { tier: 'worker', n: 6 }, cycle: 30, input: { coal: 1 }, powerGen: 20, powerKind: 'coal', pollution: 50 }),
-  heatplant: B({ name: '煤炉房', desc: '集中供暖：半径内的住宅冬天不必各自烧燃料，比分散取暖省 30% 的煤。', era: 3, research: 'central', size: [2, 2], cost: { gold: 400, bricks: 12, steel: 4 }, upkeep: 20, category: 'power', model: 'heatplant', workers: { tier: 'technician', n: 4 }, radius: 6, heating: true, pollution: 20 }),
+  coalplant: B({ name: '燃煤电厂', desc: '烧煤发电，便宜稳定，但污染最重。余热还能给半径 7 格内的住宅集中供暖（热电联产）。', era: 3, research: 'steam', size: [4, 4], cost: { gold: 800, bricks: 20, tools: 6 }, upkeep: 30, category: 'power', model: 'powerplant', workers: { tier: 'worker', n: 6 }, cycle: 30, input: { coal: 1 }, powerGen: 20, powerKind: 'coal', pollution: 50, radius: 7, cogen: true }),
+  heatplant: B({ name: '煤炉房', desc: '集中供暖：半径内的住宅改用集中供暖，能扛到 -40°C（煤炉只能扛到 -28°C），每人烧的煤也更少。', era: 3, research: 'central', size: [2, 2], cost: { gold: 400, bricks: 12, steel: 4 }, upkeep: 20, category: 'power', model: 'heatplant', workers: { tier: 'technician', n: 4 }, radius: 6, heating: true, pollution: 20 }),
   school: B({ name: '学校', desc: '技工和市民需要它。', era: 3, size: [3, 3], cost: { gold: 400, bricks: 12 }, upkeep: 20, category: 'public', model: 'school', radius: 15, service: 'school' }),
   clinic: B({ name: '诊所', desc: '技工需要它；同时提供医疗覆盖。现代可以升级为医院。', era: 3, size: [3, 3], cost: { gold: 400, bricks: 10, steel: 2 }, upkeep: 20, category: 'public', model: 'clinic', radius: 14, service: 'clinic', protects: 'health', family: 'herbalist', upgrade: { to: 'hospital', cost: { gold: 700, cement: 10, steel: 4 } } }),
   townhall: B({ name: '市政厅', desc: '建成后才能进入现代城市时代。', era: 3, size: [4, 3], cost: { gold: 1200, bricks: 30, steel: 10 }, upkeep: 40, category: 'public', model: 'townhall' }),
@@ -225,7 +244,7 @@ export const menuItems = (cat: Category) => (Object.keys(BUILDINGS) as BuildingI
 
 // ---------- research ----------
 export type TechId =
-  | 'rotation' | 'nets' | 'axes' | 'hearth' | 'shepherd' | 'granary' | 'woodland'
+  | 'rotation' | 'nets' | 'axes' | 'hearth' | 'shepherd' | 'granary' | 'woodland' | 'cellar'
   | 'brickhearth' | 'irontools' | 'loom' | 'kiln' | 'storehouse' | 'festival' | 'hedges'
   | 'steam' | 'central' | 'filter' | 'canning' | 'mechanize' | 'vaccine'
   | 'wind' | 'solar' | 'hydro' | 'purify' | 'planning' | 'automation'
@@ -243,6 +262,8 @@ export interface TechEffect {
   pollution?: number;          // pollution multiplier added for polluters
   sickness?: number;
   forestNeed?: number;         // trees needed for a full-speed lumberjack
+  heatLimit?: number;          // degrees colder that firewood and coal stoves can still keep a home warm
+  spoil?: number;              // food spoilage multiplier added (-0.4 = 40% less)
 }
 export interface TechDef { name: string; era: Era; branch: Branch; cost: number; desc: string; effect: TechEffect; infinite?: boolean }
 export const TECHS: Record<TechId, TechDef> = {
@@ -250,10 +271,11 @@ export const TECHS: Record<TechId, TechDef> = {
   nets: { name: '大渔网', era: 1, branch: 'prod', cost: 40, desc: '渔场产量 +20%', effect: { prod: { fishery: 0.2 } } },
   axes: { name: '精制斧头', era: 1, branch: 'prod', cost: 30, desc: '伐木场产量 +25%', effect: { prod: { lumberjack: 0.25 } } },
   shepherd: { name: '牧羊犬', era: 1, branch: 'prod', cost: 40, desc: '牧羊场产量 +25%', effect: { prod: { sheepfarm: 0.25 } } },
+  cellar: { name: '地窖', era: 1, branch: 'life', cost: 40, desc: '鱼和菜腐烂得慢 40%，第一个冬天前就能囤粮', effect: { spoil: -0.4 } },
   hearth: { name: '火塘', era: 1, branch: 'life', cost: 30, desc: '冬季取暖燃料 -10%', effect: { heating: -0.1 } },
   granary: { name: '粮仓', era: 1, branch: 'life', cost: 50, desc: '每种货物存储上限 +20', effect: { storage: 20 } },
   woodland: { name: '护林', era: 1, branch: 'env', cost: 40, desc: '伐木场只需 7 棵树就能满效率（原为 10 棵）', effect: { forestNeed: 7 } },
-  brickhearth: { name: '砖砌壁炉', era: 2, branch: 'life', cost: 100, desc: '冬季取暖燃料再 -20%', effect: { heating: -0.2 } },
+  brickhearth: { name: '砖砌壁炉', era: 2, branch: 'life', cost: 100, desc: '冬季取暖燃料再 -20%，柴火炉和煤炉多扛 3°C', effect: { heating: -0.2, heatLimit: 3 } },
   irontools: { name: '铁制工具', era: 2, branch: 'prod', cost: 120, desc: '伐木场、黏土坑、铁矿、煤矿各少需 1 个工人', effect: { workersLess: { lumberjack: 1, claypit: 1, ironmine: 1, coalmine: 1 } } },
   loom: { name: '改良织机', era: 2, branch: 'prod', cost: 100, desc: '织布厂和裁缝铺产量 +25%', effect: { prod: { weaver: 0.25, tailor: 0.25 } } },
   kiln: { name: '大窑炉', era: 2, branch: 'prod', cost: 100, desc: '砖厂产量 +25%', effect: { prod: { brickworks: 0.25 } } },
@@ -342,8 +364,6 @@ export const MOOD = {
  * and a starving one every `starveSecs` (slower than the sandbox, where people simply move away)
  */
 export const FREEZE = { after: 180, secs: 60, starveSecs: 30 };
-/** upkeep grows with the size of the town: +`per` per building over `free`, capped */
-export const SCALE_UPKEEP = { free: 60, per: 0.004, max: 1.5 };
 /** the trade ship pays less the more of one good you sell; the glut fades by `fade` a day */
 export const GLUT = { per: 150, floor: 0.35, fade: 0.35 };
 
