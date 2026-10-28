@@ -8,6 +8,7 @@ import {
   SERVICE_ALSO, familyOf, FOODS, FoodId, ProtectId, FIRE, PLAGUE, CRIME, STRIKE, HUNGER, PER_DAY, DEBT,
   ELEC_BOOST, LIGHT, COLD_STORE, SPOIL, SPOIL_SUMMER, COLD_SNAP, DIFFICULTY, DifficultyId,
   ModeId, MODES, SURVIVAL, FREEZE, BLIZZARD_OUTDOOR, OUTDOOR, CROP_TEMP, CROPS, SEA_ICE, MOOD, GLUT, HEAT_LADDER, HeatKind, COAL_SWITCH,
+  WORK_CHILL, SICKBED, LAWS, LawId, LAW_FX, LAW_GAP, FEAST, FUNERAL, EVENTS, EventKind,
 } from './data';
 
 export interface Bld {
@@ -45,9 +46,14 @@ export interface Bld {
   plague: number;          // seconds since infection (0 = healthy)
   paused: boolean;         // closed by the player: no workers, quarter upkeep
   elecOff: boolean;        // the player switched off its optional power draw (no ELEC_BOOST)
+  priority: boolean;       // marked by the player: staffed before everything else when hands are short
 }
 
 export interface ProdEvent { id: number; good: GoodId; n: number }
+/** something happened (refugees at the harbour, a ship's order, a wreck in the ice) and the town must answer */
+export interface EventCard { kind: EventKind; day: number; title: string; text: string; options: { label: string; note: string }[]; data: Record<string, any> }
+/** an order taken from the trade ship: deliver `n` of `good` by day `due` */
+export interface ShipOrder { good: GoodId; n: number; due: number; gold: number; bonus?: { good: GoodId; n: number } }
 /**
  * cat decides where a message shows: 'action' answers what the player just did (near the build bar),
  * 'alert' is something happening in town (right-hand stack, click to look), 'milestone' is a big banner,
@@ -203,6 +209,19 @@ export class Game {
   private acc = 0;
   private slowT = 0;
   private flags = new Set<string>();
+  /** signed town laws (镇规) and the game day of the last signing */
+  laws = new Set<LawId>();
+  lawDay = -99;
+  /** sick beds: seriously ill people under medical cover, and the beds the town has */
+  beds = { need: 0, have: 0 };
+  /** workplaces kept warm by a warming hut or district heat (refreshed each second) */
+  private warmSites = new Set<number>();
+  /** warming huts got their fuel last step */
+  private hutOk = true;
+  lastFeast = -99; lastFuneral = -99; deathsSinceFuneral = 0;
+  /** an event waiting for an answer, and an accepted trade order */
+  card: EventCard | null = null;
+  order: ShipOrder | null = null;
 
   /** a fixed map by id, or a random map from a numeric seed (old saves) */
   constructor(map: MapId | number, mode: ModeId = 'survival') {
@@ -269,7 +288,8 @@ export class Game {
   }
   get heatingOn() { return coldness(this.temp) > 0; }
   /** 饱食 the town eats per day, and how many days the food in store lasts */
-  foodNeed() { return TIER_IDS.reduce((a, t) => a + this.pop[t] * TIERS[t].hunger, 0); }
+  foodNeed() { return TIER_IDS.reduce((a, t) => a + this.pop[t] * TIERS[t].hunger, 0) * this.rationMul; }
+  get rationMul() { return this.laws.has('ration') ? 1 - LAW_FX.ration : 1; }
   foodStock() { return (Object.keys(FOODS) as FoodId[]).reduce((a, f) => a + this.storage[f] * FOODS[f].fill, 0); }
   foodDays() { const n = this.foodNeed(); return n > 0 ? this.foodStock() / n : Infinity; }
   /** 0..1 how far through the current season */
@@ -574,7 +594,7 @@ export class Game {
     const b: Bld = {
       id, type, x, z, w, h, rot: rot & 3, variant: (x * 7 + z * 13) % 4,
       progress: 0, loaded: false, staff: 0, env: 1, working: false, status: '', connected: false, gen: 0,
-      tier: 'peasant', residents: 0, sick: 0, happy: 0, parts: [], needs: [], warm: 1, coldT: 0, growT: 0, cover: new Set(), heaters: [], protect: new Set(), fire: 0, strike: 0, hungerT: 0, fed: 1, plague: 0, paused: false, elecOff: false,
+      tier: 'peasant', residents: 0, sick: 0, happy: 0, parts: [], needs: [], warm: 1, coldT: 0, growT: 0, cover: new Set(), heaters: [], protect: new Set(), fire: 0, strike: 0, hungerT: 0, fed: 1, plague: 0, paused: false, elecOff: false, priority: false,
     };
     this.buildings.set(id, b);
     for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
@@ -976,10 +996,247 @@ export class Game {
     return coal && this.temp < this.heatLimit('firewood') + COAL_SWITCH ? 'coal' : 'firewood';
   }
   /** the coldest temperature a way of heating keeps a home fully warm at */
-  heatLimit(k: HeatKind) { return HEAT_LADDER[k].limit - (k === 'firewood' || k === 'coal' ? this.mods.heatLimit : 0); }
+  heatLimit(k: HeatKind) { return HEAT_LADDER[k].limit - (k === 'firewood' || k === 'coal' ? this.mods.heatLimit - (this.laws.has('fuelsave') ? LAW_FX.fuelLimit : 0) : 0); }
   /** the most warmth (0..1) a way of heating can give at the current temperature */
   heatCap(k: HeatKind, t = this.temp) { return Math.max(0, Math.min(1, 1 - (this.heatLimit(k) - t) / HEAT_LADDER[k].fall)); }
   heatedBy(b: Bld) { return b.heaters.find(s => s.working && this.buildings.has(s.id)); }
+
+  // ---------- work priority and cold workplaces ----------
+  /** buildings in staffing order: the player's priority workplaces first */
+  private staffOrder() {
+    const first: Bld[] = [], rest: Bld[] = [];
+    for (const b of this.buildings.values()) (b.priority ? first : rest).push(b);
+    return first.length ? first.concat(rest) : rest;
+  }
+  togglePriority(b: Bld) {
+    if (!BUILDINGS[b.type].workers) return;
+    b.priority = !b.priority;
+    this.notify(b.priority ? `${BUILDINGS[b.type].name}设为优先：缺人时先给它派工人` : `${BUILDINGS[b.type].name}取消优先`, 'info');
+  }
+  private refreshWarmSites() {
+    this.warmSites.clear();
+    if (!this.heatingOn) return;
+    for (const b of this.buildings.values()) {
+      if (!BUILDINGS[b.type].workers) continue;
+      if (this.within(b, (o, d) => (!!d.workheat || !!d.heating || !!d.cogen) && o.working)) this.warmSites.add(b.id);
+    }
+  }
+  /** share of a workplace's output lost to the cold (0 when a warming hut or district heat reaches it) */
+  chillAt(b: Bld) {
+    if (!this.heatingOn || this.warmSites.has(b.id)) return 0;
+    const C = WORK_CHILL, k = Math.max(0, Math.min(1, (C.from - this.temp) / (C.from - C.full)));
+    if (k <= 0) return 0;
+    return Math.min(0.9, C.max * k * (OUTDOOR.has(familyOf(b.type)) ? C.outdoor : 1) * (this.laws.has('warmwear') ? LAW_FX.warmwear : 1));
+  }
+  warmSite(b: Bld) { return this.warmSites.has(b.id); }
+
+  // ---------- town laws ----------
+  /** why a law can't be signed now, or null */
+  lawBlock(id: LawId): string | null {
+    const L = LAWS[id];
+    if (this.laws.has(id)) return '已经签署';
+    if (L.era > this.era) return `${ERAS[L.era].name}解锁`;
+    if (L.needs && !this.count(L.needs, true)) return `要先建${BUILDINGS[L.needs].name}`;
+    const wait = this.lawDay + LAW_GAP - this.dayF;
+    if (wait > 0) return `大家还在消化上一条镇规（${Math.ceil(wait * 24)} 小时后可以再签）`;
+    if (L.sign?.gold && this.gold < L.sign.gold) return `要 ${L.sign.gold} 金币`;
+    return null;
+  }
+  signLaw(id: LawId) {
+    if (this.lawBlock(id)) return false;
+    const L = LAWS[id];
+    this.laws.add(id);
+    this.lawDay = this.dayF;
+    if (L.sign?.gold) { this.gold -= L.sign.gold; this.ledger.add('gold', 'out', '镇规·' + L.name, L.sign.gold); }
+    if (L.sign?.hope) this.lift(L.sign.hope);
+    if (L.sign?.disc) this.discontent = Math.min(100, this.discontent + L.sign.disc);
+    this.notify(`签署了镇规「${L.name}」：${L.gain}；代价：${L.cost}`, 'info', { cat: 'milestone', icon: 'ledger' });
+    this.sfx.push('quest');
+    return true;
+  }
+
+  // ---------- feasts and funerals ----------
+  feastBlock(): string | null {
+    const wait = this.lastFeast + FEAST.gap - this.dayF;
+    if (wait > 0) return `${Math.ceil(wait * 24)} 小时后才能再办`;
+    if (this.gold < FEAST.gold) return `要 ${FEAST.gold} 金币`;
+    if (this.foodStock() < this.feastFood()) return `要 ${Math.ceil(this.feastFood())} 份饱食的食物`;
+    return null;
+  }
+  feastFood() { return Math.max(10, this.foodNeed() * FEAST.food); }
+  holdFeast() {
+    if (this.feastBlock()) return false;
+    let need = this.feastFood();
+    for (const f of Object.keys(FOODS) as FoodId[]) {
+      if (need <= 0) break;
+      const units = Math.min(this.storage[f], need / FOODS[f].fill);
+      this.storage[f] -= units; need -= units * FOODS[f].fill;
+      this.ledger.add(f, 'out', '节庆', units);
+    }
+    this.gold -= FEAST.gold; this.ledger.add('gold', 'out', '节庆', FEAST.gold);
+    this.lift(FEAST.hope);
+    this.discontent = Math.max(0, this.discontent - FEAST.disc);
+    this.lastFeast = this.dayF;
+    this.notify(`全城办了一场节庆：篝火、热汤和音乐（希望 +${FEAST.hope}，不满 -${FEAST.disc}）`, 'good', { cat: 'milestone', icon: 'star' });
+    this.sfx.push('era');
+    return true;
+  }
+  funeralBlock(): string | null {
+    if (!this.laws.has('cemetery')) return '要先签署镇规「公墓」';
+    if (!this.deathsSinceFuneral) return '上次葬礼以后没有人去世';
+    const wait = this.lastFuneral + FUNERAL.gap - this.dayF;
+    if (wait > 0) return `${Math.ceil(wait * 24)} 小时后才能再办`;
+    if (this.gold < FUNERAL.gold) return `要 ${FUNERAL.gold} 金币`;
+    if (this.storage.planks < FUNERAL.planks) return `要 ${FUNERAL.planks} 木板做棺木`;
+    return null;
+  }
+  holdFuneral() {
+    if (this.funeralBlock()) return false;
+    const n = this.deathsSinceFuneral;
+    this.gold -= FUNERAL.gold; this.ledger.add('gold', 'out', '葬礼', FUNERAL.gold);
+    this.storage.planks -= FUNERAL.planks; this.ledger.add('planks', 'out', '葬礼', FUNERAL.planks);
+    this.lift(FUNERAL.hope);
+    this.discontent = Math.max(0, this.discontent - FUNERAL.disc);
+    this.deathsSinceFuneral = 0;
+    this.lastFuneral = this.dayF;
+    this.notify(`为 ${n} 位逝者办了葬礼，大家一起送别（希望 +${FUNERAL.hope}，不满 -${FUNERAL.disc}）`, 'good', { cat: 'milestone', icon: 'star' });
+    return true;
+  }
+
+  // ---------- events ----------
+  /** the lowest class living in town: refugees and survivors join it */
+  private baseTier(): TierId { return TIER_IDS.find(t => this.pop[t] > 0) ?? 'peasant'; }
+  private roomFor(tier: TierId) {
+    let n = 0;
+    for (const b of this.buildings.values()) if (b.type === 'house' && b.tier === tier && b.connected) n += Math.max(0, TIERS[tier].cap - b.residents);
+    return n;
+  }
+  /** move `n` people into homes with room; returns how many found a bed */
+  private takeIn(tier: TierId, n: number) {
+    let left = n;
+    for (const b of this.buildings.values()) {
+      if (left <= 0) break;
+      if (b.type !== 'house' || b.tier !== tier || !b.connected) continue;
+      const k = Math.min(left, TIERS[tier].cap - b.residents);
+      if (k > 0) { b.residents += k; b.growT = 0; left -= k; }
+    }
+    return n - left;
+  }
+  private rollEvent() {
+    const d = this.day + 1, pop = TIER_IDS.reduce((a, t) => a + this.pop[t], 0);
+    const kinds: EventKind[] = [];
+    if (!this.harbourFrozen && pop >= 10) kinds.push('refugees');
+    if (!this.harbourFrozen && !this.order) kinds.push('order');
+    if (this.season === 'winter' && d >= 15) kinds.push('wreck');
+    if (!kinds.length) return;
+    const kind = kinds[Math.floor(Math.random() * kinds.length)];
+    if (kind === 'refugees') {
+      const tier = this.baseTier(), n = Math.round(5 + Math.random() * Math.min(30, pop * 0.06)), room = this.roomFor(tier);
+      this.card = { kind, day: this.dayF, title: '港口来了难民', text: `${n} 个从北边逃难来的人挤在码头上，又冷又饿，有几个在咳嗽。他们求你收留。现在${TIERS[tier].name}的住宅还有 ${room} 个空位。`,
+        options: [
+          { label: '全部收留', note: `住进空房当${TIERS[tier].name}，希望 +6；没地方住的会离开；可能带来瘟疫` },
+          { label: '只收健康的', note: `收留约一半，希望 +2` },
+          { label: '拒绝', note: '希望 -4，不满 +3' },
+        ], data: { n, tier } };
+    } else if (kind === 'order') {
+      const pool = GOOD_IDS.filter(g => GOODS[g].era <= this.era && !['wood', 'clay', 'ore', 'wool', 'grain', 'flour', 'cloth'].includes(g));
+      const good = pool[Math.floor(Math.random() * pool.length)];
+      const n = Math.max(10, Math.round((12 + this.era * 10) * (0.7 + Math.random() * 0.6) / Math.max(1, GOODS[good].price / 6)));
+      const gold = Math.round(GOODS[good].price * n * 2.2 + 50);
+      const rare = (['tools', 'steel', 'coal', 'cans'] as GoodId[]).filter(g => GOODS[g].era <= this.era && g !== good);
+      const bonus = rare.length && Math.random() < 0.6 ? { good: rare[Math.floor(Math.random() * rare.length)], n: 8 + this.era * 2 } : undefined;
+      const days = 3;
+      this.card = { kind, day: this.dayF, title: '商船的订单', text: `商船船长想在 ${days} 天内收到 ${n} ${GOODS[good].name}（现在库存 ${Math.floor(this.storage[good])}）。按时交货付 ${gold} 金币${bonus ? `，外加 ${bonus.n} ${GOODS[bonus.good].name}` : ''}。`,
+        options: [
+          { label: '接单', note: `${days} 天内在「镇规」面板或这张卡片上交货；过期会让大家失望（希望 -2）` },
+          { label: '不接', note: '没有影响' },
+        ], data: { good, n, gold, bonus, days } };
+    } else {
+      this.card = { kind, day: this.dayF, title: '冰面上的沉船', text: '渔民在海冰上发现了一艘被冻住的货船。船上也许还有煤、钢材和金币，也许还有活人。可冰面随时会裂。',
+        options: [
+          { label: '派人去搜', note: '大概率找到物资或幸存者，也可能有人掉进冰窟窿' },
+          { label: '不去', note: '没有影响' },
+        ], data: {} };
+    }
+    this.notify(`${this.card.title}：在右边的卡片上做决定`, 'info', { cat: 'alert', icon: kind === 'order' ? 'box' : kind === 'wreck' ? 'cold' : 'people' });
+    this.sfx.push('bell');
+  }
+  answerCard(i: number, lapsed = false) {
+    const c = this.card;
+    if (!c) return;
+    this.card = null;
+    const D = c.data;
+    if (c.kind === 'refugees') {
+      if (i === 2) {
+        this.hope = Math.max(0, this.hope - 4); this.discontent = Math.min(100, this.discontent + 3);
+        this.notify(lapsed ? '没人去码头接难民，他们在寒风里离开了（希望 -4，不满 +3）' : '你拒绝了难民，他们在寒风里离开了（希望 -4，不满 +3）', 'warn', { cat: 'alert', icon: 'people' });
+        return;
+      }
+      const want = i === 0 ? D.n : Math.ceil(D.n / 2), got = this.takeIn(D.tier, want);
+      const lift = Math.round((i === 0 ? 6 : 2) * got / want);
+      this.lift(lift);
+      if (!got) { this.notify('想收留难民，可城里没有空房：他们只好继续往南走了。多盖些房子', 'warn', { cat: 'alert', icon: 'people' }); return; }
+      if (i === 0 && got > 0 && Math.random() < 0.35) {
+        const hs = [...this.buildings.values()].filter(b => b.type === 'house' && b.residents > 0 && b.tier === D.tier);
+        if (hs.length) hs[Math.floor(Math.random() * hs.length)].plague = 0.01;
+        this.notify('有个难民带着病：瘟疫在城里传开了', 'warn', { cat: 'alert', icon: 'sick' });
+      }
+      this.notify(`收留了 ${got} 个难民${got < want ? `，另外 ${want - got} 人没地方住，只好离开（多盖些房子）` : ''}${lift ? `（希望 +${lift}）` : ''}`, 'good', { cat: 'milestone', icon: 'people' });
+    } else if (c.kind === 'order') {
+      if (i !== 0) { if (!lapsed) this.notify('你谢绝了商船的订单', 'info'); return; }
+      this.order = { good: D.good, n: D.n, gold: D.gold, bonus: D.bonus, due: this.dayF + D.days };
+      this.notify(`接下订单：${D.days} 天内交 ${D.n} ${GOODS[D.good as GoodId].name}`, 'info', { cat: 'alert', icon: 'box' });
+    } else if (c.kind === 'wreck') {
+      if (i !== 0) return;
+      const r = Math.random();
+      if (r < 0.55) {
+        const coal = 15 + Math.round(Math.random() * 25), gold = 100 + Math.round(Math.random() * 150);
+        this.storage.coal = Math.min(this.cap, this.storage.coal + coal); this.ledger.add('coal', 'in', '沉船', coal);
+        this.gold += gold; this.ledger.add('gold', 'in', '沉船', gold);
+        let steel = 0;
+        if (this.era >= 2) { steel = 4 + Math.round(Math.random() * 6); this.storage.steel = Math.min(this.cap, this.storage.steel + steel); }
+        this.notify(`搜船的人回来了：带回 ${coal} 煤、${gold} 金币${steel ? `、${steel} 钢材` : ''}`, 'good', { cat: 'milestone', icon: 'coal' });
+      } else if (r < 0.8) {
+        const got = this.takeIn(this.baseTier(), 4);
+        this.lift(4);
+        this.notify(`船舱里还有活人！救回 ${got || 4} 个幸存者${got < 4 ? '（没有空房，有人只好跟船走）' : ''}（希望 +4）`, 'good', { cat: 'milestone', icon: 'people' });
+      } else {
+        let n = 3;
+        for (const b of this.buildings.values()) { if (n <= 0) break; if (b.type === 'house' && b.residents > 1) { b.residents--; n--; this.flowLeft.cold++; this.lost(); } }
+        this.hope = Math.max(0, this.hope - 3);
+        this.notify('冰面裂开了，有 3 个去搜船的人没能回来（希望 -3）', 'warn', { cat: 'alert', icon: 'cold' });
+      }
+    }
+  }
+  deliverOrder() {
+    const o = this.order;
+    if (!o || this.storage[o.good] < o.n) return false;
+    this.storage[o.good] -= o.n; this.ledger.add(o.good, 'out', '商船订单', o.n);
+    this.gold += o.gold; this.ledger.add('gold', 'in', '商船订单', o.gold);
+    if (o.bonus) { this.storage[o.bonus.good] = Math.min(this.cap, this.storage[o.bonus.good] + o.bonus.n); this.ledger.add(o.bonus.good, 'in', '商船订单', o.bonus.n); }
+    this.lift(2);
+    this.order = null;
+    this.notify(`订单交货了：收到 ${o.gold} 金币${o.bonus ? `和 ${o.bonus.n} ${GOODS[o.bonus.good].name}` : ''}（希望 +2）`, 'good', { cat: 'milestone', icon: 'gold' });
+    this.sfx.push('quest');
+    return true;
+  }
+  /** each new day: lapse unanswered cards and late orders, maybe start something new */
+  private stepEvents() {
+    if (this.card && this.dayF - this.card.day >= EVENTS.lapse) this.answerCard(this.card.options.length - 1, true);
+    if (this.order && this.dayF > this.order.due) {
+      this.hope = Math.max(0, this.hope - 2);
+      this.notify(`没能按时交 ${this.order.n} ${GOODS[this.order.good].name}，商船失望地开走了（希望 -2）`, 'warn', { cat: 'alert', icon: 'box' });
+      this.order = null;
+    }
+    if (!this.card && this.day + 1 >= EVENTS.from && !this.over && Math.random() < EVENTS.perDay) this.rollEvent();
+  }
+
+  /** what the next winter (or the great cold) will eat and burn, against what is in store */
+  winterStock() {
+    const [a, b] = this.winterSpan();
+    const days = (b - a) * this.seasonDays;
+    return { from: a, days, food: this.foodNeed() * days, foodHave: this.foodStock(), fuel: this.winterFuelEstimate(), fuelHave: this.storage.firewood + (this.era >= 2 ? this.storage.coal : 0) };
+  }
 
   // ---------- simulation ----------
   update(realDt: number) {
@@ -997,7 +1254,7 @@ export class Game {
     this.temp = this.calcTemp();
     this.ledger.tick(dt);
     this.slowT += dt;
-    if (this.slowT >= 1) { this.slowT = 0; this.replant(); this.computePollution(); this.checkEra(); this.checkQuest(); }
+    if (this.slowT >= 1) { this.slowT = 0; this.replant(); this.computePollution(); this.checkEra(); this.checkQuest(); this.refreshWarmSites(); }
 
     // ---- population & workforce (sick people stay home)
     TIER_IDS.forEach(t => { this.pop[t] = 0; });
@@ -1019,7 +1276,7 @@ export class Game {
     let upkeep = 0, gen = 0, use = 0, boostUse = 0, coldCap = 0, rp = 0, plants = 0;
     const W = WEATHER[this.weather.cur];
 
-    for (const b of this.buildings.values()) {
+    for (const b of this.staffOrder()) {
       const def = BUILDINGS[b.type];
       if (def.powerGen && b.connected && !b.paused) plants++;
       // idle workshops (no staff, no input, strike, fire) only cost a quarter
@@ -1039,6 +1296,11 @@ export class Game {
       } else b.staff = b.connected ? 1 : 0;
       // a powered warehouse is a cold store
       if (def.storage && def.elec && b.connected && gridUp && !b.elecOff) { boostUse += def.elec; coldCap += def.storage * this.power.boostRatio; }
+      if (def.workheat) {
+        b.working = b.connected && this.heatingOn && this.hutOk;
+        b.status = !b.connected ? '没有连上道路' : !this.heatingOn ? '待命（天冷了才生火）' : this.hutOk ? '生着火：附近的工人不冻手' : '缺柴火，炉子灭了';
+        continue;
+      }
       if (!def.workers && !def.powerGen && !def.cycle && !def.heating && def.pollution === undefined) {
         b.working = b.connected;
         b.status = !b.connected ? '没有连上道路' : def.storage && def.elec && gridUp && !b.elecOff ? (this.power.boostRatio > 0.95 ? '通电冷藏：鱼、菜、面包坏得慢' : `冷藏电力不足 (${Math.round(this.power.boostRatio * 100)}%)`) : '';
@@ -1109,8 +1371,9 @@ export class Game {
       if (def.powerGen) { b.gen = def.powerGen * b.staff; gen += b.gen; }
       const eb = this.elecBoost(b);
       if (def.elec && gridUp && !b.elecOff) boostUse += def.elec * b.staff;
-      const mult = 1 + this.prodBonus(b.type) + this.boostAt(b) + eb;
-      b.progress += (dt / def.cycle) * b.staff * b.env * wf * pf * mult;
+      const mult = 1 + this.prodBonus(b.type) + this.boostAt(b) + eb + (def.workers && this.laws.has('extshift') ? LAW_FX.prod : 0);
+      const chill = def.workers ? this.chillAt(b) : 0;
+      b.progress += (dt / def.cycle) * b.staff * b.env * wf * pf * mult * (1 - chill);
       if (b.progress >= 1) {
         b.progress -= 1;
         b.loaded = false;
@@ -1123,13 +1386,13 @@ export class Game {
       }
       b.working = true;
       const pct = Math.round((wf * b.env * mult - 1) * 100);
-      b.status = staffNote || (pf < 0.99 ? `电力不足 (${Math.round(pf * 100)}%)` : def.powerGen ? `发电 ${b.gen.toFixed(0)}` : Math.abs(pct) >= 1 ? `运转中（${pct > 0 ? '+' : ''}${pct}%${eb > 0.01 ? '，通电' : ''}）` : '运转中');
+      b.status = staffNote || (pf < 0.99 ? `电力不足 (${Math.round(pf * 100)}%)` : chill > 0.05 ? `天太冷，工人冻得干不动（-${Math.round(chill * 100)}%）` : def.powerGen ? `发电 ${b.gen.toFixed(0)}` : Math.abs(pct) >= 1 ? `运转中（${pct > 0 ? '+' : ''}${pct}%${eb > 0.01 ? '，通电' : ''}）` : '运转中');
     }
 
     // ---- food: each tier eats what it likes from the shared store, spread across the kinds in stock
     for (const t of [...TIER_IDS].reverse()) {
       const T = TIERS[t];
-      let need = this.pop[t] * T.hunger / DAY_LENGTH * dt;   // 饱食 this step
+      let need = this.pop[t] * T.hunger * this.rationMul / DAY_LENGTH * dt;   // 饱食 this step
       if (need <= 0) { this.fedRatio[t] = 1; continue; }
       const want = need;
       for (let pass = 0; pass < 2 && need > 1e-9; pass++) {
@@ -1173,11 +1436,20 @@ export class Game {
     for (const b of this.buildings.values()) {
       if (b.type !== 'house' || !b.residents) continue;
       const kind = this.heatKind(b), L = HEAT_LADDER[kind], fuel = L.fuel as GoodId | 'power';
-      const base = b.residents * (fuel === 'power' ? POWER_HEAT_PER_RESIDENT : HEAT_PER_RESIDENT) * L.per * Math.max(0.2, 1 + this.mods.heating);
+      const base = b.residents * (fuel === 'power' ? POWER_HEAT_PER_RESIDENT : HEAT_PER_RESIDENT) * L.per * Math.max(0.2, 1 + this.mods.heating) * (this.laws.has('fuelsave') && fuel !== 'power' ? 1 - LAW_FX.fuelsave : 1);
       const rate = base * cold;
       houseFuel.set(b, [fuel, rate, kind]);
       fuelNeed[fuel] = (fuelNeed[fuel] ?? 0) + rate;
       heatBase[fuel] = (heatBase[fuel] ?? 0) + base;
+    }
+    // warming huts burn coal when there is some, else firewood
+    let huts = 0;
+    for (const b of this.buildings.values()) if (BUILDINGS[b.type].workheat && b.connected) huts++;
+    const hutFuel: GoodId = this.era >= 2 && this.storage.coal >= 1 ? 'coal' : 'firewood';
+    if (huts) {
+      const base = huts * WORK_CHILL.hutFuel * (hutFuel === 'coal' ? HEAT_LADDER.coal.per : 1);
+      fuelNeed[hutFuel] = (fuelNeed[hutFuel] ?? 0) + base * cold;
+      heatBase[hutFuel] = (heatBase[hutFuel] ?? 0) + base;
     }
     this.heatNeed = fuelNeed;
     this.heatBase = heatBase;
@@ -1191,6 +1463,7 @@ export class Game {
       this.ledger.add(f, 'out', '取暖', d * r);
       fuelOk[f] = r;
     }
+    this.hutOk = (fuelOk[hutFuel] ?? 1) > 0.3;
 
     // electric light for the tiers that want it, more after dark
     let light = 0;
@@ -1220,6 +1493,15 @@ export class Game {
 
     // ---- houses: happiness, growth, sickness, tax
     let tax = 0, happySum = 0, houses = 0, coldHouses = 0, hungryHouses = 0;
+    // sick beds: last step's patients share this step's beds
+    let bedsHave = 0, bedsNeed = 0;
+    for (const s of this.buildings.values()) {
+      const d = BUILDINGS[s.type];
+      if (!d.beds || !s.connected || s.paused || s.fire > 0) continue;
+      bedsHave += d.beds * (d.workers ? s.staff : 1) * (this.laws.has('extrabeds') ? 1 + LAW_FX.beds : 1);
+    }
+    const bedShare = this.beds.need > 0 ? Math.min(1, bedsHave / this.beds.need) : 1;
+    const lawHappy = (this.laws.has('ration') ? LAW_FX.rationHappy : 0) + (this.laws.has('fuelsave') ? LAW_FX.fuelHappy : 0) + (this.laws.has('curfew') ? LAW_FX.curfewHappy : 0);
     const beaten: Partial<Record<HeatKind, number>> = {};
     const comfortSupply = (gs: GoodId[]) => gs.length ? gs.reduce((a, g) => a + (this.storage[g] >= 1 ? 1 : this.supply[g]), 0) / gs.length : 1;
     for (const b of this.buildings.values()) {
@@ -1260,6 +1542,7 @@ export class Game {
         { label: '健康', value: healthV * 10, max: 10 },
       ];
       if (debtPen) b.parts.push({ label: '欠薪', value: -debtPen, max: 0 });
+      if (lawHappy) b.parts.push({ label: '镇规', value: -lawHappy, max: 0 });
       if (b.fire > 0) b.parts.push({ label: '火灾', value: -40, max: 0 });
       b.needs = [
         ...T.foods.map(f => ({ label: GOODS[f].name, value: this.storage[f] >= 0.5 ? 1 : 0 })),
@@ -1278,6 +1561,20 @@ export class Game {
       } else b.coldT = Math.max(0, b.coldT - dt * (b.protect.has('health') ? 3 : 1.5));
       const sickShare = Math.max(b.coldT > 30 ? 0.5 : 0, b.plague > 0 ? PLAGUE.sickShare : 0, b.hungerT > HUNGER.leaveSecs ? 0.3 : 0) * Math.max(0.1, 1 + this.mods.sickness);
       b.sick = Math.min(b.residents, Math.round(b.residents * sickShare));
+      // the seriously ill (frostbite, plague) need a bed; without one some die (survival)
+      const severe = b.coldT > 30 || b.plague > 0 ? b.sick : 0;
+      const careOk = b.protect.has('health');
+      if (careOk) bedsNeed += severe;
+      if (severe && this.mode === 'survival') {
+        const untreated = severe * (careOk ? 1 - bedShare : b.plague > 0 ? 0 : 1);
+        if (untreated > 0 && Math.random() < untreated * SICKBED.die * dt) {
+          b.residents--;
+          if (b.plague > 0) this.flowLeft.plague++; else this.flowLeft.cold++;
+          this.lost();
+          if (careOk) this.throttle('beds', 90, `病床不够了：${Math.round(this.beds.need)} 个重病人只有 ${Math.round(bedsHave)} 张床，没床的人会死。多建草药铺或诊所，或签署「病房加床」`, 'warn', b, 'sick');
+          else this.throttle('nocare', 90, '冻伤的病人没有医疗照顾，有人死了。在住宅附近建草药铺', 'warn', b, 'sick');
+        }
+      }
       // growth
       const hp = b.happy * 100;
       let target = !b.connected ? 0 : hp >= 60 ? T.cap : Math.max(1, Math.round(T.cap * Math.max(0.25, (hp - 10) / 50)));
@@ -1295,13 +1592,14 @@ export class Game {
       if (b.residents < 0) b.residents = 0;
       if (b.residents === target) b.growT = Math.min(b.growT, 4);
       b.status = !b.connected ? '没有连上道路' : b.fire > 0 ? '着火了！' : b.plague > 0 ? '闹瘟疫，有人病倒了' : b.hungerT > HUNGER.leaveSecs ? '饿得受不了，有人要搬走' : b.hungerT > HUNGER.hungrySecs ? '吃不饱，干活没力气' : b.coldT > 30 ? '天太冷，有人生病了' : b.warm < 0.5 && heat ? '家里没有燃料取暖' : this.gold < 0 ? '领不到工钱' : hp >= 80 ? '生活美满' : hp >= 50 ? '还算满意' : '日子不好过';
-      const t1 = b.fire > 0 || b.hungerT > HUNGER.hungrySecs ? 0 : (b.residents - b.sick) * T.tax * diff.tax * (hp / 100) * (hp > 80 ? 1.2 : 1) * this.taxMood;
+      const t1 = b.fire > 0 || b.hungerT > HUNGER.hungrySecs ? 0 : (b.residents - b.sick) * T.tax * diff.tax * (hp / 100) * (hp > 80 ? 1.2 : 1) * this.taxMood * (this.laws.has('vespers') ? 1 - LAW_FX.vespersTax : 1);
       tax += t1;
       this.ledger.add('gold', 'in', `${T.name}税收`, t1 / 60 * dt);
       happySum += hp; houses++;
       if (b.residents && b.hungerT > HUNGER.hungrySecs) hungryHouses++;
     }
     this.happyAvg = houses ? happySum / houses : 0;
+    this.beds = { need: bedsNeed, have: bedsHave };
     this.stepMood(dt, houses ? coldHouses / houses : 0, houses ? hungryHouses / houses : 0);
     this.stepDisasters(dt);
     this.stepDay();
@@ -1328,6 +1626,7 @@ export class Game {
       }
     }
 
+    if (this.laws.has('warmwear')) { upkeep += LAW_FX.warmwearGold; this.ledger.add('gold', 'out', '镇规·发棉衣', LAW_FX.warmwearGold / 60 * dt); }
     this.taxRate = tax;
     this.upkeepRate = upkeep;
     this.gold += (tax - upkeep) / 60 * dt;
@@ -1377,8 +1676,8 @@ export class Game {
   private lost() {
     this.winterLog.left++;
     if (this.mode !== 'survival') return;
-    this.deaths++; this.winterLog.deaths++;
-    const share = MOOD.deathPop / Math.max(MOOD.deathPop, TIER_IDS.reduce((a, t) => a + this.pop[t], 0));
+    this.deaths++; this.winterLog.deaths++; this.deathsSinceFuneral++;
+    const share = MOOD.deathPop / Math.max(MOOD.deathPop, TIER_IDS.reduce((a, t) => a + this.pop[t], 0)) * (this.laws.has('cemetery') ? LAW_FX.cemetery : 1);
     this.hope = Math.max(0, this.hope - MOOD.deathHope * share);
     this.discontent = Math.min(100, this.discontent + MOOD.deathDisc * share);
   }
@@ -1398,9 +1697,9 @@ export class Game {
     this.wasBlizzard = blz;
     if (this.peakPop < 8) return;           // nobody to hope or complain yet
     const per = dt / DAY_LENGTH, M = MOOD;
-    const dT = this.moodTarget.disc = Math.max(0, Math.min(100, Math.max(0, (M.calm - this.happyAvg) * M.discHappy) + coldShare * M.coldDisc + hungryShare * M.hungerDisc + (this.gold < 0 ? M.debtDisc : 0)));
+    const dT = this.moodTarget.disc = Math.max(0, Math.min(100, Math.max(0, (M.calm - this.happyAvg) * M.discHappy) + coldShare * M.coldDisc + hungryShare * M.hungerDisc + (this.gold < 0 ? M.debtDisc : 0) + (this.laws.has('extshift') ? LAW_FX.shiftDisc : 0) + (this.laws.has('extrabeds') ? LAW_FX.bedsDisc : 0)));
     this.discontent += (dT - this.discontent) * Math.min(1, (dT > this.discontent ? M.discUp : M.discDown) * per);
-    const hT = this.moodTarget.hope = Math.max(0, Math.min(100, M.hopeBase + (this.happyAvg - 50) * M.hopeHappy - (this.coldSnap ? M.blizzardHope : 0) - this.greatCold * M.greatHope));
+    const hT = this.moodTarget.hope = Math.max(0, Math.min(100, M.hopeBase + (this.happyAvg - 50) * M.hopeHappy - (this.coldSnap ? M.blizzardHope : 0) - this.greatCold * M.greatHope + (this.laws.has('vespers') ? LAW_FX.vespersHope : 0)));
     this.hope += (hT - this.hope) * Math.min(1, M.hopeRate * per);
     if (this.mode !== 'survival' || this.over) return;
     if (this.discontent >= M.warnDisc) this.throttle('disc', 120, `不满已经到 ${Math.round(this.discontent)}：到 100 居民就会造反。让大家吃饱穿暖，别欠薪`, 'warn', undefined, 'strike');
@@ -1485,7 +1784,7 @@ export class Game {
     if (this.era >= 2) {
       for (const h of houses) {
         if (h.happy * 100 >= CRIME.below) continue;
-        if (Math.random() >= CRIME.perHouseDay * (h.protect.has('police') ? CRIME.coverMul : 1) * day * (1 + (CRIME.below - h.happy * 100) / 20)) continue;
+        if (Math.random() >= CRIME.perHouseDay * (h.protect.has('police') ? CRIME.coverMul : 1) * (this.laws.has('curfew') ? LAW_FX.curfew : 1) * day * (1 + (CRIME.below - h.happy * 100) / 20)) continue;
         const goods = GOOD_IDS.filter(g => this.storage[g] >= 6);
         if (goods.length && Math.random() < 0.7) {
           const g = goods[Math.floor(Math.random() * goods.length)];
@@ -1557,6 +1856,7 @@ export class Game {
       if (shown === G.greatFrom) this.notify(`大寒潮来了！撑到第 ${G.days} 天`, 'warn', { cat: 'milestone', icon: 'cold' });
       if (shown > G.greatFrom && shown <= G.days) this.notify(`大寒潮第 ${shown - G.greatFrom + 1} 天：离第 ${G.days} 天还有 ${G.days - shown + 1} 天`, 'info', { cat: 'alert', icon: 'cold' });
     }
+    this.stepEvents();
     this.lastDay = d;
   }
 
@@ -1704,10 +2004,11 @@ export class Game {
     this.occ.forEach((o, i) => { if (o === -1) roads.push(i); });
     return JSON.stringify({
       v: 2, rf: 1, seasonDays: this.seasonDays, diff: this.difficulty, mode: this.mode,
-      mood: { hope: this.hope, disc: this.discontent, deaths: this.deaths, peak: this.peakPop, won: this.won, over: this.over, glut: this.glut, winter: this.winterLog }, seed: this.world.seed, map: this.world.mapId, weather: this.weather.cur, gold: this.gold, time: this.time, quest: this.questIndex, era: this.era,
+      mood: { hope: this.hope, disc: this.discontent, deaths: this.deaths, peak: this.peakPop, won: this.won, over: this.over, glut: this.glut, winter: this.winterLog },
+      town: { laws: [...this.laws], lawDay: this.lawDay, feast: this.lastFeast, funeral: this.lastFuneral, mourn: this.deathsSinceFuneral, card: this.card, order: this.order }, seed: this.world.seed, map: this.world.mapId, weather: this.weather.cur, gold: this.gold, time: this.time, quest: this.questIndex, era: this.era,
       research: { current: this.research.current, points: this.research.points, levels: this.research.levels, saved: this.research.saved },
       storage: this.storage, roads,
-      b: [...this.buildings.values()].filter(b => b.type !== 'depot').map(b => [b.type, b.x, b.z, b.tier, b.residents, b.progress, b.paused ? 1 : 0, b.rot, b.elecOff ? 1 : 0]),
+      b: [...this.buildings.values()].filter(b => b.type !== 'depot').map(b => [b.type, b.x, b.z, b.tier, b.residents, b.progress, b.paused ? 1 : 0, b.rot, b.elecOff ? 1 : 0, b.priority ? 1 : 0]),
     });
   }
   static load(json: string): Game | null {
@@ -1721,6 +2022,12 @@ export class Game {
         g.hope = m.hope ?? g.hope; g.discontent = m.disc ?? g.discontent; g.deaths = m.deaths ?? 0; g.peakPop = m.peak ?? 0;
         g.won = !!m.won; g.over = m.over ?? null; g.glut = m.glut ?? {}; if (m.winter) g.winterLog = m.winter;
       }
+      if (s.town) {
+        const t = s.town;
+        g.laws = new Set((t.laws ?? []).filter((k: string) => k in LAWS)); g.lawDay = t.lawDay ?? -99;
+        g.lastFeast = t.feast ?? -99; g.lastFuneral = t.funeral ?? -99; g.deathsSinceFuneral = t.mourn ?? 0;
+        g.card = t.card ?? null; g.order = t.order ?? null;
+      }
       g.gold = s.gold; g.time = s.time; if (s.seasonDays) g.seasonDays = s.seasonDays; if (s.diff in DIFFICULTY) g.difficulty = s.diff; g.questIndex = s.quest; g.era = s.era ?? 1;
       if (s.research) { g.research.current = s.research.current; g.research.points = s.research.points; g.research.levels = s.research.levels ?? {}; g.research.saved = s.research.saved ?? {}; }
       if (s.weather && s.weather in WEATHER) { g.weather.cur = g.weather.prev = s.weather; }
@@ -1729,14 +2036,14 @@ export class Game {
       // buildings that grew since the save (each upgrade line now has one footprint) may not fit where they
       // stood: place everything else first, then try them again shifted by a tile
       const grown: typeof s.b = [];
-      for (const [pass, list] of [[0, s.b], [1, grown]] as const) for (const [type, x0, z0, tier, res, prog, paused, rot, eoff] of list) {
+      for (const [pass, list] of [[0, s.b], [1, grown]] as const) for (const [type, x0, z0, tier, res, prog, paused, rot, eoff, prio] of list) {
         if (!(type in BUILDINGS)) continue;
         const spot = (pass ? [[-1, 0], [0, -1], [-1, -1], [1, 0], [0, 1]] : [[0, 0]]).find(([dx, dz]) => g.canFit(type, x0 + dx, z0 + dz, rot ?? 0));
-        if (!spot) { if (!pass) grown.push([type, x0, z0, tier, res, prog, paused, rot, eoff]); continue; }
+        if (!spot) { if (!pass) grown.push([type, x0, z0, tier, res, prog, paused, rot, eoff, prio]); continue; }
         const x = x0 + spot[0], z = z0 + spot[1];
         // saves before free facing only stored the turn (0/1); pick the side facing the road like they used to
         const b = g.addBuilding(type, x, z, s.rf ? rot ?? 0 : g.bestRot(type, x, z, rot ?? 0));
-        b.tier = tier; b.residents = res; b.progress = prog; b.paused = !!paused; b.elecOff = !!eoff;
+        b.tier = tier; b.residents = res; b.progress = prog; b.paused = !!paused; b.elecOff = !!eoff; b.priority = !!prio;
       }
       g.rVersion++; g.tVersion++;
       g.refresh();

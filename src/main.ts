@@ -267,6 +267,7 @@ async function boot() {
     if (k === 'g') hud.togglePanel('goods');
     if (k === 'l') hud.togglePanel('ledger');
     if (k === 'm') hud.togglePanel('log');
+    if (k === 'k') hud.togglePanel('town');
     if (k === 'p') hud.setOverlay(!hud.overlay);
     if (k === ' ') { e.preventDefault(); game.speed = game.speed === 0 ? 1 : 0; }
     if (k === 'x') setTool(tool === 'demolish' ? 'select' : 'demolish');

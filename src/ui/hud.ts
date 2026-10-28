@@ -8,7 +8,7 @@ import type { AudioSettings } from '../audio/sound';
 import type { RotateMode } from '../render/camera';
 import type { Quality } from '../render/post';
 import { icon } from './icons';
-import { SEASON_IDS, SEASON_DAYS, DAY_LENGTH, HEAT_BELOW, PER_DAY, FOODS, FoodId, PROTECTS, ProtectId, familyOf, ELEC_BOOST, COLD_STORE, DIFFICULTY, DIFFICULTY_IDS, DifficultyId, ModeId, MODES, SURVIVAL, MOOD, HEAT_LADDER } from '../sim/data';
+import { SEASON_IDS, SEASON_DAYS, DAY_LENGTH, HEAT_BELOW, PER_DAY, FOODS, FoodId, PROTECTS, ProtectId, familyOf, ELEC_BOOST, COLD_STORE, DIFFICULTY, DIFFICULTY_IDS, DifficultyId, ModeId, MODES, SURVIVAL, MOOD, HEAT_LADDER, LAWS, LAW_IDS, LawId, LAW_FX, WORK_CHILL, FEAST, FUNERAL } from '../sim/data';
 import { supplies, needs as chainNeeds, chainSummary, outPerDay } from './chain';
 
 export type Tool = 'select' | 'demolish' | BuildingId;
@@ -39,8 +39,8 @@ export interface HudHooks {
   lookAt(x: number, z: number): void;
   sound(name: string): void;
 }
-type PanelId = 'research' | 'goods' | 'ledger' | 'log' | 'work';
-const PANELS: PanelId[] = ['research', 'goods', 'ledger', 'log', 'work'];
+type PanelId = 'research' | 'goods' | 'ledger' | 'log' | 'work' | 'town';
+const PANELS: PanelId[] = ['research', 'goods', 'ledger', 'log', 'work', 'town'];
 interface Alert { t: Toast; el: HTMLElement; life: number; n: number }
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string, root: ParentNode = document) => root.querySelector(sel) as T;
@@ -79,7 +79,7 @@ export class Hud {
           <button data-speed="4">4×</button>
         </div>
         <button class="menu-btn icon-btn log-btn" id="logBtn" title="消息记录 (M)" aria-label="消息记录">${icon('bell')}<span class="badge" id="logBadge" hidden></span></button>
-        <button class="menu-btn icon-btn" id="muteBtn" aria-label="静音"></button>
+        <button class="menu-btn icon-btn" id="muteBtn" aria-label="音量"></button>
         <button class="menu-btn" id="menuBtn" aria-haspopup="true">菜单</button>
         <div class="timeline" id="timeline" aria-label="气温时间线"></div>
       </div>
@@ -90,6 +90,7 @@ export class Hud {
         <div class="items" id="items"></div>
         <div class="tools">
           <button id="tResearch" title="研究 (T)">${icon('research')}研究</button>
+          <button id="tTown" title="镇规、节庆和订单 (K)">${icon('ledger')}镇规</button>
           <button id="tLedger" title="收支账本 (L)">${icon('ledger')}账本</button>
           <button id="tGoods" title="仓库与商船 (G)">${icon('box')}仓库</button>
           <button id="tOverlay" title="污染视图 (P)">${icon('pollution')}污染</button>
@@ -103,10 +104,19 @@ export class Hud {
       <div class="panel card" id="ledger" hidden role="dialog" aria-label="收支账本"></div>
       <div class="panel card" id="log" hidden role="dialog" aria-label="消息记录"></div>
       <div class="panel card" id="work" hidden role="dialog" aria-label="劳动力"></div>
+      <div class="panel card" id="town" hidden role="dialog" aria-label="镇规"></div>
+      <aside class="eventcard card" id="eventcard" hidden aria-live="polite"></aside>
       <div class="alerts" id="alerts" aria-live="polite"></div>
       <div class="banner" id="banner" aria-live="polite" hidden></div>
       <div class="actmsg" id="actmsg" aria-live="polite"></div>
       <div class="endcard card" id="endcard" hidden role="dialog" aria-label="结局"></div>
+      <div class="volpop card" id="volPop" hidden role="dialog" aria-label="音量">
+        <h4>音量</h4>
+        <label>${icon('sound')}音乐<input type="range" data-vol="music" min="0" max="1" step="0.05"></label>
+        <label>${icon('bell')}音效<input type="range" data-vol="sfx" min="0" max="1" step="0.05"></label>
+        <label>${icon('sunny')}环境<input type="range" data-vol="amb" min="0" max="1" step="0.05"></label>
+        <button class="mute" data-vol="mute"></button>
+      </div>
       <div class="menu card" id="menu" hidden>
         <h3>暖港</h3>
         <button data-m="save">保存游戏</button>
@@ -162,7 +172,21 @@ export class Hud {
       a.life = Math.min(a.life, 0.01);
     });
     // sound
-    $('#muteBtn', root).addEventListener('click', () => { this.audio.muted = !this.audio.muted; hooks.audio({ muted: this.audio.muted }); this.renderAudio(); });
+    const volPop = $('#volPop', root);
+    $('#muteBtn', root).addEventListener('click', () => { volPop.hidden = !volPop.hidden; $('#menu', root).hidden = true; this.renderAudio(); });
+    volPop.addEventListener('input', e => {
+      const el = e.target as HTMLInputElement, k = el.dataset.vol as 'music' | 'sfx' | 'amb';
+      if (!k) return;
+      this.audio[k] = Number(el.value);
+      if (this.audio.muted) this.audio.muted = false;
+      hooks.audio({ [k]: this.audio[k], muted: this.audio.muted });
+      this.renderAudio();
+    });
+    volPop.addEventListener('click', e => {
+      if (!(e.target as HTMLElement).closest('[data-vol="mute"]')) return;
+      this.audio.muted = !this.audio.muted; hooks.audio({ muted: this.audio.muted }); this.renderAudio();
+    });
+    document.addEventListener('pointerdown', e => { if (!volPop.hidden && !(e.target as HTMLElement).closest('#volPop, #muteBtn')) volPop.hidden = true; });
     $<HTMLInputElement>('#volMusic', root).addEventListener('input', e => { this.audio.music = Number((e.target as HTMLInputElement).value); hooks.audio({ music: this.audio.music }); });
     $<HTMLInputElement>('#volSfx', root).addEventListener('input', e => { this.audio.sfx = Number((e.target as HTMLInputElement).value); hooks.audio({ sfx: this.audio.sfx }); });
     $<HTMLInputElement>('#volAmb', root).addEventListener('input', e => { this.audio.amb = Number((e.target as HTMLInputElement).value); hooks.audio({ amb: this.audio.amb }); });
@@ -222,6 +246,30 @@ export class Hud {
     $('#tRotate', root).addEventListener('click', () => hooks.rotate());
     $('#tDemolish', root).addEventListener('click', () => hooks.tool(this.tool === 'demolish' ? 'select' : 'demolish'));
     $('#tResearch', root).addEventListener('click', () => this.togglePanel('research'));
+    $('#tTown', root).addEventListener('click', () => this.togglePanel('town'));
+    $('#town', root).addEventListener('click', e => {
+      const el = e.target as HTMLElement, g = this.game;
+      if (el.closest('[data-a="close"]')) { this.togglePanel('town', false); return; }
+      const law = el.closest<HTMLElement>('[data-law]')?.dataset.law as LawId | undefined;
+      if (law) {
+        if (this.lawConfirm !== law) { this.lawConfirm = law; this.renderTown(); return; }
+        this.lawConfirm = null;
+        g.signLaw(law);
+      }
+      const act = el.closest<HTMLElement>('[data-town]')?.dataset.town;
+      if (act === 'feast') g.holdFeast();
+      if (act === 'funeral') g.holdFuneral();
+      if (act === 'deliver') g.deliverOrder();
+      this.renderTown();
+    });
+    $('#eventcard', root).addEventListener('click', e => {
+      const el = e.target as HTMLElement, g = this.game;
+      const opt = el.closest<HTMLElement>('[data-opt]')?.dataset.opt;
+      if (opt !== undefined) g.answerCard(Number(opt));
+      if (el.closest('[data-a="deliver"]')) g.deliverOrder();
+      if (el.closest('[data-a="town"]')) this.togglePanel('town', true);
+      this.cardKey = ''; this.renderCard();
+    });
     $('#tGoods', root).addEventListener('click', () => this.togglePanel('goods'));
     $('#tLedger', root).addEventListener('click', () => this.togglePanel('ledger'));
     $('#tOverlay', root).addEventListener('click', () => this.setOverlay(!this.overlayOn));
@@ -266,6 +314,7 @@ export class Hud {
       if (a === 'focus') hooks.focus(b);
       if (a === 'turn') hooks.turn(b);
       if (a === 'pause') { hooks.pause(b); this.infoKey = ''; this.renderInfo(); }
+      if (a === 'priority') { this.game.togglePriority(b); this.infoKey = ''; this.renderInfo(); }
       if (a === 'elec') { hooks.elec(b); this.infoKey = ''; this.renderInfo(); }
     });
   }
@@ -284,7 +333,11 @@ export class Hud {
     const b = $('#muteBtn', this.root);
     b.innerHTML = icon(this.audio.muted ? 'mute' : 'sound');
     b.setAttribute('aria-label', this.audio.muted ? '打开声音' : '静音');
-    b.title = this.audio.muted ? '打开声音' : '静音';
+    b.title = '音量';
+    const pop = $('#volPop', this.root);
+    pop.querySelectorAll<HTMLInputElement>('input[data-vol]').forEach(i => { i.value = String(this.audio[i.dataset.vol as 'music' | 'sfx' | 'amb'] ?? 0.7); });
+    $('[data-vol="mute"]', pop).textContent = this.audio.muted ? '已静音，点一下打开声音' : '全部静音';
+    (['music', 'sfx', 'amb'] as const).forEach(k => { const m = $<HTMLInputElement>('#vol' + (k === 'music' ? 'Music' : k === 'sfx' ? 'Sfx' : 'Amb'), this.root); if (m) m.value = String(this.audio[k]); });
   }
 
   setGame(g: Game) { $<HTMLSelectElement>('#seasonLen', this.root).value = String(g.seasonDays); $<HTMLSelectElement>('#difficulty', this.root).value = g.difficulty; this.game = g; this.selected = null; this.infoKey = ''; this.itemsKey = ''; this.renderInfo(); this.renderItems(); }
@@ -322,10 +375,58 @@ export class Hud {
     $('#tResearch', this.root).classList.toggle('on', id === 'research' && open);
     $('#tGoods', this.root).classList.toggle('on', id === 'goods' && open);
     $('#tLedger', this.root).classList.toggle('on', id === 'ledger' && open);
-    if (open && id !== 'log') id === 'research' ? this.renderResearch() : id === 'goods' ? this.renderGoods() : id === 'work' ? this.renderWork() : this.renderLedger();
+    $('#tTown', this.root).classList.toggle('on', id === 'town' && open);
+    if (open && id !== 'log') id === 'research' ? this.renderResearch() : id === 'goods' ? this.renderGoods() : id === 'work' ? this.renderWork() : id === 'town' ? this.renderTown() : this.renderLedger();
   }
   closePanels() { this.togglePanel('research', false); }
   get panelOpen() { return PANELS.some(p => !$('#' + p, this.root).hidden); }
+
+  // ---------- town panel: laws, feasts and funerals, the ship's order ----------
+  private lawConfirm: LawId | null = null;
+  private renderTown() {
+    const g = this.game;
+    if (!g) return;
+    const box = $('#town', this.root), st = box.scrollTop;
+    const laws = LAW_IDS.map(id => {
+      const L = LAWS[id], on = g.laws.has(id), block = g.lawBlock(id);
+      return `<div class="law${on ? ' on' : ''}${block && !on ? ' off' : ''}"><h4>${L.name}${on ? ' <small>已签署</small>' : ''}</h4>
+        <p class="gain">${icon('up')}${L.gain}</p><p class="cost">${icon('strike')}${L.cost}</p>
+        ${on ? '' : `<button class="${block ? 'ghost' : 'primary'} small" data-law="${id}" ${block ? 'disabled' : ''}>${block ?? (this.lawConfirm === id ? '再点一次签署（不能撤回）' : '签署')}</button>`}</div>`;
+    }).join('');
+    const fb = g.feastBlock(), nb = g.funeralBlock(), o = g.order;
+    const order = o ? `<div class="order"><h4>${icon('box')}商船订单</h4><p>还剩 ${Math.max(0, o.due - g.dayF).toFixed(1)} 天交 <b>${o.n} ${GOODS[o.good].name}</b>（库存 ${Math.floor(g.storage[o.good])}），酬劳 ${o.gold} 金币${o.bonus ? ` + ${o.bonus.n} ${GOODS[o.bonus.good].name}` : ''}</p>
+      <button class="primary small" data-town="deliver" ${g.storage[o.good] < o.n ? 'disabled' : ''}>${g.storage[o.good] < o.n ? `还差 ${Math.ceil(o.n - g.storage[o.good])}` : '交货'}</button></div>` : '';
+    box.innerHTML = `<header><h3>镇规</h3><span class="sub">像冰汽时代的法典：每条镇规换来好处，也有代价，签了就不能撤回。两次签署至少隔 ${24} 小时。</span><button class="x" data-a="close" aria-label="关闭">×</button></header>
+      <div class="laws">${laws}</div>
+      <h4 class="lh">活动</h4>
+      <div class="acts2">
+        <div class="law"><h4>办节庆</h4><p class="gain">${icon('star')}希望 +${FEAST.hope}，不满 -${FEAST.disc}</p><p class="cost">${icon('gold')}${FEAST.gold} 金币和约 ${Math.ceil(g.feastFood())} 份饱食的食物，每 ${FEAST.gap} 天一次</p>
+          <button class="${fb ? 'ghost' : 'primary'} small" data-town="feast" ${fb ? 'disabled' : ''}>${fb ?? '办节庆'}</button></div>
+        <div class="law"><h4>办葬礼</h4><p class="gain">${icon('star')}希望 +${FUNERAL.hope}，不满 -${FUNERAL.disc}${g.deathsSinceFuneral ? `（送别 ${g.deathsSinceFuneral} 位逝者）` : ''}</p><p class="cost">${icon('gold')}${FUNERAL.gold} 金币和 ${FUNERAL.planks} 木板，要先签「公墓」</p>
+          <button class="${nb ? 'ghost' : 'primary'} small" data-town="funeral" ${nb ? 'disabled' : ''}>${nb ?? '办葬礼'}</button></div>
+      </div>${order}`;
+    box.scrollTop = st;
+  }
+  /** a pending event (refugees, an order, a wreck) or the order in hand */
+  private cardKey = '';
+  private renderCard() {
+    const g = this.game, box = $('#eventcard', this.root), c = g.card, o = g.order;
+    const key = c ? `c${c.day}` : o ? `o${o.due}|${Math.floor(g.storage[o.good])}|${Math.floor((o.due - g.dayF) * 10)}` : '';
+    if (key === this.cardKey) return;
+    this.cardKey = key;
+    box.hidden = !key;
+    if (!key) return;
+    if (c) {
+      box.className = 'eventcard card big';
+      box.innerHTML = `<h3>${icon(c.kind === 'order' ? 'box' : c.kind === 'wreck' ? 'cold' : 'people')}${c.title}</h3><p>${c.text}</p>
+        ${c.options.map((op, i) => `<button class="${i === 0 ? 'primary' : 'ghost'}" data-opt="${i}"><b>${op.label}</b><small>${op.note}</small></button>`).join('')}
+        <p class="sub">一天内不回应就算${c.options[c.options.length - 1].label}</p>`;
+    } else if (o) {
+      const short = g.storage[o.good] < o.n;
+      box.className = 'eventcard card';
+      box.innerHTML = `<div class="ord">${icon('box')}<span>订单：交 <b>${o.n} ${GOODS[o.good].name}</b>（有 ${Math.floor(g.storage[o.good])}），还剩 ${Math.max(0, o.due - g.dayF).toFixed(1)} 天</span><button class="${short ? 'ghost' : 'primary'} small" data-a="deliver" ${short ? 'disabled' : ''}>交货</button></div>`;
+    }
+  }
 
   /** jobs and hands per class, and which buildings employ them */
   private renderWork() {
@@ -353,7 +454,7 @@ export class Hud {
         <div class="lrow"><span>${gap > 0 ? '缺人' : '空闲'}</span><b class="${gap > 0 ? 'down' : 'up'}">${Math.abs(gap)}</b></div>
         <h4 class="lh">各建筑（已到岗/需要）</h4>${rows || '<div class="lrow none">还没有要这个阶层的建筑</div>'}</div>`;
     }).join('');
-    box.innerHTML = `<header><h3>劳动力</h3><span class="sub">病人和着火住宅里的人不上班；挨饿的人只干半天。缺人时先建住宅或让住宅升级。</span><button class="x" data-a="close" aria-label="关闭">×</button></header><div class="cols">${cols}</div>`;
+    box.innerHTML = `<header><h3>劳动力</h3><span class="sub">病人和着火住宅里的人不上班；挨饿的人只干半天。缺人时先建住宅或让住宅升级；在建筑信息里点「设为优先」，缺人时它先分到工人。</span><button class="x" data-a="close" aria-label="关闭">×</button></header><div class="cols">${cols}</div>`;
   }
 
   private renderItems() {
@@ -404,10 +505,13 @@ export class Hud {
       const box = $('#ledger', this.root), st = box.scrollTop;
       this.renderLedger(); box.scrollTop = st;
     }
+    if (!$('#town', this.root).hidden && this.ledgerT === 0) this.renderTown();
+    this.renderCard();
     if (!$('#work', this.root).hidden && this.ledgerT === 0) { const box = $('#work', this.root), st = box.scrollTop; this.renderWork(); box.scrollTop = st; }
     const top = (this.root.querySelector('.topbar') as HTMLElement).getBoundingClientRect().bottom + 10;
     const quest = $('#quest', this.root);
     quest.style.top = `${top}px`;
+    $('#eventcard', this.root).style.top = `${top}px`;
     if (innerWidth > 720) $('#info', this.root).style.top = `${top}px`;
     // the town's news stacks under the era card on the left; milestones sit centred under the bar
     $('#alerts', this.root).style.top = `${quest.getBoundingClientRect().bottom + 10}px`;
@@ -426,57 +530,134 @@ export class Hud {
     const now = g.dayF;
     // the whole 100 days in a survival game; otherwise the days around now
     const a = goal ? 0 : Math.max(0, Math.floor(now) - 4), b = goal ? SURVIVAL.days + 1 : a + 24;
-    const key = `${a}|${b}|${Math.floor(now * 8)}|${g.mode}|${g.difficulty}|${g.seasonDays}|${g.era}|${this.game.mods.heatLimit}`;
-    if (key === this.tlKey) return;
+    this.tlRange = [a, b];
+    // the head (today) changes every frame; the chart only every few game hours
+    const head = $('#tlHead', box);
+    if (head) {
+      const tc = g.temp < -20 ? 'deep' : g.temp < -3 ? 'cold' : g.temp < HEAT_BELOW ? 'cool' : g.temp > 22 ? 'hot' : 'mild';
+      head.className = 'tl-head ' + tc;
+      head.innerHTML = `<div class="tl-temp">${icon(g.blizzard ? 'cold' : 'thermo')}<b>${Math.round(g.temp)}°</b></div>
+        <div class="tl-day"><b>第 ${g.day + 1}</b>${goal ? `<small>/ ${SURVIVAL.days} 天</small>` : '<small>天</small>'}</div>
+        <div class="tl-sea">${g.greatCold > 0.5 ? '大寒潮' : g.coldSnap ? '暴风雪' : `${g.year} 年 · ${g.seasonName()}`}</div>`;
+    }
+    const key = `${a}|${b}|${Math.floor(now * 8)}|${g.mode}|${g.difficulty}|${g.seasonDays}|${g.era}|${g.mods.heatLimit}|${[...g.laws].join()}`;
+    if (key === this.tlKey && head) return;
     this.tlKey = key;
-    const W = 1000, H = 44, T0 = 30, T1 = -48;     // °C at the top and the bottom
+    const W = 1000, H = 48;
+    const pos = (d: number) => d / g.seasonDays;
+    // the vertical scale fits the temperatures shown (and the heating rungs) so the curve fills the chart
+    let tMax = -99, tMin = 99;
+    for (let d = a; d <= b; d += 0.25) { tMax = Math.max(tMax, g.tempAt(pos(d), 15)); tMin = Math.min(tMin, g.tempAt(pos(d), 4)); }
+    const T0 = Math.ceil(tMax + 3), T1 = Math.floor(Math.min(tMin, g.heatLimit('district')) - 3);
     const x = (d: number) => ((d - a) / (b - a)) * W;
     const y = (t: number) => ((T0 - Math.max(T1, Math.min(T0, t))) / (T0 - T1)) * H;
-    const pos = (d: number) => d / g.seasonDays;
-    const SEASON_FILL: Record<string, string> = { 春: '#e3f3d4', 夏: '#fbecb8', 秋: '#f8dcc0', 冬: '#dbe9f6', 回暖: '#eef5df' };
-    let bg = '', hi: string[] = [], lo: string[] = [], marks = '', tips = '';
-    const step = (b - a) > 40 ? 0.5 : 0.25;
-    for (let d = a; d < b; d += step) {
-      const p = pos(d + step / 2);
-      const great = g.greatK(d + step / 2) > 0.5, snap = g.snapDrop(p) > 0;
-      const fill = great ? '#9fb7e6' : snap ? '#bcd0ef' : SEASON_FILL[g.seasonName(p)] ?? '#eee';
-      bg += `<rect x="${x(d).toFixed(1)}" y="0" width="${(x(d + step) - x(d) + 0.6).toFixed(1)}" height="${H}" fill="${fill}"/>`;
-      if (snap || great) marks += `<rect x="${x(d).toFixed(1)}" y="0" width="${(x(d + step) - x(d) + 0.6).toFixed(1)}" height="4" fill="${great ? '#3f5fa8' : '#6f8fcf'}"/>`;
-      hi.push(`${x(d + step / 2).toFixed(1)},${y(g.tempAt(p, 15)).toFixed(1)}`);
-      lo.push(`${x(d + step / 2).toFixed(1)},${y(g.tempAt(p, 4)).toFixed(1)}`);
-    }
-    // heating ladder: the coldest each way of heating can hold out against
-    const rungs = [['firewood', '柴火'], ['coal', '煤炉'], ['district', '集中供暖']] as const;
-    const lines = rungs.map(([k]) => `<line x1="0" x2="${W}" y1="${y(g.heatLimit(k)).toFixed(1)}" y2="${y(g.heatLimit(k)).toFixed(1)}" stroke="#7a6f86" stroke-width="1" stroke-dasharray="6 5" vector-effect="non-scaling-stroke" opacity=".55"/>`).join('')
-      + `<line x1="0" x2="${W}" y1="${y(0)}" y2="${y(0)}" stroke="#7a6f86" stroke-width="1" vector-effect="non-scaling-stroke" opacity=".35"/>`;
-    const band = `<polygon points="${hi.join(' ')} ${lo.slice().reverse().join(' ')}" fill="#f2766b" opacity=".28"/><polyline points="${lo.join(' ')}" fill="none" stroke="#c2412f" stroke-width="1.6" vector-effect="non-scaling-stroke"/><polyline points="${hi.join(' ')}" fill="none" stroke="#e8955b" stroke-width="1.2" vector-effect="non-scaling-stroke"/>`;
-    const past = `<rect x="0" y="0" width="${Math.max(0, x(now)).toFixed(1)}" height="${H}" fill="#fff8ea" opacity=".55"/>`;
-    const nowLine = `<line x1="${x(now).toFixed(1)}" x2="${x(now).toFixed(1)}" y1="0" y2="${H}" stroke="#3b3346" stroke-width="2.5" vector-effect="non-scaling-stroke"/>`;
-    // hover tips, one per day
-    for (let d = a; d < b; d++) {
-      const p = pos(d + 0.5);
-      const great = g.greatK(d + 0.5) > 0.5, snap = g.snapDrop(p) > 0;
-      tips += `<rect x="${x(d).toFixed(1)}" y="0" width="${(x(d + 1) - x(d)).toFixed(1)}" height="${H}" fill="transparent"><title>第 ${d + 1} 天 · ${g.seasonName(p)}${great ? ' · 大寒潮' : snap ? ' · 暴风雪' : ''}&#10;白天约 ${Math.round(g.tempAt(p, 15))}°C，夜里约 ${Math.round(g.tempAt(p, 4))}°C（不算天气）</title></rect>`;
-    }
-    // labels as HTML so they keep their shape when the bar stretches
     const pct = (d: number) => `${(((d - a) / (b - a)) * 100).toFixed(2)}%`;
-    let labels = '';
-    const every = goal ? 10 : 4;
-    for (let d = Math.ceil(a / every) * every; d < b; d += every) if (d > a) labels += `<span class="tk" style="left:${pct(d)}">${d}</span>`;
-    if (goal) {
-      labels += `<span class="ev great" style="left:${pct(SURVIVAL.greatFrom - 1)}">大寒潮</span><span class="ev goal" style="left:${pct(SURVIVAL.days)}">100</span>`;
+    const step = (b - a) > 40 ? 0.25 : 0.125;
+    // ---- season strip: one block per stretch of the same (lived) season
+    type Seg = { n: string; from: number; to: number };
+    const segs: Seg[] = [];
+    for (let d = a; d < b; d += step) {
+      const great = g.greatK(d + step / 2) > 0.5;
+      const n = great ? '大寒潮' : g.seasonName(pos(d + step / 2));
+      const last = segs[segs.length - 1];
+      if (last && last.n === n) last.to = d + step; else segs.push({ n, from: d, to: d + step });
     }
-    // where the season turns (as the town lives it): name the new one
-    let last = '';
-    for (let d = a; d < b; d += 0.25) {
-      const n = g.greatK(d) > 0.5 ? '' : g.seasonName(pos(d));
-      if (n && n !== last && d > a + 0.5 && n !== '冬') labels += `<span class="ss" style="left:${pct(d)}">${n}</span>`;
-      if (n) last = n;
+    const SEA: Record<string, [string, string]> = { 春: ['spring', 'spr'], 夏: ['summer', 'sum'], 秋: ['autumn', 'aut'], 冬: ['winter', 'win'], 回暖: ['warm', 'thaw'], 大寒潮: ['cold', 'great'] };
+    const strip = segs.map(sg => {
+      const [ic, cls] = SEA[sg.n] ?? ['winter', 'win'];
+      const wPct = (sg.to - sg.from) / (b - a) * 100;
+      const label = wPct > 4.2 ? `${icon(ic)}<span>${sg.n}</span>` : wPct > 1.6 ? icon(ic) : '';
+      return `<div class="seg ${cls}" style="left:${pct(sg.from)};width:${wPct.toFixed(2)}%" >${label}</div>`;
+    }).join('');
+    // ---- chart: day/night band coloured by temperature, blizzards, heating rungs, the past dimmed
+    let hi: string[] = [], lo: string[] = [], storms = '', flakes = '', grid = '';
+    let inStorm = -1;
+    for (let d = a; d <= b; d += step) {
+      const p = pos(d + step / 2);
+      hi.push(`${x(d).toFixed(1)},${y(g.tempAt(pos(d), 15)).toFixed(1)}`);
+      lo.push(`${x(d).toFixed(1)},${y(g.tempAt(pos(d), 4)).toFixed(1)}`);
+      const storm = d < b && g.snapDrop(p) > 0 && g.greatK(d + step / 2) <= 0.5;
+      if (storm && inStorm < 0) inStorm = d;
+      if (!storm && inStorm >= 0) {
+        storms += `<rect x="${x(inStorm).toFixed(1)}" y="0" width="${(x(d) - x(inStorm)).toFixed(1)}" height="${H}" fill="url(#tlStorm)"/>`;
+        flakes += `<span class="flake" style="left:${pct((inStorm + d) / 2)}" title="暴风雪 ${((d - inStorm)).toFixed(1)} 天">${icon('winter')}</span>`;
+        inStorm = -1;
+      }
     }
-    const rungLabels = rungs.map(([k, n], i) => `<span class="rung" style="left:${4 + i * 62}px;top:${(y(g.heatLimit(k)) / H * 100).toFixed(1)}%">${n} ${Math.round(g.heatLimit(k))}°</span>`).join('');
-    box.title = '';
-    box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${bg}${marks}${lines}${band}${past}${nowLine}${tips}</svg>${labels}${rungLabels}<span class="now" style="left:${pct(now)}">${goal ? `第${g.day + 1}天` : '现在'}</span>`;
+    const every = goal ? 10 : 2;
+    for (let d = Math.ceil(a / every) * every; d < b; d += every) if (d > a) grid += `<line x1="${x(d).toFixed(1)}" x2="${x(d).toFixed(1)}" y1="0" y2="${H}" class="gl"/>`;
+    const great = goal ? `<rect x="${x(SURVIVAL.greatFrom - 1).toFixed(1)}" y="0" width="${(x(b) - x(SURVIVAL.greatFrom - 1)).toFixed(1)}" height="${H}" fill="url(#tlGreat)"/>` : '';
+    const rungs = [['firewood', '柴火炉', 'firewood', '#b9733f'], ['coal', '煤炉', 'coal', '#5b5466'], ['district', '集中供暖', 'warm', '#d0503f']] as const;
+    const rungLines = rungs.map(([k, , , c]) => `<line x1="0" x2="${W}" y1="${y(g.heatLimit(k)).toFixed(1)}" y2="${y(g.heatLimit(k)).toFixed(1)}" stroke="${c}" stroke-width="1.2" stroke-dasharray="5 4" vector-effect="non-scaling-stroke" opacity=".75"/>`).join('');
+    const zero = `<line x1="0" x2="${W}" y1="${y(0).toFixed(1)}" y2="${y(0).toFixed(1)}" stroke="#8aa6c8" stroke-width="1" vector-effect="non-scaling-stroke" opacity=".6"/>`;
+    // the band's colour follows the temperature: amber when warm, white at freezing, ice blue below
+    const z = (y(0) / H * 100).toFixed(1);
+    const defs = `<defs>
+      <linearGradient id="tlTemp" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="${H}"><stop offset="0" stop-color="#f08a4b"/><stop offset="${z}%" stop-color="#f6d7a7"/><stop offset="${(Number(z) + 8).toFixed(1)}%" stop-color="#cfe3f7"/><stop offset="1" stop-color="#3d6fc4"/></linearGradient>
+      <linearGradient id="tlLine" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="${H}"><stop offset="0" stop-color="#d4572a"/><stop offset="${z}%" stop-color="#c98a3a"/><stop offset="${(Number(z) + 8).toFixed(1)}%" stop-color="#5d8fd0"/><stop offset="1" stop-color="#23468f"/></linearGradient>
+      <linearGradient id="tlStorm" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7f9fd8" stop-opacity=".55"/><stop offset="1" stop-color="#b9cdef" stop-opacity=".25"/></linearGradient>
+      <linearGradient id="tlGreat" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3f5fa8" stop-opacity=".45"/><stop offset="1" stop-color="#3f5fa8" stop-opacity=".15"/></linearGradient>
+      <pattern id="tlPast" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" fill="#fffaf0" opacity=".55"/><line x1="0" y1="0" x2="0" y2="6" stroke="#e8dcc6" stroke-width="2"/></pattern>
+    </defs>`;
+    const band = `<polygon points="${hi.join(' ')} ${lo.slice().reverse().join(' ')}" fill="url(#tlTemp)" opacity=".9"/>
+      <polyline points="${lo.join(' ')}" fill="none" stroke="url(#tlLine)" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>
+      <polyline points="${hi.join(' ')}" fill="none" stroke="url(#tlLine)" stroke-width="1.2" vector-effect="non-scaling-stroke" opacity=".7"/>`;
+    const past = `<rect x="0" y="0" width="${Math.max(0, x(now)).toFixed(1)}" height="${H}" fill="url(#tlPast)"/>`;
+    const nowLine = `<line x1="${x(now).toFixed(1)}" x2="${x(now).toFixed(1)}" y1="0" y2="${H}" stroke="#3b3346" stroke-width="2" vector-effect="non-scaling-stroke"/>`;
+    // ---- day ticks and markers
+    let ticks = '';
+    for (let d = Math.ceil(a / every) * every; d < b; d += every) if (d > a + 0.5 && !(goal && d > SURVIVAL.days - 12)) ticks += `<span class="tk" style="left:${pct(d)}">${d}</span>`;
+    let marks = '';
+    if (goal) marks += `<span class="mk goal" style="left:${pct(SURVIVAL.days)}">${icon('star')}第 100 天</span>`;
+    // ---- stock target: what the coming winter will eat and burn against what is in store
+    let stock = '';
+    const ws = g.winterStock();
+    if (ws.food > 1 && ws.days > 0.2) {
+      const sd = Math.max(now, ws.from * g.seasonDays);
+      if (sd < b) {
+        const fOk = ws.foodHave >= ws.food, hOk = ws.fuelHave >= ws.fuel;
+        const fp = Math.min(999, Math.floor(ws.foodHave / ws.food * 100)), hp = Math.min(999, Math.floor(ws.fuelHave / Math.max(1, ws.fuel) * 100));
+        const tip = `${sd > now + 0.1 ? '下一个冬天' : '这个冬天'}${g.greatK(sd + 1) > 0.5 ? '（大寒潮）' : ''}约 ${ws.days.toFixed(0)} 天&#10;食物：要 ${Math.ceil(ws.food)} 份饱食，库存 ${Math.floor(ws.foodHave)}&#10;燃料：要烧 ${Math.ceil(ws.fuel)} 份柴火和煤，库存 ${Math.floor(ws.fuelHave)}&#10;按现在的人口估算。冬天田地停产、暴风雪里港口封冻，要在暖季囤够`;
+        stock = `<div class="stock${fOk && hOk ? ' ok' : ''}" style="left:${pct(sd)}" title="${tip}"><em>冬储</em><i class="${fOk ? 'ok' : 'bad'}">${icon('food')}<u style="--p:${Math.min(100, fp)}%"></u>${fp}%</i><i class="${hOk ? 'ok' : 'bad'}">${icon('firewood')}<u style="--p:${Math.min(100, hp)}%"></u>${hp}%</i></div>`;
+      }
+    }
+    const legend = rungs.map(([k, n, ic, c]) => `<div class="lg" title="${n}能把家里烧暖到 ${Math.round(g.heatLimit(k))}°C；夜温跌破这条线就要换下一种取暖"><i style="border-color:${c}"></i>${icon(ic)}<span>${n}</span><b>${Math.round(g.heatLimit(k))}°</b></div>`).join('');
+    const nowTag = `<span class="nowtag" style="left:${pct(now)}"></span>`;
+    box.innerHTML = `<div class="tl-head" id="tlHead"></div>
+      <div class="tl-body" id="tlBody">
+        <div class="tl-strip">${strip}${nowTag}</div>
+        <div class="tl-chart"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${defs}${grid}${great}${storms}${zero}${rungLines}${band}${past}${nowLine}</svg>${y(0) > 4 && y(0) < H - 4 ? `<span class="zl" style="top:${(y(0) / H * 100).toFixed(1)}%">0°</span>` : ''}${flakes}${stock}</div>
+        <div class="tl-days">${ticks}${marks}</div>
+        <div class="tl-tip" id="tlTip" hidden></div>
+      </div>
+      <div class="tl-legend">${legend}</div>`;
+    if (!this.tlWired) {
+      this.tlWired = true;
+      box.addEventListener('pointermove', e => this.timelineTip(e));
+      box.addEventListener('pointerleave', () => { const t = $('#tlTip', box); if (t) t.hidden = true; });
+    }
+    this.renderTimeline();   // fill the head
   }
+  private tlRange: [number, number] = [0, 1];
+  private tlWired = false;
+  /** hover read-out: the day under the pointer, its temperatures and what heating it calls for */
+  private timelineTip(e: PointerEvent) {
+    const g = this.game, box = $('#timeline', this.root), body = $('#tlBody', box), tip = $('#tlTip', box);
+    if (!body || !tip) return;
+    const r = body.getBoundingClientRect();
+    const fx = (e.clientX - r.left) / r.width;
+    if (fx < 0 || fx > 1 || (e.target as HTMLElement).closest('.stock')) { tip.hidden = true; return; }
+    const [a, b] = this.tlRange, d = Math.floor(a + fx * (b - a)), p = (d + 0.5) / g.seasonDays;
+    const great = g.greatK(d + 0.5) > 0.5, snap = g.snapDrop(p) > 0;
+    const day = Math.round(g.tempAt(p, 15)), night = Math.round(Math.min(g.tempAt(p, 4), g.tempAt(p, 3)));
+    const need = night >= HEAT_BELOW ? '不用取暖' : night >= g.heatLimit('firewood') ? '柴火炉就够' : night >= g.heatLimit('coal') ? '要烧煤炉' : night >= g.heatLimit('district') ? '要集中供暖' : '只有电暖顶得住';
+    const when = d + 1 < g.day + 1 ? '（已过去）' : d === g.day ? '（今天）' : '';
+    tip.innerHTML = `<b>第 ${d + 1} 天${when}</b><span>${great ? '大寒潮' : g.seasonName(p)}${snap && !great ? ' · 暴风雪' : ''}</span><span>白天 ${day}°C · 夜里 ${night}°C</span><span class="need">${icon('warm')}${need}</span>`;
+    tip.hidden = false;
+    const tx = Math.max(70, Math.min(r.width - 70, e.clientX - r.left));
+    tip.style.left = `${tx}px`;
+  }
+
 
   // ---------- end of a survival game ----------
   private endKey = '';
@@ -547,6 +728,7 @@ export class Hud {
       <span class="chip ${happyCls}" title="平均幸福度">${icon('happy')}<b>${Math.round(g.happyAvg)}</b></span>
       <span class="chip mood ${g.hope < 25 ? 'low' : g.hope < 45 ? 'warn' : ''}" title="希望 ${Math.round(g.hope)}（正趋向 ${Math.round(g.moodTarget.hope)}）：大家过得越开心越高；暴风雪、大寒潮和每一个死去的人都会让它下跌。${g.hope < MOOD.noArrivals ? '现在太低了，没人愿意搬来。' : `低于 ${MOOD.noArrivals} 就没人搬来`}${g.mode === 'survival' ? '，归零就会失败' : ''}">${icon('star')}<i>希望</i><b>${Math.round(g.hope)}</b></span>
       <span class="chip mood disc ${g.discontent > 75 ? 'low' : g.discontent > 50 ? 'warn' : ''}" title="不满 ${Math.round(g.discontent)}（正趋向 ${Math.round(g.moodTarget.disc)}）：挨冻、挨饿、欠薪和日子太苦都会让大家不满，死人更会。不满越高税收越少（现在 -${Math.round((1 - g.taxMood) * 100)}%），超过 ${MOOD.strikeAt} 会罢工${g.mode === 'survival' ? '，到 100 就会失败' : ''}">${icon('strike')}<i>不满</i><b>${Math.round(g.discontent)}</b></span>
+      ${g.beds.need >= 1 ? `<span class="chip ${g.beds.need > g.beds.have ? 'low' : 'ok'}" title="重病人（冻伤、瘟疫）${Math.round(g.beds.need)} 人，病床 ${Math.round(g.beds.have)} 张。草药铺 15 张、诊所 40 张、医院 100 张；没有床的重病人${g.mode === 'survival' ? '会死' : '好得慢'}">${icon('sick')}<b>${Math.round(g.beds.need)}</b><i>/${Math.round(g.beds.have)}床</i></span>` : ''}
       ${g.era >= 3 ? `<span class="chip ${g.power.must > g.power.gen + 0.05 ? 'low' : g.power.boostRatio < 0.95 ? 'warn' : ''}" title="电网：发电 ${g.power.gen.toFixed(1)} / 用电 ${g.power.use.toFixed(1)}&#10;必需 ${g.power.must.toFixed(1)}（电灯 ${g.power.light.toFixed(1)}，用电工厂、电取暖），满足 ${Math.round(g.power.ratio * 100)}%&#10;通电增产和冷藏 ${g.power.boost.toFixed(1)}，只用剩下的电，满足 ${Math.round(g.power.boostRatio * 100)}%&#10;晚上电灯用电约是白天的 3 倍">${icon('power')}<b>${g.power.gen.toFixed(0)}</b><i>/${g.power.use.toFixed(0)}</i></span>
       <span class="chip ${g.pollutionAvg > 25 ? 'low' : ''}" title="住宅区平均污染（点"污染"查看分布）">${icon('pollution')}<b>${g.pollutionAvg.toFixed(0)}</b></span>` : ''}
       <button class="chip research" data-open="research" title="研究（T）">${icon('research')}<b>${cur ? TECHS[cur].name : '选择研究'}</b>${cur ? `<span class="mini"><i style="width:${rPct}%"></i></span>` : ''}</button>
@@ -814,6 +996,9 @@ export class Hud {
     } else if (d.workers) {
       body = `<div class="row"><span>${TIERS[d.workers.tier].name}</span><b data-f="staff"></b></div>`;
     }
+    if (d.workheat) body = `<div class="row"><span>保暖半径</span><b>${d.radius} 格</b></div><div class="row"><span>保暖的工地</span><b data-f="huts"></b></div><p class="hint">天冷时每天烧约 ${(WORK_CHILL.hutFuel * PER_DAY).toFixed(1)} 柴火（有煤先烧煤，烧得更少）。气温低于 ${WORK_CHILL.from}°C 以后，没人照看的工地里工人会冻得干不动，户外的田地、伐木场更严重。</p>`;
+    if (d.beds) body += `<div class="row"><span>病床</span><b>${Math.round(d.beds * (g.laws.has('extrabeds') ? 1 + LAW_FX.beds : 1))} 张</b></div><div class="row"><span>全城重病人 / 病床</span><b data-f="beds"></b></div>`;
+    if (d.workers && !d.workheat) body += `<div class="row"><span>工地冷暖</span><b data-f="chill"></b></div>`;
     if (d.pollution) body += `<div class="row"><span>${d.pollution > 0 ? '污染' : '净化'}</span><b>${d.pollution > 0 ? '' : '-'}${Math.abs(d.pollution)}</b></div>`;
     if (d.protects) body += `<div class="row"><span>${PROTECTS[d.protects]}覆盖</span><b>沿道路走 ${g.roadRange(b.type)} 格，覆盖 <span data-f="pcov"></span> 座建筑</b></div><div class="row"><span>全城没有${PROTECTS[d.protects]}</span><b data-f="pgap"></b></div><p class="hint">和纪元一样，服务沿着道路走：门口的路连到哪，就能管到哪。地图上会同时显示所有同类建筑的范围：黄色是这一座，橙色是其他几座，红色是没覆盖到的。</p>`;
     if (!isHouse && d.upgrade) {
@@ -826,7 +1011,7 @@ export class Hud {
       <span class="pill" data-f="status"></span>
       <p class="desc">${isHouse ? this.houseDesc(b) : d.desc}</p>
       ${body}
-      <footer>${d.upkeep ? `<span class="upkeep">维护费 ${Math.round(d.upkeep * PER_DAY * (b.paused ? 0.25 : 1))}/天</span>` : '<span></span>'}<span class="acts">${d.workers ? `<button class="ghost small" data-a="pause">${b.paused ? '重新开工' : '暂停'}</button>` : ''}${b.type !== 'depot' ? `<button class="ghost small" data-a="turn" title="原地掉头：正方形建筑转 90 度，长方形转 180 度">转向</button><button class="danger" data-a="demolish" title="返还一半造价：${costHtml(refund(d.cost)).replace(/<[^>]+>/g, ' ')}">拆除</button>` : ''}</span></footer>`;
+      <footer>${d.upkeep ? `<span class="upkeep">维护费 ${Math.round(d.upkeep * PER_DAY * (b.paused ? 0.25 : 1))}/天</span>` : '<span></span>'}<span class="acts">${d.workers ? `<button class="ghost small${b.priority ? ' on' : ''}" data-a="priority" title="缺人时先给优先的建筑派工人（暴风雪里先保燃料和食物）">${b.priority ? '★ 优先' : '☆ 设为优先'}</button><button class="ghost small" data-a="pause">${b.paused ? '重新开工' : '暂停'}</button>` : ''}${b.type !== 'depot' ? `<button class="ghost small" data-a="turn" title="原地掉头：正方形建筑转 90 度，长方形转 180 度">转向</button><button class="danger" data-a="demolish" title="返还一半造价：${costHtml(refund(d.cost)).replace(/<[^>]+>/g, ' ')}">拆除</button>` : ''}</span></footer>`;
     box.querySelector('[data-a="research"]')?.addEventListener('click', () => this.togglePanel('research', true));
     box.querySelector('[data-a="goods"]')?.addEventListener('click', () => this.togglePanel('goods', true));
     this.updateInfo();
@@ -856,6 +1041,9 @@ export class Hud {
       st.className = 'pill ' + (ok && b.connected ? 'ok' : 'bad');
     }
     const wn = d.workers ? g.workersFor(b.type) : 0;
+    if (f('beds')) f('beds')!.textContent = `${Math.round(g.beds.need)} / ${Math.round(g.beds.have)}${g.beds.need > g.beds.have ? '（床不够，没床的重病人会死）' : ''}`;
+    if (f('chill')) { const c = g.chillAt(b); f('chill')!.textContent = g.warmSite(b) ? '暖和（暖炉或集中供暖照看着）' : c > 0.01 ? `冻手，产量 -${Math.round(c * 100)}%（在旁边建工棚暖炉）` : g.heatingOn ? `还行（低于 ${WORK_CHILL.from}°C 会冻手）` : '不冷'; }
+    if (f('huts')) { let n = 0; g.buildings.forEach(o => { if (BUILDINGS[o.type].workers && g.warmSite(o) && Math.hypot(o.x + o.w / 2 - b.x - b.w / 2, o.z + o.h / 2 - b.z - b.h / 2) <= d.radius!) n++; }); f('huts')!.textContent = g.heatingOn ? `${n} 座` : '天冷了才生火'; }
     if (f('staff')) f('staff')!.textContent = `${Math.round(b.staff * wn)} / ${wn}`;
     if (b.type === 'house') {
       const T = TIERS[b.tier], hp = b.happy * 100;
@@ -879,8 +1067,8 @@ export class Hud {
     } else if (d.cycle || d.powerGen) {
       if (f('prog')) f('prog')!.style.width = `${Math.round(b.progress * 100)}%`;
       if (f('rate')) {
-        const mult = 1 + g.prodBonus(b.type) + g.boostAt(b) + g.elecBoost(b);
-        const now = outPerDay(b.type) * b.staff * b.env * mult * g.prodFactor(b.type);
+        const mult = 1 + g.prodBonus(b.type) + g.boostAt(b) + g.elecBoost(b) + (d.workers && g.laws.has('extshift') ? LAW_FX.prod : 0);
+        const now = outPerDay(b.type) * b.staff * b.env * mult * g.prodFactor(b.type) * (1 - (d.workers ? g.chillAt(b) : 0));
         f('rate')!.textContent = `${now.toFixed(1)}（满员 ${outPerDay(b.type).toFixed(0)}）`;
       }
       if (f('gen')) f('gen')!.textContent = `${b.gen.toFixed(1)} / ${d.powerGen}`;

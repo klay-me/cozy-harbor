@@ -275,6 +275,34 @@ for (let t = 0; t < minutes * 60; t += 10) {
     if (process.env.BOT_DEBUG) L('cover', prot, bare.length, best);
     if (best && best[2] >= 2 && g.place(type, best[0], best[1])) built[type] = (built[type] ?? 0) + 1;
   }
+  // society (laws, priority, warming huts, events, feasts); BOT_NOSOC=1 plays without them
+  if (!process.env.BOT_NOSOC) {
+    const sign = (id: any, when: boolean) => { if (when && !g.lawBlock(id)) g.signLaw(id); };
+    sign('cemetery', g.deaths > 0 && g.gold > 400);
+    sign('extrabeds', g.beds.need > g.beds.have);
+    sign('vespers', g.hope < 60);
+    sign('warmwear', g.heatingOn && g.temp < -8 && g.taxRate - g.upkeepRate > 40);
+    sign('ration', g.foodDays() < 0.8 && g.pop.peasant + g.pop.worker > 40);
+    sign('extshift', g.happyAvg > 70 && g.discontent < 25);
+    for (const b of g.buildings.values()) if (['firewood', 'coalmine', 'charcoal', 'fishery', 'fishpier', 'fishport', 'heatplant', 'bakery', 'greenhouse', 'cannery'].includes(b.type)) b.priority = true;
+    if (g.card) {
+      const c = g.card;
+      if (c.kind === 'refugees') g.answerCard(houses().length && c.data.n <= 20 ? 0 : 1);
+      else if (c.kind === 'order') g.answerCard(g.storage[c.data.good as GoodId] >= c.data.n * 0.6 ? 0 : 1);
+      else g.answerCard(0);
+    }
+    if (g.order) g.deliverOrder();
+    if (t % 30 === 0 && g.beds.need > g.beds.have * 1.1) build(g.era >= 4 ? 'hospital' : g.era >= 3 ? 'clinic' : 'herbalist');
+    if (g.hope < 45 && g.gold > 400 && !g.feastBlock()) g.holdFeast();
+    if (!g.funeralBlock()) g.holdFuneral();
+    // warming huts beside workplaces left in the cold
+    if (t % 30 === 0 && g.heatingOn && g.temp < -8 && g.gold > 200) {
+      const cold = [...g.buildings.values()].filter(b => BUILDINGS[b.type].workers && !g.warmSite(b) && b.connected);
+      const r = BUILDINGS.warmhut.radius!;
+      const best = cold.length ? spots('warmhut').slice(0, 400).map(([x, z]) => [x, z, cold.filter(b => Math.hypot(b.x + b.w / 2 - x - 1, b.z + b.h / 2 - z - 1) < r).length] as const).sort((a, b) => b[2] - a[2])[0] : undefined;
+      if (best && best[2] >= 2 && g.place('warmhut', best[0], best[1])) built.warmhut = (built.warmhut ?? 0) + 1;
+    }
+  }
   // expand roads when out of space
   if (spots('house').length < 3 && ringR < 6) { ringR++; gridRoads(ringR); }
   if (t % 60 === 0) for (const b of g.buildings.values()) if (!b.connected && b.type !== 'house') connect(b);
