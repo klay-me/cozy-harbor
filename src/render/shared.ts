@@ -12,6 +12,7 @@ export const ENV = {
   uLeafC: { value: new THREE.Color('#FFB7CB') },
   uLeafCMix: { value: 0 },                 // share of trees using colour C (blossom, autumn yellow)
   uTime: { value: 0 },
+  uWind: { value: 0.5 },                   // 0.5 calm … 3 blizzard: foliage and grass sway harder
 };
 
 /**
@@ -28,6 +29,7 @@ attribute float leaf;
 attribute float tint;
 uniform vec3 uLeafA, uLeafB, uLeafC;
 uniform float uLeafCMix;
+uniform float uTime, uWind;
 varying float vGlow;
 varying float vUp;
 ` + sh.vertexShader
@@ -50,6 +52,18 @@ varying float vUp;
   vColor = mix( vColor, seasonal * shade, leaf );
 #endif
 vGlow = glow;`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+  // foliage sways in the wind, more the higher up the tree
+  if (leaf > 0.5) {
+    vec3 wp0 = modelMatrix[3].xyz;
+    #ifdef USE_INSTANCING
+      wp0 += instanceMatrix[3].xyz;
+    #endif
+    float gust = sin(uTime * 1.6 + wp0.x * 0.35 + wp0.z * 0.2) * 0.6 + sin(uTime * 4.3 + wp0.z * 1.3) * 0.25 * uWind;
+    float hgt = max(position.y, 0.0);
+    transformed.x += gust * hgt * 0.025 * uWind;
+    transformed.z += gust * hgt * 0.012 * uWind;
+  }`)
       .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>
   vec3 upN = objectNormal;
   #ifdef USE_INSTANCING

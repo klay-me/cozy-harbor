@@ -131,11 +131,11 @@ export class Decor {
     const grassU = terrain.terrainU.uGrass;
     tm.onBeforeCompile = sh => {
       Object.assign(sh.uniforms, ENV, { uGrass: grassU });
-      sh.vertexShader = 'attribute float shade;\nuniform vec3 uGrass;\nuniform float uTime, uSnow;\n' + sh.vertexShader
+      sh.vertexShader = 'attribute float shade;\nuniform vec3 uGrass;\nuniform float uTime, uSnow, uWind;\n' + sh.vertexShader
         .replace('#include <begin_vertex>', `#include <begin_vertex>
   vec3 ip = instanceMatrix[3].xyz;
-  float sway = sin(uTime * 1.8 + ip.x * 0.6 + ip.z * 0.4) * 0.5 + sin(uTime * 3.1 + ip.x * 1.7) * 0.2;
-  transformed.x += sway * position.y * 0.35;
+  float sway = (sin(uTime * (1.2 + uWind * 0.6) + ip.x * 0.6 + ip.z * 0.4) * 0.5 + sin(uTime * 3.1 + ip.x * 1.7) * 0.2) * (0.6 + uWind * 0.8);
+  transformed.x += (sway + uWind * 0.25) * position.y * 0.35;
   transformed.z += sway * position.y * 0.15;`)
         .replace('#include <color_vertex>', `
   vColor = uGrass * shade;

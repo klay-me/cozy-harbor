@@ -6,6 +6,7 @@ import { SEASON_IDS } from '../sim/data';
 import { toon, outlineMat } from './toon';
 import { ENV } from './shared';
 import { Terrain, WATER_Y } from './terrain';
+import { Lightning } from './lightning';
 
 // ---------- time of day ----------
 interface Sky { h: number; top: string; hor: string; sun: string; si: number; hs: string; hg: string; hi: number }
@@ -43,7 +44,7 @@ const SEASON_LOOK: Record<SeasonId, SeasonLook> = {
   winter: { grass: '#C9D6C4', a: '#8FB4A2', b: '#DCE6EA', c: '#7FA592', cmix: 0.4, ice: 1 },
 };
 
-const RAIN_N = 3000, SNOW_N = 2400, SPLASH_N = 260;
+const RAIN_N = 6000, SNOW_N = 7000, DRIFT_N = 2600, SPLASH_N = 320;
 
 export class Env {
   private skyTop = new THREE.Color(); private skyHor = new THREE.Color();
@@ -59,7 +60,15 @@ export class Env {
   private flakes = new Float32Array(SNOW_N * 3);
   private splash: THREE.InstancedMesh;
   private splashes: { x: number; y: number; z: number; t: number }[] = [];
-  private flash = 0; private boltT = 6;
+  private flash = 0; private boltT = 4;
+  private lightning = new Lightning();
+  private cloudFlashT = 1;
+  /** 0..1 eased: a blizzard is blowing (white-out, sideways snow, drifting ground snow) */
+  blz = 0;
+  /** snow and blowing snow fill the air between the view centre and the camera */
+  private toCam = new THREE.Vector3();
+  private drift: THREE.Points;
+  private drifts = new Float32Array(DRIFT_N * 4);
   private flashEl: HTMLElement;
   // eased state
   private w = { over: 0, near: 45, far: 125, cover: 0.35, rain: 0, snow: 0, wet: 0, storm: 0, tint: new THREE.Color('#ffffff') };
@@ -132,13 +141,56 @@ export class Env {
     this.rain.geometry.setDrawRange(0, 0);
     scene.add(this.rain);
     // snowflakes
-    for (let i = 0; i < SNOW_N; i++) { this.flakes[i * 3] = (Math.random() - 0.5) * 56; this.flakes[i * 3 + 1] = Math.random() * 22; this.flakes[i * 3 + 2] = (Math.random() - 0.5) * 56; }
+    for (let i = 0; i < SNOW_N; i++) { this.flakes[i * 3] = (Math.random() - 0.5) * 36; this.flakes[i * 3 + 1] = Math.random() * 14; this.flakes[i * 3 + 2] = (Math.random() - 0.5) * 36; }
     const fg = new THREE.BufferGeometry();
     fg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(SNOW_N * 3), 3));
-    this.snow = new THREE.Points(fg, new THREE.PointsMaterial({ color: 0xffffff, size: 0.16, map: dotTexture(), transparent: true, depthWrite: false, opacity: 0.95 }));
+    const fs = new Float32Array(SNOW_N);
+    for (let i = 0; i < SNOW_N; i++) fs[i] = 0.12 + Math.pow(Math.random(), 3) * 0.3;
+    fg.setAttribute('size', new THREE.BufferAttribute(fs, 1));
+    this.snow = new THREE.Points(fg, new THREE.ShaderMaterial({
+      uniforms: { uMap: { value: dotTexture() }, uScale: { value: innerHeight * 0.9 }, uDim: { value: 1 } },
+      transparent: true, depthWrite: false,
+      vertexShader: 'attribute float size;uniform float uScale;void main(){vec4 mv=modelViewMatrix*vec4(position,1.0);gl_Position=projectionMatrix*mv;gl_PointSize=size*uScale/-mv.z;}',
+      fragmentShader: 'uniform sampler2D uMap;uniform float uDim;void main(){float a=texture2D(uMap,gl_PointCoord).a;if(a<0.02)discard;gl_FragColor=vec4(vec3(uDim),a*0.95);}',
+    }));
     this.snow.frustumCulled = false;
     this.snow.geometry.setDrawRange(0, 0);
     scene.add(this.snow);
+    // blowing snow: long thin streaks flying with the wind, thickest near the ground
+    for (let i = 0; i < DRIFT_N; i++) this.resetDrift(i, true);
+    const dg = new THREE.BufferGeometry();
+    dg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(DRIFT_N * 3), 3));
+    const dl = new Float32Array(DRIFT_N);
+    for (let i = 0; i < DRIFT_N; i++) dl[i] = this.drifts[i * 4 + 3];
+    dg.setAttribute('len', new THREE.BufferAttribute(dl, 1));
+    // each streak is a point sprite with a thin line drawn inside it, turned to the wind's direction on screen
+    this.drift = new THREE.Points(dg, new THREE.ShaderMaterial({
+      uniforms: { uScale: { value: innerHeight }, uOp: { value: 0 }, uWind: { value: new THREE.Vector3(1, -0.03, 0.05) }, uAspect: { value: innerWidth / innerHeight } },
+      transparent: true, depthWrite: false,
+      vertexShader: `attribute float len;uniform float uScale, uAspect;uniform vec3 uWind;varying vec2 vDir;
+void main(){
+  vec4 mv = modelViewMatrix * vec4(position, 1.0);
+  vec4 a = projectionMatrix * mv;
+  vec4 b = projectionMatrix * modelViewMatrix * vec4(position + uWind * 0.5, 1.0);
+  vec2 d = (b.xy / b.w - a.xy / a.w) * vec2(uAspect, 1.0);
+  vDir = length(d) > 1e-6 ? normalize(d) : vec2(1.0, 0.0);
+  gl_Position = a;
+  gl_PointSize = min(120.0, len * uScale / -mv.z);
+}`,
+      fragmentShader: `uniform float uOp;varying vec2 vDir;
+void main(){
+  vec2 c = gl_PointCoord - 0.5; c.y = -c.y;
+  vec2 r = vec2(dot(c, vDir), dot(c, vec2(-vDir.y, vDir.x)));
+  // a thin streak, brightest at the leading end
+  float a = (1.0 - smoothstep(0.03, 0.08, abs(r.y))) * smoothstep(-0.45, 0.3, r.x) * (1.0 - smoothstep(0.36, 0.48, r.x));
+  if (a < 0.02) discard;
+  gl_FragColor = vec4(vec3(1.0), min(1.0, a * uOp * 1.05));
+}`,
+    }));
+    this.drift.frustumCulled = false;
+    this.drift.geometry.setDrawRange(0, 0);
+    scene.add(this.drift);
+    scene.add(this.lightning.group);
     // splash crowns: a thin ring plus three droplets
     const ring = new THREE.TorusGeometry(0.09, 0.012, 4, 14).rotateX(Math.PI / 2);
     const parts: THREE.BufferGeometry[] = [ring];
@@ -170,6 +222,8 @@ export class Env {
     const k = game.weather.blend * game.weather.blend * (3 - 2 * game.weather.blend);
     for (const key of LKEYS) this.w[key] += ((wa[key] + (wb[key] - wa[key]) * k) - this.w[key]) * ease;
     this.w.tint.lerp(new THREE.Color(wa.tint).lerp(new THREE.Color(wb.tint), k), ease);
+    this.blz += ((game.blizzard ? 1 : 0) - this.blz) * (1 - Math.exp(-dt * 0.8));
+    const blz = this.blz;
     // ---- time of day ----
     const h = game.hour;
     let i = 0;
@@ -181,7 +235,7 @@ export class Env {
     const hs = A.hsC.clone().lerp(B.hsC, u), hg = A.hgC.clone().lerp(B.hgC, u);
     this.night = game.night;
     // overcast weather washes out the sky and the sun
-    const o = this.w.over;
+    const o = Math.max(this.w.over, blz * 0.9);
     const grey = (c: THREE.Color) => { const l = c.r * 0.3 + c.g * 0.59 + c.b * 0.11; return new THREE.Color(l, l, l).multiply(this.w.tint); };
     top.lerp(grey(top).multiplyScalar(1.05), o * 0.85);
     hor.lerp(grey(hor).multiplyScalar(1.0), o * 0.8);
@@ -192,6 +246,13 @@ export class Env {
     // fog starts past the point you are looking at, so zooming out in fog still shows the town
     const view = Math.max(0, camDist - 12);
     fog.near = this.w.near + view; fog.far = this.w.far + view * 1.15;
+    // a blizzard closes in: pale blue-white haze with the far side of town swallowed
+    if (blz > 0.01) {
+      fog.near = THREE.MathUtils.lerp(fog.near, 8 + view, blz);
+      fog.far = THREE.MathUtils.lerp(fog.far, 60 + view * 1.1, blz);
+      fog.color.lerp(new THREE.Color('#cfdae6').multiplyScalar(1 - this.night * 0.7), blz * 0.85);
+      this.skyHor.lerp(fog.color, blz); this.skyTop.lerp(fog.color, blz * 0.7);
+    }
     // sun / moon direction
     const day = h >= 5.5 && h <= 20;
     let dir: THREE.Vector3;
@@ -215,13 +276,28 @@ export class Env {
     // lightning
     if (this.w.storm > 0.6 && game.speed > 0) {
       this.boltT -= dt;
-      if (this.boltT <= 0) { this.boltT = 5 + Math.random() * 9; this.flash = 1; this.onThunder(0.3 + Math.random() * 1.4); }
+      if (this.boltT <= 0 && camera) {
+        this.boltT = 3 + Math.random() * 8;
+        const r = this.lightning.strike(target, camera.position, (x, z) => terrain.height(x, z));
+        // sound takes longer from further away
+        this.onThunder(0.15 + r / 14);
+      }
     }
-    this.flash *= Math.exp(-dt * 7);
-    const flicker = this.flash > 0.05 ? (Math.sin(this.t * 60) > 0 ? 1 : 0.5) : 0;
-    this.flashEl.style.opacity = String(this.flash * flicker * 0.45);
+    this.lightning.update(dt);
+    this.flash = Math.max(this.flash * Math.exp(-dt * 7), this.lightning.level);
+    const flicker = this.flash > 0.05 ? (Math.sin(this.t * 60) > 0 ? 1 : 0.6) : 0;
+    this.flashEl.style.opacity = String(this.flash * flicker * 0.3);
     this.sun.intensity = si;
-    this.hemi.intensity = hi + this.flash * flicker * 2.5;
+    this.hemi.intensity = hi + this.flash * flicker * 2.2;
+    // sheet lightning glowing inside the storm clouds now and then
+    if (this.w.storm > 0.4) {
+      this.cloudFlashT -= dt;
+      if (this.cloudFlashT <= 0) {
+        this.cloudFlashT = 0.4 + Math.random() * 2.2;
+        const vis = this.clouds.filter(c => c.visible);
+        if (vis.length) vis[Math.floor(Math.random() * vis.length)].userData.fl = 1;
+      }
+    }
     // clouds
     const nightDim = 1 - this.night * 0.65;
     this.cloudMat.color.copy(grey(new THREE.Color('#ffffff')).lerp(new THREE.Color('#ffffff'), 1 - o * 0.7)).multiplyScalar(nightDim);
@@ -231,6 +307,9 @@ export class Env {
       c.visible = j < Math.round(this.w.cover * this.clouds.length);
       const mat = c.userData.mat as THREE.MeshToonMaterial;
       mat.color.copy(this.cloudMat.color); mat.emissive.copy(this.cloudMat.emissive);
+      const fl = (c.userData.fl ?? 0) * (Math.sin(this.t * 45 + j) > -0.3 ? 1 : 0.3);
+      c.userData.fl = (c.userData.fl ?? 0) * Math.exp(-dt * 6);
+      if (fl > 0.02) mat.emissive.lerp(new THREE.Color(1.6, 1.7, 2.2), fl);
       // clouds below the camera stay at the edges of the screen; over the middle they turn see-through
       let a = 1;
       if (camera && c.position.y < camera.position.y) {
@@ -259,10 +338,11 @@ export class Env {
     const winter = (s0 === 'winter' ? 1 - sk : 0) + (s1 === 'winter' ? sk : 0);
     // frost also settles on any day cold enough, whatever the season
     const frost = THREE.MathUtils.clamp((1 - game.temp) / 12, 0, 1) * 0.55;
-    const snowTarget = Math.max(winter * (0.5 + this.w.snow * 0.45), frost);
+    const snowTarget = Math.max(winter * (0.5 + this.w.snow * 0.45), frost, blz);
     this.snowCover += (snowTarget - this.snowCover) * (1 - Math.exp(-dt * 0.25));
     ENV.uSnow.value = this.snowCover;
     ENV.uWet.value = this.w.wet;
+    ENV.uWind.value = 0.5 + this.w.storm * 1.6 + this.w.rain * 0.4 + this.w.snow * 0.3 + blz * 2.5;
     ENV.uGlow.value = Math.min(1, this.night * 1.1 + this.w.storm * 0.35);
     const wu = terrain.waterU;
     wu.uTime.value = this.t;
@@ -272,46 +352,92 @@ export class Env {
     wu.uIce.value = winter * 0.6;
     // ---- precipitation ----
     this.updateRain(dt, target);
+    if (camera) this.toCam.subVectors(camera.position, target).setY(0).multiplyScalar(0.35);
     this.updateSnow(dt, target);
     this.updateSplashes(dt, target, terrain);
   }
 
   private updateRain(dt: number, target: THREE.Vector3) {
-    const n = Math.floor(RAIN_N * this.w.rain);
+    const n = Math.floor(RAIN_N * Math.min(1, this.w.rain * 0.6 + this.w.storm * 0.4));
     this.rain.geometry.setDrawRange(0, n * 2);
     if (!n) return;
-    const wind = 3 + this.w.storm * 6, fall = 26 + this.w.storm * 10;
+    // storms drive the rain in slanting sheets, with gusts that come and go
+    const gust = 1 + 0.35 * Math.sin(this.t * 0.7) * Math.sin(this.t * 1.9);
+    const wind = (3 + this.w.storm * 9) * gust, fall = 26 + this.w.storm * 12;
+    const len = 0.85 + this.w.storm * 0.5;
     const d = this.drops, pos = this.rain.geometry.getAttribute('position') as THREE.BufferAttribute;
     const arr = pos.array as Float32Array;
     for (let i = 0; i < n; i++) {
       const j = i * 3;
       d[j + 1] -= fall * dt; d[j] += wind * dt;
-      if (d[j + 1] < 0) { d[j + 1] += 24; d[j] = (Math.random() - 0.5) * 56; d[j + 2] = (Math.random() - 0.5) * 56; }
-      if (d[j] > 28) d[j] -= 56;
+      if (d[j + 1] < 0) { d[j + 1] = 24 + (d[j + 1] % 24); d[j] = (Math.random() - 0.5) * 56; d[j + 2] = (Math.random() - 0.5) * 56; }
+      if (d[j] > 28) d[j] = ((d[j] + 28) % 56) - 28;
       const o = i * 6;
       arr[o] = d[j]; arr[o + 1] = d[j + 1]; arr[o + 2] = d[j + 2];
-      arr[o + 3] = d[j] - wind * 0.05; arr[o + 4] = d[j + 1] + 0.85; arr[o + 5] = d[j + 2];
+      arr[o + 3] = d[j] - wind / fall * len; arr[o + 4] = d[j + 1] + len; arr[o + 5] = d[j + 2];
     }
     pos.needsUpdate = true;
+    (this.rain.material as THREE.LineBasicMaterial).opacity = (0.55 + this.w.storm * 0.25) * (1 - this.night * 0.5);
     this.rain.position.set(target.x, 0, target.z);
   }
   private updateSnow(dt: number, target: THREE.Vector3) {
-    const n = Math.floor(SNOW_N * this.w.snow);
+    const blz = this.blz;
+    const n = Math.floor(SNOW_N * Math.min(1, this.w.snow * 0.5 + blz));
     this.snow.geometry.setDrawRange(0, n);
-    if (!n) return;
-    const f = this.flakes, pos = this.snow.geometry.getAttribute('position') as THREE.BufferAttribute;
-    const arr = pos.array as Float32Array;
-    for (let i = 0; i < n; i++) {
-      const j = i * 3;
-      f[j + 1] -= (1.3 + (i % 7) * 0.12) * dt;
-      f[j] += Math.sin(this.t * 0.9 + i) * 0.4 * dt + 0.3 * dt;
-      f[j + 2] += Math.cos(this.t * 0.7 + i * 1.3) * 0.3 * dt;
-      if (f[j + 1] < 0) { f[j + 1] += 22; f[j] = (Math.random() - 0.5) * 56; f[j + 2] = (Math.random() - 0.5) * 56; }
-      if (f[j] > 28) f[j] -= 56;
-      arr[j] = f[j]; arr[j + 1] = f[j + 1]; arr[j + 2] = f[j + 2];
+    const mat = this.snow.material as THREE.ShaderMaterial;
+    mat.uniforms.uScale.value = innerHeight * 0.9;
+    mat.uniforms.uDim.value = 1 - this.night * 0.55;
+    if (n) {
+      // flakes drift down gently; in a blizzard the wind tears them sideways in swirling gusts
+      const gust = 1 + 0.4 * Math.sin(this.t * 0.5) * Math.sin(this.t * 1.3);
+      const wind = (0.3 + this.w.storm * 2 + blz * 9) * gust;
+      const f = this.flakes, pos = this.snow.geometry.getAttribute('position') as THREE.BufferAttribute;
+      const arr = pos.array as Float32Array;
+      for (let i = 0; i < n; i++) {
+        const j = i * 3;
+        f[j + 1] -= (1.3 + (i % 7) * 0.12) * (1 + blz * 0.8) * dt;
+        f[j] += (Math.sin(this.t * 0.9 + i) * 0.4 + wind) * dt;
+        f[j + 2] += Math.cos(this.t * (0.7 + blz * 2) + i * 1.3) * (0.3 + blz * 1.5) * dt;
+        f[j + 1] += Math.sin(this.t * 3 + i * 0.7) * blz * 0.8 * dt;
+        if (f[j + 1] < 0) { f[j + 1] = 14 + (f[j + 1] % 14); f[j] = (Math.random() - 0.5) * 36; f[j + 2] = (Math.random() - 0.5) * 36; }
+        if (f[j] > 18) f[j] = ((f[j] + 18) % 36) - 18;
+        arr[j] = f[j]; arr[j + 1] = f[j + 1]; arr[j + 2] = f[j + 2];
+      }
+      pos.needsUpdate = true;
+      this.snow.position.set(target.x + this.toCam.x, 0, target.z + this.toCam.z);
     }
-    pos.needsUpdate = true;
-    this.snow.position.set(target.x, 0, target.z);
+    // blowing snow streaks
+    const m = Math.floor(DRIFT_N * Math.min(1, blz + this.w.snow * this.w.storm * 0.3));
+    this.drift.geometry.setDrawRange(0, m);
+    if (!m) return;
+    const speed = 7 + blz * 9;
+    // after a long pause (hidden tab) spread the streaks out again instead of bunching them at the edge
+    const respread = dt > 0.5;
+    if (respread) for (let i = 0; i < DRIFT_N; i++) this.resetDrift(i, true);
+    const step = respread ? 0 : dt;
+    const dr = this.drifts, dp = this.drift.geometry.getAttribute('position') as THREE.BufferAttribute;
+    const da = dp.array as Float32Array;
+    for (let i = 0; i < m; i++) {
+      const j = i * 4;
+      dr[j] += speed * (0.7 + (i % 5) * 0.12) * step;
+      dr[j + 1] += Math.sin(this.t * 2 + i) * 0.3 * step;
+      if (dr[j] > 18 || dr[j + 1] < 0.02) this.resetDrift(i, false);
+      const o = i * 3;
+      da[o] = dr[j]; da[o + 1] = dr[j + 1]; da[o + 2] = dr[j + 2];
+    }
+    dp.needsUpdate = true;
+    const du = (this.drift.material as THREE.ShaderMaterial).uniforms;
+    du.uOp.value = 0.85 * Math.min(1, blz * 1.5 + 0.3) * (1 - this.night * 0.5);
+    du.uScale.value = innerHeight; du.uAspect.value = innerWidth / innerHeight;
+    this.drift.position.set(target.x + this.toCam.x, 0, target.z + this.toCam.z);
+  }
+  private resetDrift(i: number, init: boolean) {
+    const j = i * 4, d = this.drifts;
+    d[j] = init ? (Math.random() - 0.5) * 36 : -18 - Math.random() * 4;
+    // most streaks skim the ground, some fly higher
+    d[j + 1] = Math.random() < 0.6 ? 0.05 + Math.random() * 0.8 : 0.8 + Math.random() * 8;
+    d[j + 2] = (Math.random() - 0.5) * 36;
+    d[j + 3] = 0.6 + Math.random() * 1.4;
   }
   private updateSplashes(dt: number, target: THREE.Vector3, terrain: Terrain) {
     const want = Math.floor(SPLASH_N * this.w.rain);
